@@ -116,7 +116,7 @@ impl StardustGen {
             MirInst::Mark(n) => { self.emit(&format!("// Mark({n})")); }
             MirInst::Jump(n) => { self.emit(&format!("// Jump({n}) — conditional jump")); }
             MirInst::UncondJump(n) => { self.emit(&format!("// UncondJump({n})")); }
-            MirInst::Call { fn_id } => {
+            MirInst::Call { fn_id, .. } => {
                 self.emit(&format!("// Call({}) — n/m from CallElement", fn_id.0));
             }
             MirInst::Ret { argc } => {

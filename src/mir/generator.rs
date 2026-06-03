@@ -423,10 +423,8 @@ impl MirGen {
                     self.mir.push(MirInst::Comment(format!("ERROR: unknown function '{fn_name}'")));
                     FnId(0)
                 });
-                self.mir.push(MirInst::Call { fn_id });
-
-                // 弹出参数和 CallElement，压入返回值
                 let ret_count = call_sig.as_ref().map_or(0, |s| s.m);
+                self.mir.push(MirInst::Call { fn_id, return_arity: ret_count });
                 // 清理调用者的栈追踪
                 if !stack_pass {
                     for _ in 0..argc {
@@ -841,7 +839,7 @@ impl MirGen {
                     ty: TypeId::Unknown,
                 });
                 self.stack.push_temp();
-                self.mir.push(MirInst::Call { fn_id: FnId(0) }); // 占位 FnId
+                self.mir.push(MirInst::Call { fn_id: FnId(0), return_arity: *m });
                 // 清理栈追踪
                 for _ in 0..*n { self.stack.pop(); }
                 self.stack.pop(); // CallElement
