@@ -5,8 +5,8 @@ use crate::vm::value::Value;
 /// 带标签的双栈：ID 栈 + 值栈，长度始终相等
 #[derive(Debug, Clone)]
 pub struct DualStack {
-    ids: Vec<ElementId>,
-    values: Vec<Value>,
+    pub(crate) ids: Vec<ElementId>,
+    pub(crate) values: Vec<Value>,
 }
 
 impl Default for DualStack {
