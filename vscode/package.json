@@ -1,0 +1,38 @@
+{
+  "name": "freebird-language",
+  "displayName": "Freebird Language Support",
+  "description": "Syntax highlighting and language support for the Freebird programming language",
+  "version": "0.1.0",
+  "publisher": "freebird",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "freebird",
+      "aliases": ["Freebird", "freebird"],
+      "extensions": [".fb"],
+      "configuration": "./language-configuration.json",
+      "icon": {
+        "dark": "./icons/freebird-dark.svg",
+        "light": "./icons/freebird-light.svg"
+      }
+    }],
+    "grammars": [{
+      "language": "freebird",
+      "scopeName": "source.freebird",
+      "path": "./syntaxes/freebird.tmLanguage.json"
+    }]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hamfreebird/freebird"
+  },
+  "bugs": {
+    "url": "https://github.com/hamfreebird/freebird/issues"
+  }
+}

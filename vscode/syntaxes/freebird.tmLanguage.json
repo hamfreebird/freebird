@@ -1,0 +1,232 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Freebird",
+  "scopeName": "source.freebird",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#chars"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#attributes"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#identifiers"
+    },
+    {
+      "include": "#stardust"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.freebird",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.freebird",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "patterns": [
+            {
+              "name": "comment.block.freebird",
+              "match": "."
+            }
+          ]
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.freebird",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.freebird",
+          "match": "\\\\[ntr0\\\\\"']|\\\\x[0-9a-fA-F]{2}|\\\\u\\{[0-9a-fA-F]+\\}"
+        }
+      ]
+    },
+    "chars": {
+      "name": "string.quoted.single.freebird",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "name": "constant.character.escape.freebird",
+          "match": "\\\\[ntr0\\\\\"']|\\\\x[0-9a-fA-F]{2}|\\\\u\\{[0-9a-fA-F]+\\}"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.freebird",
+          "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.hex.freebird",
+          "match": "\\b0[xX][0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.octal.freebird",
+          "match": "\\b0[oO][0-7_]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.freebird",
+          "match": "\\b0[bB][01_]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.freebird",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "attributes": {
+      "name": "meta.annotation.freebird",
+      "begin": "#\\[",
+      "end": "\\]",
+      "patterns": [
+        {
+          "name": "variable.parameter.annotation.freebird",
+          "match": "[a-zA-Z_][a-zA-Z0-9_]*"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.freebird",
+          "match": "\\b(if|else|match|loop|while|for|in|break|continue|return|ret)\\b"
+        },
+        {
+          "name": "keyword.declaration.freebird",
+          "match": "\\b(fn|let|mut|struct|enum|extern|use|as)\\b"
+        },
+        {
+          "name": "keyword.unsafe.freebird",
+          "match": "\\bunsafe\\b"
+        },
+        {
+          "name": "constant.language.freebird",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "keyword.operator.ref.freebird",
+          "match": "&mut\\b|&\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.freebird",
+          "match": "\\b(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|char|String|Vec|Box|Option|Result|ElementId|StackHandle)\\b"
+        },
+        {
+          "name": "entity.name.type.freebird",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.freebird",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.comparison.freebird",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.freebird",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.freebird",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.assignment.freebird",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.bitwise.freebird",
+          "match": "&|\\||\\^|~"
+        },
+        {
+          "name": "keyword.operator.path.freebird",
+          "match": "::"
+        },
+        {
+          "name": "keyword.operator.range.freebird",
+          "match": "\\.\\.=?|\\."
+        },
+        {
+          "name": "keyword.operator.hash.freebird",
+          "match": "#"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.freebird",
+          "match": "\\b[a-z_][a-zA-Z0-9_]*\\s*(?=\\()"
+        },
+        {
+          "name": "support.function.macro.freebird",
+          "match": "\\b(stardust|vec|println|print|format|panic)\\s*!"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.freebird",
+          "match": "\\b[a-z_][a-zA-Z0-9_]*\\b"
+        },
+        {
+          "name": "variable.language.wildcard.freebird",
+          "match": "\\b_\\b"
+        }
+      ]
+    },
+    "stardust": {
+      "name": "meta.embedded.stardust.freebird",
+      "begin": "stardust!\\s*\\{",
+      "end": "\\}",
+      "patterns": [
+        {
+          "name": "support.function.stardust.freebird",
+          "match": "\\b(Push|Pop|Dup|Swap|Add|Sub|Mul|Div|Mod|Eq|Ne|Lt|Gt|Le|Ge|And|Or|Not|Xor|Store|Load|ShiftL|ShiftR|Depth|Reverse|Rotate|Call|Ret)\\b"
+        },
+        {
+          "include": "#numbers"
+        }
+      ]
+    }
+  }
+}
