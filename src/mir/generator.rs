@@ -385,6 +385,27 @@ impl MirGen {
                 // unary 操作 pop 1, push 1: 栈深度不变
             }
             HirExpr::Call { func, args, stack_pass, fn_sig: call_sig, .. } => {
+                // 获取函数名（用于内建函数检测）
+                let fn_name = match func.as_ref() {
+                    HirExpr::Var(var_ref) => var_ref.name.clone(),
+                    _ => String::new(),
+                };
+
+                // 处理内建/标准库函数（无需 CallElement + Call）
+                if Self::is_builtin(&fn_name) && !stack_pass {
+                    // 求值参数
+                    for arg in args {
+                        match arg {
+                            HirCallArg::Pos(e, _) | HirCallArg::Named(_, e, _) => {
+                                self.gen_expr(e, fn_sig);
+                            }
+                        }
+                    }
+                    // 生成内建指令
+                    self.gen_builtin_call(&fn_name);
+                    return;
+                }
+
                 let argc = if *stack_pass {
                     // 栈传参：参数已在栈顶，查找被调函数签名
                     if let Some(sig) = call_sig {
@@ -412,12 +433,6 @@ impl MirGen {
                         }
                     }
                 }
-
-                // 获取函数 ID
-                let fn_name = match func.as_ref() {
-                    HirExpr::Var(var_ref) => var_ref.name.clone(),
-                    _ => "unknown".to_string(),
-                };
 
                 let fn_id = self.name_to_id.get(&fn_name).copied().unwrap_or_else(|| {
                     self.mir.push(MirInst::Comment(format!("ERROR: unknown function '{fn_name}'")));
@@ -724,6 +739,29 @@ impl MirGen {
     #[allow(dead_code)]
     fn get_variant_tag(&self, enum_name: &str, variant: &str) -> u32 {
         self.type_table.variant_tag(enum_name, variant).unwrap_or(0)
+    }
+
+    /// 检查函数名是否为内建/标准库函数
+    fn is_builtin(name: &str) -> bool {
+        matches!(name, "print")
+    }
+
+    /// 生成内建函数调用的 MIR 指令
+    /// 调用前参数已在栈顶求值完毕
+    fn gen_builtin_call(&mut self, name: &str) {
+        match name {
+            "print" => {
+                // print(value) → NumOut 输出栈顶数值并换行
+                self.mir.push(MirInst::NumOut);
+                self.stack.pop(); // pop 参数
+                // print 返回 Unit，无返回值压栈
+            }
+            _ => {
+                self.mir.push(MirInst::Comment(format!(
+                    "ERROR: unknown builtin '{name}'"
+                )));
+            }
+        }
     }
 
     /// 将 stardust! 宏指令翻译为 MIR

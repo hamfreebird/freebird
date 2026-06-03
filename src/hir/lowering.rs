@@ -257,9 +257,9 @@ impl Lowering {
                         span: *span,
                     })),
                     Err(e) => {
-                        // 函数名或类型名（首字母大写）不作为变量错误
+                        // 函数名、类型名（首字母大写）或内建函数名不作为变量错误
                         let is_type_name = name.chars().next().is_some_and(|c| c.is_uppercase());
-                        if self.resolver.lookup_fn(name).is_some() || is_type_name {
+                        if self.resolver.lookup_fn(name).is_some() || is_type_name || is_builtin_fn(name) {
                             Some(HirExpr::Var(HirVarRef {
                                 name: name.clone(),
                                 scope_depth: usize::MAX,
@@ -301,9 +301,10 @@ impl Lowering {
             ast::Expr::Call { func, args, stack_pass, span } => {
                 let hir_func = self.lower_expr(func)?;
 
-                // 查找函数签名
+                // 查找函数签名（包括内建函数）
                 let fn_sig = if let ast::Expr::Var(name, _) = func.as_ref() {
                     self.resolver.lookup_fn(name).cloned()
+                        .or_else(|| builtin_fn_signature(name))
                 } else {
                     None
                 };
@@ -473,6 +474,28 @@ pub fn lower(ast_program: &ast::Program) -> (HirProgram, Vec<ResolveError>) {
     let hir = lowering.lower_program(ast_program);
     let errors = lowering.errors;
     (hir, errors)
+}
+
+// ─── 内建/标准库函数辅助 ───
+
+/// 检查函数名是否为内建/标准库函数
+fn is_builtin_fn(name: &str) -> bool {
+    matches!(name, "print")
+}
+
+/// 获取内建函数的签名
+fn builtin_fn_signature(name: &str) -> Option<FnSignature> {
+    match name {
+        "print" => Some(FnSignature {
+            name: "print".to_string(),
+            params: vec![("value".to_string(), HirType::Path(vec!["i64".to_string()]))],
+            return_types: vec![],
+            n: 1,
+            m: 0,
+            span: crate::frontend::token::Span::new(0, 0, 0),
+        }),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
