@@ -18,6 +18,7 @@ use frame::CallFrame;
 use id::{ElementId, FnId, IdAllocator};
 use mir::MirInst;
 use registry::GlobalRegistry;
+use stack::DualStack;
 use value::Value;
 
 /// 函数表类型：FnId → MIR 指令序列
@@ -378,19 +379,160 @@ impl Vm {
                 self.call_stack.push(frame);
             }
 
-            // === 远程栈操作（骨架实现）===
-            MirInst::AllocRemote
-            | MirInst::FreeRemote
-            | MirInst::RemotePush
-            | MirInst::RemotePop
-            | MirInst::RemoteLoad { .. }
-            | MirInst::RemoteStore { .. }
-            | MirInst::RemoteLen
-            | MirInst::SwitchToRemote
-            | MirInst::SwitchToLocal => {
-                return Err(VmError::AssertionFailed(format!(
-                    "{inst} not yet implemented in Phase 1"
-                )));
+            // === 远程栈操作 ===
+            MirInst::AllocRemote => {
+                // 分配远程栈：pop capacity, alloc remote, push StackHandle
+                let mut frame = self.pop_frame()?;
+                let (_, cap_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let cap = cap_val.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: cap_val.type_name().to_string(),
+                })? as usize;
+                // 分配远程栈：[len, cap, elem_0, ..., elem_{cap-1}]
+                let sid = self.id_alloc.alloc_stack();
+                let mut remote = DualStack::with_capacity(2 + cap);
+                // slot 0: length = 0
+                remote.push(self.id_alloc.alloc_element(), Value::Usize(0));
+                // slot 1: capacity
+                remote.push(self.id_alloc.alloc_element(), Value::Usize(cap as i64));
+                // slots 2..2+cap: 预分配（填充 Unit）
+                for _ in 0..cap {
+                    remote.push(self.id_alloc.alloc_element(), Value::Unit);
+                }
+                self.registry.remote_stacks.insert(sid, remote);
+                // 压入句柄
+                let sid_val = Value::StackHandle(sid);
+                frame.data.push(self.id_alloc.alloc_element(), sid_val);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::FreeRemote => {
+                // 释放远程栈：pop StackHandle, free
+                let mut frame = self.pop_frame()?;
+                let (_, handle) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                if let Value::StackHandle(sid) = handle {
+                    self.registry.remote_stacks.remove(&sid);
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RemotePush => {
+                // vec.push(val): remote.len++, 若满则扩容
+                let mut frame = self.pop_frame()?;
+                let (_, val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, handle) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                if let Value::StackHandle(sid) = handle {
+                    let remote = self.registry.remote_stacks.get_mut(&sid)
+                        .ok_or(VmError::RemoteStackNotFound { sid: sid.0 })?;
+                    let len = remote.values[0].as_i64().unwrap_or(0) as usize;
+                    let cap = remote.values[1].as_i64().unwrap_or(0) as usize;
+                    if len >= cap {
+                        // 扩容：分配新栈，容量翻倍（最小4）
+                        let new_cap = if cap == 0 { 4 } else { cap * 2 };
+                        let mut new_remote = DualStack::with_capacity(2 + new_cap);
+                        new_remote.push(self.id_alloc.alloc_element(), Value::Usize(len as i64));
+                        new_remote.push(self.id_alloc.alloc_element(), Value::Usize(new_cap as i64));
+                        // 复制旧元素
+                        for i in 0..len {
+                            new_remote.push(self.id_alloc.alloc_element(), remote.values[2 + i].clone());
+                        }
+                        // 填充剩余容量
+                        for _ in len..new_cap {
+                            new_remote.push(self.id_alloc.alloc_element(), Value::Unit);
+                        }
+                        self.registry.remote_stacks.insert(sid, new_remote);
+                    }
+                    // 写入新元素
+                    let remote = self.registry.remote_stacks.get_mut(&sid).unwrap();
+                    remote.values[2 + len] = val.clone();
+                    // 创建新 ID（元素 ID 变更）
+                    remote.ids[2 + len] = self.id_alloc.alloc_element();
+                    remote.values[0] = Value::Usize((len + 1) as i64);
+                    // 重新压入句柄
+                    frame.data.push(self.id_alloc.alloc_element(), Value::StackHandle(sid));
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RemotePop => {
+                let mut frame = self.pop_frame()?;
+                let (_, handle) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                if let Value::StackHandle(sid) = handle {
+                    let remote = self.registry.remote_stacks.get_mut(&sid)
+                        .ok_or(VmError::RemoteStackNotFound { sid: sid.0 })?;
+                    let len = remote.values[0].as_i64().unwrap_or(0) as usize;
+                    // 先压回句柄，再压结果（结果在栈顶）
+                    frame.data.push(self.id_alloc.alloc_element(), Value::StackHandle(sid));
+                    if len == 0 {
+                        frame.data.push(self.id_alloc.alloc_element(), Value::Unit);
+                    } else {
+                        let val = remote.values[2 + len - 1].clone();
+                        remote.values[0] = Value::Usize((len - 1) as i64);
+                        frame.data.push(self.id_alloc.alloc_element(), val);
+                    }
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RemoteLoad { index } => {
+                let mut frame = self.pop_frame()?;
+                let (_, handle) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                if let Value::StackHandle(sid) = handle {
+                    let remote = self.registry.remote_stacks.get(&sid)
+                        .ok_or(VmError::RemoteStackNotFound { sid: sid.0 })?;
+                    let idx = *index as usize;
+                    let len = remote.values[0].as_i64().unwrap_or(0) as usize;
+                    if idx >= len {
+                        return Err(VmError::AssertionFailed(format!(
+                            "index {idx} out of bounds (len={len})"
+                        )));
+                    }
+                    let val = remote.values[2 + idx].clone();
+                    frame.data.push(self.id_alloc.alloc_element(), Value::StackHandle(sid));
+                    frame.data.push(self.id_alloc.alloc_element(), val);
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RemoteStore { index } => {
+                let mut frame = self.pop_frame()?;
+                let (_, val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, handle) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                if let Value::StackHandle(sid) = handle {
+                    let remote = self.registry.remote_stacks.get_mut(&sid)
+                        .ok_or(VmError::RemoteStackNotFound { sid: sid.0 })?;
+                    let idx = *index as usize;
+                    let len = remote.values[0].as_i64().unwrap_or(0) as usize;
+                    if idx >= len {
+                        return Err(VmError::AssertionFailed(format!(
+                            "index {idx} out of bounds (len={len})"
+                        )));
+                    }
+                    remote.values[2 + idx] = val;
+                    remote.ids[2 + idx] = self.id_alloc.alloc_element();
+                    frame.data.push(self.id_alloc.alloc_element(), Value::StackHandle(sid));
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RemoteLen => {
+                let mut frame = self.pop_frame()?;
+                let (_, handle) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                if let Value::StackHandle(sid) = handle {
+                    let remote = self.registry.remote_stacks.get(&sid)
+                        .ok_or(VmError::RemoteStackNotFound { sid: sid.0 })?;
+                    let len = remote.values[0].clone();
+                    frame.data.push(self.id_alloc.alloc_element(), Value::StackHandle(sid));
+                    frame.data.push(self.id_alloc.alloc_element(), len);
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::SwitchToRemote | MirInst::SwitchToLocal => {
+                // Phase 6: 基本远程栈操作已实现，切换暂不需要
+                let mut frame = self.pop_frame()?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
             }
 
             // === I/O ===
@@ -869,5 +1011,77 @@ mod tests {
         let frame = vm.call_stack.last().unwrap();
         assert_eq!(frame.data.len(), 1);
         assert_eq!(frame.data.top_value(), Some(&i64_val(42)));
+    }
+
+    #[test]
+    fn test_remote_stack_alloc_and_free() {
+        let mut vm = make_vm();
+        let mir = vec![
+            // AllocRemote: pop capacity(5), alloc remote, push StackHandle
+            MirInst::Push { value: Value::Usize(5), ty: TypeId::Usize },
+            MirInst::AllocRemote,
+            // Stack top should be StackHandle
+            MirInst::FreeRemote,
+        ];
+        vm.execute_mir(mir).unwrap();
+        assert!(vm.registry.remote_stacks.is_empty());
+    }
+
+    #[test]
+    fn test_remote_stack_push_pop() {
+        let mut vm = make_vm();
+        let mir = vec![
+            MirInst::Push { value: Value::Usize(2), ty: TypeId::Usize },
+            MirInst::AllocRemote,
+            // Push 42 to vec
+            MirInst::Push { value: Value::I64(42), ty: TypeId::I64 },
+            MirInst::RemotePush,
+            // Push 99 to vec
+            MirInst::Push { value: Value::I64(99), ty: TypeId::I64 },
+            MirInst::RemotePush,
+            // Pop → should be 99
+            MirInst::RemotePop,
+        ];
+        vm.execute_mir(mir).unwrap();
+        let frame = vm.call_stack.last().unwrap();
+        // Stack: [StackHandle, 99]
+        assert_eq!(frame.data.len(), 2);
+        assert_eq!(frame.data.get_from_top(0).unwrap().1, &Value::I64(99));
+    }
+
+    #[test]
+    fn test_remote_stack_load() {
+        let mut vm = make_vm();
+        let mir = vec![
+            MirInst::Push { value: Value::Usize(4), ty: TypeId::Usize },
+            MirInst::AllocRemote,
+            MirInst::Push { value: Value::I64(10), ty: TypeId::I64 },
+            MirInst::RemotePush,
+            MirInst::Push { value: Value::I64(20), ty: TypeId::I64 },
+            MirInst::RemotePush,
+            // Load index 0 → 10
+            MirInst::RemoteLoad { index: 0 },
+        ];
+        vm.execute_mir(mir).unwrap();
+        let frame = vm.call_stack.last().unwrap();
+        assert_eq!(frame.data.get_from_top(0).unwrap().1, &Value::I64(10));
+    }
+
+    #[test]
+    fn test_remote_stack_len() {
+        let mut vm = make_vm();
+        let mir = vec![
+            MirInst::Push { value: Value::Usize(4), ty: TypeId::Usize },
+            MirInst::AllocRemote,
+            MirInst::Push { value: Value::I64(1), ty: TypeId::I64 },
+            MirInst::RemotePush,
+            MirInst::Push { value: Value::I64(2), ty: TypeId::I64 },
+            MirInst::RemotePush,
+            MirInst::RemoteLen,
+        ];
+        vm.execute_mir(mir).unwrap();
+        let frame = vm.call_stack.last().unwrap();
+        // StackHandle + len(2) = 2 elements, top is len
+        assert_eq!(frame.data.get_from_top(0).unwrap().1, &Value::Usize(2));
     }
 }

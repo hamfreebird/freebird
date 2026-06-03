@@ -7,7 +7,7 @@ use crate::vm::stack::DualStack;
 #[derive(Debug, Clone)]
 pub struct GlobalRegistry {
     /// StackId → 数据栈（仅存储远程栈；函数调用帧在 CallStack 中管理）
-    remote_stacks: HashMap<StackId, DualStack>,
+    pub remote_stacks: HashMap<StackId, DualStack>,
 }
 
 impl GlobalRegistry {
