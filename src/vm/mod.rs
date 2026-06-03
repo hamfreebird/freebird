@@ -359,17 +359,14 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
-            MirInst::MakeEnum { variant: _, data_slots: _ } => {
-                // 栈顶：tag(1槽) + data(*data_slots 槽)
-                // MakeEnum 将它们组合为枚举值（保持栈上布局不变）
-                // 标签槽在 data 下方（栈底方向）
+            MirInst::MakeEnum { variant: _, data_slots } => {
+                // 枚举布局: [tag, data_1, ..., data_n]（tag在底部，data在顶部）
+                // 生成器已按 tag→data 顺序压栈，确保布局不变即可
                 let mut frame = self.pop_frame()?;
-                // 确保 tag 在枚举底部（先推入的槽在栈深处）
-                // 当前布局: [...之前元素..., tag, data_1, ..., data_n]（data_n 在栈顶）
-                // 布局不变，仅标记为枚举值（无需特殊操作）
-                // 生成新的 ElementId 用于枚举整体标识
-                let _new_id = self.id_alloc.alloc_element();
-                // 保持布局：tag 在 data 下方
+                if *data_slots > 0 {
+                    frame.data.roll(*data_slots as i32)?;
+                    frame.data.roll(-(*data_slots as i32))?;
+                }
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }

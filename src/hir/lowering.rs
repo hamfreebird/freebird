@@ -274,10 +274,10 @@ impl Lowering {
             }
             ast::Expr::IdRef(name, span) => {
                 // #var: 获取变量的 ElementId
-                // 首先验证变量存在
-                if self.resolver.resolve_var(name, *span).is_err() {
-                    // #id 可以引用未初始化的变量（获取其 ID）
-                    // 但我们仍需要变量已声明
+                // 允许引用未初始化的变量（获取其 ID），但变量必须已声明
+                if let Err(e) = self.resolver.resolve_var(name, *span) {
+                    self.errors.push(e);
+                    return None;
                 }
                 Some(HirExpr::IdRef(name.clone(), *span))
             }
