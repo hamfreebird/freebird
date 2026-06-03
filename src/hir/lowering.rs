@@ -257,12 +257,12 @@ impl Lowering {
                         span: *span,
                     })),
                     Err(e) => {
-                        // 如果名称是函数名，不作为变量错误报告
-                        if self.resolver.lookup_fn(name).is_some() {
-                            // 函数引用：保留为 Var 用于调用解析
+                        // 函数名或类型名（首字母大写）不作为变量错误
+                        let is_type_name = name.chars().next().is_some_and(|c| c.is_uppercase());
+                        if self.resolver.lookup_fn(name).is_some() || is_type_name {
                             Some(HirExpr::Var(HirVarRef {
                                 name: name.clone(),
-                                scope_depth: usize::MAX, // 标记为非变量
+                                scope_depth: usize::MAX,
                                 span: *span,
                             }))
                         } else {

@@ -6,6 +6,10 @@ mod tests {
     fn parse_expr(source: &str) -> Expr {
         let wrapped = format!("fn _test() {{ {} }}", source);
         let (prog, errors) = parse(&wrapped);
+        if !errors.is_empty() {
+            eprintln!("Parse errors for '{source}':");
+            for e in &errors { eprintln!("  {e}"); }
+        }
         if let Some(Decl::Fn(f)) = prog.decls.first() {
             if let Some(ref body) = f.body {
                 if let Some(ref tail) = body.tail {
@@ -14,13 +18,6 @@ mod tests {
                 if let Some(Stmt::Expr(e, _)) = body.stmts.first() {
                     return e.clone();
                 }
-            }
-        }
-        // Debug: print errors and source
-        if !errors.is_empty() {
-            eprintln!("Parse errors for '{source}':");
-            for e in &errors {
-                eprintln!("  {e}");
             }
         }
         panic!("failed to parse expression: {source}");
