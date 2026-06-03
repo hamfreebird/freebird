@@ -656,8 +656,12 @@ impl Parser {
                 stmts.push(self.parse_stmt()?);
             } else {
                 let expr = self.parse_expr(0)?;
-                if self.check(TokenKind::RBrace) && tail.is_none() {
-                    tail = Some(Box::new(expr));
+                if self.check(TokenKind::RBrace) {
+                    if tail.is_none() {
+                        tail = Some(Box::new(expr));
+                    } else {
+                        stmts.push(Stmt::Expr(expr, self.current_span()));
+                    }
                     break;
                 } else if self.eat(TokenKind::Semicolon) {
                     stmts.push(Stmt::Expr(expr, self.current_span()));
@@ -665,12 +669,8 @@ impl Parser {
                     let value = self.parse_expr(0)?;
                     self.expect_semicolon()?;
                     stmts.push(Stmt::Assign { target: expr, value, span: self.current_span() });
-                } else if tail.is_none() {
-                    tail = Some(Box::new(expr));
-                    break;
                 } else {
                     stmts.push(Stmt::Expr(expr, self.current_span()));
-                    break;
                 }
             }
         }
