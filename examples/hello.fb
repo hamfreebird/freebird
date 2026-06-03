@@ -1,0 +1,18 @@
+// Freebird Hello World
+fn main() {
+    stardust! {
+        Push(72)    // H
+        Push(101)   // e
+        Push(108)   // l
+        Push(108)   // l
+        Push(111)   // o
+        Push(44)    // ,
+        Push(32)    // (space)
+        Push(87)    // W
+        Push(111)   // o
+        Push(114)   // r
+        Push(108)   // l
+        Push(100)   // d
+        Push(33)    // !
+    }
+}

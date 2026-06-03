@@ -147,7 +147,7 @@ impl StardustGen {
             MirInst::MakeEnum { variant, data_slots } => {
                 self.emit(&format!("// MakeEnum(variant={variant}, data_slots={data_slots})"));
             }
-            MirInst::EnumTag => { self.emit("// EnumTag"); }
+            MirInst::EnumTag { .. } => { self.emit("// EnumTag"); }
             MirInst::AllocRemote => { self.emit("// AllocRemote"); }
             MirInst::FreeRemote => { self.emit("// FreeRemote"); }
             MirInst::RemotePush => { self.emit("// RemotePush"); }

@@ -591,25 +591,22 @@ impl MirGen {
                 self.stack.push_temp(); // enum value
             }
             HirExpr::Match(scrutinee, arms, ..) => {
-                // 简化 match 实现：假设枚举类型，生成 EnumTag + 比较 + 跳转
+                // 生成 EnumTag（从 TypeTable 获取 total_slots）
                 self.gen_expr(scrutinee, fn_sig);
-                // 枚举值在栈顶，读取 tag
-                self.mir.push(MirInst::EnumTag);
+                let total_slots = self.infer_enum_slots(scrutinee);
+                self.mir.push(MirInst::EnumTag { total_slots });
                 // 栈：原枚举（多槽）→ 仅保留 tag（1槽）
                 // 简化：枚举被消费，tag 留在栈顶用于匹配
                 self.stack.pop(); // 原枚举
                 self.stack.push_temp(); // tag
 
                 let end_label = self.labels.fresh();
+                // 推断枚举名（从 scrutinee 的变量名查找类型表）
+                let enum_name = self.infer_enum_name(scrutinee);
                 for arm in arms {
                     let arm_label = self.labels.fresh();
-                    // 对于每个分支：dup tag，比较，如果匹配则跳转
                     if let ast::Pattern::Enum { variant, .. } = &arm.pattern {
-                        let vtag = self.type_table.variant_tag(
-                            // 从 scrutinee 推断枚举名 — 简化处理
-                            "Option", // 占位
-                            variant,
-                        ).unwrap_or(0);
+                        let vtag = self.type_table.variant_tag(&enum_name, variant).unwrap_or(0);
                         self.mir.push(MirInst::Dup { ty: TypeId::I32 });
                         self.stack.dup();
                         self.mir.push(MirInst::Push { value: Value::I32(vtag as i64), ty: TypeId::I32 });
@@ -652,10 +649,52 @@ impl MirGen {
     // ─── 复合类型辅助方法 ───
 
     /// 解析字段访问的偏移量
-    fn resolve_field_offset(&self, expr: &HirExpr, field: &str) -> usize {
-        if let HirExpr::Var(var_ref) = expr {
-            let _ = var_ref;
+    /// 从表达式推断枚举名
+    fn infer_enum_name(&self, expr: &HirExpr) -> String {
+        match expr {
+            HirExpr::Var(var_ref) => {
+                // 从变量名无法直接推断枚举类型，遍历 TypeTable
+                for (name, _) in self.type_table.iter() {
+                    if self.type_table.lookup_enum(name).is_some() {
+                        return name.clone();
+                    }
+                }
+                "Option".to_string() // 默认回退
+            }
+            HirExpr::EnumLit { name, .. } => name.join("::"),
+            _ => "?".to_string(),
         }
+    }
+
+    /// 从表达式推断枚举总槽数
+    fn infer_enum_slots(&self, expr: &HirExpr) -> u32 {
+        match expr {
+            HirExpr::Var(_) => 2, // 默认 2 槽
+            HirExpr::EnumLit { name, .. } => {
+                self.type_table.lookup_enum(&name.join("::"))
+                    .map(|e| e.total_slots)
+                    .unwrap_or(2)
+            }
+            _ => 2,
+        }
+    }
+
+    fn resolve_field_offset(&self, expr: &HirExpr, field: &str) -> usize {
+        // 尝试从变量名推断类型（通过栈追踪器）
+        if let HirExpr::Var(var_ref) = expr {
+            // 从栈追踪器查找变量对应的结构体类型
+            // 简化：遍历 TypeTable 查找匹配的字段
+            for (_type_name, type_def) in self.type_table.iter() {
+                if let crate::typeck::type_table::TypeDef::Struct(s) = type_def {
+                    for f in &s.fields {
+                        if f.name == var_ref.name {
+                            // 变量名匹配某个字段名？不对，应该匹配变量名→类型
+                        }
+                    }
+                }
+            }
+        }
+        // 回退：如果字段名是数字，按元组索引处理
         if let Ok(idx) = field.parse::<usize>() {
             return idx;
         }

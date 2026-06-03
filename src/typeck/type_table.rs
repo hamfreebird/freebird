@@ -116,6 +116,11 @@ impl TypeTable {
         );
     }
 
+    /// 遍历所有类型定义
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &TypeDef)> {
+        self.types.iter()
+    }
+
     /// 查找类型定义
     pub fn lookup(&self, name: &str) -> Option<&TypeDef> {
         self.types.get(name)
