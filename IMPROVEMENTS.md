@@ -1,617 +1,462 @@
-# Freebird 实现状态
+# Freebird 实现状态 — 深度审计报告
 
-> **状态**: 核心实现完成 (v0.1.0)，部分高级特性简化或未实现。
-> **总代码量**: ~9,700 行 Rust (37 个源文件)，122 个测试全部通过。
-> **实现语言**: Rust 2024 Edition (MSRV 1.85)
+> **审计日期**: 2026-06-03
+> **审计范围**: 40 个源文件，~10,500 行 Rust 代码，逐文件逐行检查
+> **发现**: 15 个严重 bug，35 个高优先级问题，50+ 个简化/占位实现，20+ 个缺失特性
+> **测试**: 130 个全部通过（但多个测试仅检查 is_ok()，未验证正确性）
 
 ---
 
 ## 目录
 
-1. [总体架构](#1-总体架构)
-2. [核心数据结构](#2-核心数据结构)
-3. [模块设计与实现状态](#3-模块设计与实现状态)
-4. [关键算法](#4-关键算法)
-5. [已完成功能](#5-已完成功能)
-6. [部分实现 — 待完善](#6-部分实现--待完善)
-7. [未实现 — 待开发](#7-未实现--待开发)
-8. [技术风险与缓解](#8-技术风险与缓解)
-9. [测试覆盖现状](#9-测试覆盖现状)
-10. [项目实际结构](#10-项目实际结构)
+1. [严重 Bug — 执行正确性受损](#1-严重-bug--执行正确性受损)
+2. [高优先级 Bug — 数据丢失/静默错误](#2-高优先级-bug--数据丢失静默错误)
+3. [MIR 生成器问题](#3-mir-生成器问题)
+4. [VM 运行时问题](#4-vm-运行时问题)
+5. [Stardust 代码生成器问题](#5-stardust-代码生成器问题)
+6. [解析器问题](#6-解析器问题)
+7. [HIR + 借用检查器问题](#7-hir--借用检查器问题)
+8. [类型系统问题](#8-类型系统问题)
+9. [IO / REPL / 诊断问题](#9-io--repl--诊断问题)
+10. [死代码清单](#10-死代码清单)
+11. [硬编码值清单](#11-硬编码值清单)
+12. [测试覆盖率缺口](#12-测试覆盖率缺口)
+13. [已完成的修复（本审计后）](#13-已完成的修复)
+14. [项目整体评估](#14-项目整体评估)
 
 ---
 
-## 1. 总体架构
+## 1. 严重 Bug — 执行正确性受损
 
-### 1.1 编译与执行流水线
+### BUG-1: if-else 控制流反向 (mir/generator.rs:443)
 
-```
-Freebird 源码 (.fb)
-    │
-    ▼
-┌──────────────┐
-│   Lexer      │ ✅  → Token 流 (760行，完整词法)
-└──────────────┘
-    │
-    ▼
-┌──────────────┐
-│   Parser     │ ✅  → AST (递归下降+Pratt，1,110行)
-└──────────────┘
-    │
-    ▼
-┌──────────────┐
-│ Name Resolver│ ✅  → HIR (作用域帧栈+前向引用检测，540行)
-└──────────────┘
-    │
-    ▼
-┌──────────────┐
-│ Type Table   │ ⚠️  → 仅类型注册表（结构体/枚举布局），缺虚拟类型栈
-└──────────────┘
-    │
-    ▼
-┌──────────────┐
-│ Borrow CK    │ ⚠️  → name-based 借用检查，缺 ElementId 维度
-└──────────────┘
-    │
-    ▼
-┌──────────────┐
-│ MIR Gen      │ ✅  → MIR 指令序列 (620行生成器 + 优化器)
-└──────────────┘
-    │
-    ├──────────────────────┐
-    ▼                      ▼
-┌──────────────┐   ┌──────────────┐
-│ Stardust Gen │   │ LLVM IR Gen  │
-│ ⚠️ 基本交错  │   │ ❌ 未实现    │
-└──────────────┘   └──────────────┘
-    │
-    ▼
-┌──────────────┐
-│ Freebird VM  │ ✅  → 双栈解释器 (1,087行，远程栈操作完整)
-└──────────────┘
+```rust
+// 生成 Jump(else_label) — 但 VM 的 Jump 在条件为真时跳转
+self.mir.push(MirInst::Jump(else_label));
 ```
 
-### 1.2 执行模式实现状态
+注释写 "条件为假时跳到 else"，但 VM 的 `Jump` 指令在弹出条件**非零（真）**时跳转。结果：`if true { A } else { B }` 执行分支 B 而非 A。While 循环正确插入了 `Not` 取反，但 if-else 缺失。
 
-| 模式 | 命令 | 状态 |
-|------|------|------|
-| **解释执行** | `freebird run <file.fb>` | ✅ 完整 |
-| **Stardust 编译** | `freebird build --target stardust` | ⚠️ 基本实现 (Call/Ret 为注释) |
-| **LLVM 编译** | `freebird build --target llvm` | ❌ 未实现 |
-| **REPL** | `freebird repl` | ✅ 完整 (含 :stack/:vars/:info) |
-| **检查** | `freebird check <file.fb>` | ✅ JSON 诊断输出 |
+**修复**: 在 `Jump(else_label)` 前插入 `MirInst::Not`。
+
+### BUG-2: 5 个指令处理器中 roll-back 算法错误 (vm/mod.rs:313-315, 330-332, 348-350, 374-376, 841-843)
+
+模式 `roll(pos); dup; roll(-pos)` 在所有处理器中重复出现（Deref、FieldAccess、IndexAccess、EnumTag、execute_read_var）。`dup` 后栈增长1，但 `roll(-pos)` 仍用原始 pos，导致元素恢复错误位置。
+
+```
+栈 [A,B,C,D]，find_id(D)=pos=2:
+  roll(2) → [A,C,D,B]
+  dup     → [A,C,D,B,B']
+  roll(-2)→ [A,C,B',D,B]     ← 错误！应为 [A,B,C,D,B']
+```
+
+`test_read_var_does_not_change_depth` 仅检查长度 (4)，不检查顺序，故测试通过而 bug 存在。
+
+**修复**: 使用直接索引访问而非 roll 序列，或调整 `roll(-pos)` 为 `roll(-(pos+1))`。
+
+### BUG-3: execute_write_var 回滚越界 (vm/mod.rs:867-873)
+
+`roll(pos); pop; roll(-pos)`: pop 后栈缩短，`roll(-pos)` 在 pos 为原始栈底时越界。
+
+```
+栈 [old, new], pos=1:
+  roll(1) → [new, old]
+  pop     → [new]          len=1
+  roll(-1)→ 越界！pos=1 >= len=1
+```
+
+**修复**: pop 后检查 `pos < frame.data.len()`，仅在有效时 roll-back。
+
+### BUG-4: Break 仅生成注释 (mir/generator.rs:496-503)
+
+```rust
+HirExpr::Break(value, _) => {
+    self.mir.push(MirInst::Comment("break".to_string()));
+}
+```
+
+While/Loop 的 `loop_end` label 是局部变量，Break 无法访问。执行时直接 fall-through 到下一条指令。
+
+### BUG-5: Enum::Variant 无数据（如 Option::None）被解析器静默丢弃 (parser.rs:323-346)
+
+ColonColon 处理器进入分支，消耗 variant 名，检查 LParen。若无 LParen，整个 if-let 链 fall-through，variant 名被消耗但未纳入任何 AST 节点。`Option::None` 变成 `Var("Option")`。
+
+### BUG-6: resolve_field_offset 逻辑完全错误 (mir/generator.rs:682-702)
+
+函数遍历 TypeTable 寻找字段名==变量名的结构体。这混淆了变量名与字段名。所有 `FieldAccess` 实际返回 offset 0（fallback 701行），访问第一个字段。
+
+### BUG-7: infer_enum_name 对多枚举程序错误 (mir/generator.rs:653-667)
+
+HashMap 迭代顺序任意，取第一个枚举。多枚举程序大概率选错。fallback 硬编码 "Option"。
+
+### BUG-8: Match 标签值泄漏到 arm body (mir/generator.rs:610-618)
+
+`Dup; Push(vtag); Eq; Jump` 后，Dup 引入的 tag 副本残留在栈上。arm body 获得意外的额外栈元素。
+
+### BUG-9: Call 使用 FnId(0) 占位 (mir/generator.rs:421, 822)
+
+未知函数名或 stardust! 宏中的 Call 使用 `FnId(0)`。`FnId(0)` 从未注册，VM 执行时必然失败。
+
+### BUG-10: Stardust 算术在操作前 pop 所有操作数 (codegen/stardust.rs:87-95, 172-188)
+
+```rust
+"Pop Pop  // discard rhs id,value"
+"Swap Pop Pop Swap  // discard lhs id,value"
+"Add"  // 此时栈为空！
+```
+
+Pop 后栈空，Add 无操作数。整个 Stardust 算术生成逻辑错误。
+
+### BUG-11: Let 无 init 时 BindVar 操作空栈 (mir/generator.rs:311-319)
+
+`let x;`（无初始值）：init 为 None，不 push 值，但 BindVar 仍发射。VM 调用 `top_id()` 在空栈 → StackUnderflow。
+
+### BUG-12: f32/f64 字面量后缀丢失浮点语义 (lexer.rs:503-506)
+
+`1f32` 被词法为 `IntLiteral(1, IntSuffix::I32)`，浮点语义完全丢失。
+
+### BUG-13: 空 16/8/2 进制字面量不推入 errors (lexer.rs:433, 449, 465)
+
+`0x`/`0o`/`0b` 产生 Error token 但不追加到 `self.errors`。与 10 进制路径不一致。
+
+### BUG-14: f32::NAN as i64 平台依赖 (value.rs:65-66)
+
+`F32(f) => Some(*f as i64)`: NaN/Inf 到 i64 的转换结果因平台而异。
+
+### BUG-15: read_line 根本性损坏 (io.rs:57-68)
+
+分配远程栈 → 读1字符 → 不写入 → 不循环 → 不释放。完全不工作。
 
 ---
 
-## 2. 核心数据结构
+## 2. 高优先级 Bug — 数据丢失/静默错误
 
-### 2.1 Value 类型 — ✅ 完成
+### BUG-H1: 属性被静默丢弃 (parser.rs:38, 96)
 
-所有计划类型已实现：I8-I64, Isize, U8-U64, Usize, F32, F64, Bool, Char, Unit, Tuple, Ref, MutRef, StackHandle, FnPtr, CallElement。
+`let _attrs = self.parse_attributes()` 解析后丢弃。所有 AST 节点的 `attrs: vec![]` 始终为空。
 
-### 2.2 ElementId 与 StackId — ✅ 完成
+### BUG-H2: 赋值仅支持简单变量 (parser.rs:256-257)
 
-IdAllocator 完整实现，ElementId/StackId/FnId 独立分配器，StackId 使用 SipHash 派生（避免碰撞）。
+`x.y = 5`、`arr[0] = 5`、`*ptr = 5` 均被拒绝/误报。
 
-### 2.3 双栈 (DualStack) — ✅ 完成
+### BUG-H3: filter_map 在 5 处静默吞没错误 (lowering.rs:325, 353, 357, 389, 433)
 
-完整实现：push/pop/dup/roll(正/零/负)/swap/pick/find_id/get_from_top/truncate。
-Roll 往返测试通过 (roll(+n); roll(-n) 等价于 no-op)。
+Call参数、元组元素、数组元素、match臂、返回值中的子表达式降级失败时，错误被 `filter_map` 丢弃。
 
-### 2.4 变量栈 (VarStack) — ✅ 完成
+### BUG-H4: 错误类型误用 (lowering.rs:218, 314)
 
-作用域帧管理、遮蔽、update。
+不可变赋值报 `UndefinedVariable`；参数个数不匹配报 `UndefinedVariable`。语义完全错误。
 
-### 2.5 调用帧 (CallFrame) — ✅ 完成
+### BUG-H5: IdRef 空体 (lowering.rs:276-282)
 
-marks 预扫描、指令共享 (Rc)、调试信息。
+`resolve_var` 失败时，注释说需检查但代码体为空，错误被吞没。
 
-### 2.6 全局注册表 (GlobalRegistry) — ✅ 完成
+### BUG-H6: max_stack 配置永不被检查 (config.rs:5, mod.rs 无引用)
 
-远程栈管理，HashMap<StackId, DualStack>。
+默认值 1,048,576，但 push/frame创建从未验证。程序可无限 push 直到 OOM。
 
-### 2.7 MIR 指令集 — ✅ 完成
+### BUG-H7: 算术运算无溢出检查 (vm/mod.rs:169-179)
 
-50+ 变体全部定义：栈操作、算术、比较、逻辑、控制流、变量/作用域、引用、复合类型、远程栈、I/O、调试、元数据。
+Debug 模式 panic，Release 模式静默 wrap。无 checked_add 等安全操作。
+
+### BUG-H8: MakeEnum 泄漏 ElementIds (vm/mod.rs:362-363)
+
+`let _new_id = self.id_alloc.alloc_element()` 分配后丢弃。每次 MakeEnum 消耗一个永久 ID。
+
+### BUG-H9: Jump 非整数条件静默强制为 false (vm/mod.rs:228)
+
+`cond.as_i64().unwrap_or(0)` — StackHandle/Ref/FnPtr 等非整数条件静默视为假。
+
+### BUG-H10: CallArg::Pos span 始终错误 (parser.rs:664-669)
+
+使用 `self.current_span()`（下一 token 的位置）而非已解析表达式的 span。
+
+### BUG-H11: 未初始化变量被认为已初始化 (resolver.rs:123-124, lowering.rs:193)
+
+`let x: i32;`（无 init）仍被 mark_initialized，后续读取不报错。
+
+### BUG-H12: VarStack.insert 在空帧上静默丢弃数据 (var_stack.rs:42)
+
+若未调用 enter_scope，insert 不存储也不报错。
+
+### BUG-H13: RemotePop 空栈返回 Unit 不报错 (vm/mod.rs:469-471)
+
+与所有其他 StackUnderflow 约定不一致。
+
+### BUG-H14: 返回值的 ReturnArityMismatch 为死代码 (error.rs:32)
+
+execute_call 硬编码 `return_arity: 0`，此错误永不被构造。
+
+### BUG-H15: REPL 使用测试配置限制用户程序 (repl.rs:26)
+
+`RuntimeConfig::test()`（max_stack=1024, max_call_depth=64）用于生产 REPL。
 
 ---
 
-## 3. 模块设计与实现状态
+## 3. MIR 生成器问题
 
-### 3.1 模块依赖图（含实现状态）
+| # | 位置 | 问题 |
+|---|------|------|
+| G1 | generator:284-291 | `collect_drop_vars` 返回空 Vec，Drop 代码永不被生成 |
+| G2 | generator:309-320 | 非 Var 的解构模式（Tuple/Struct/Enum）静默丢弃 |
+| G3 | generator:525-528 | Tuple 表达式无 MakeTuple 指令，仅独立 push 元素 |
+| G4 | generator:530-533 | Array 表达式无 MakeArray 指令 |
+| G5 | generator:555-567 | StructLit 缺失字段时静默产生错误栈布局 |
+| G6 | generator:584 | data_slots 始终为1，不处理多元组数据变体 |
+| G7 | generator:447 | 死代码 Mark(else_label+1000)，可能碰撞合法 label |
+| G8 | generator:424-435 | stack_pass 模式参数清理跳过，tracker 残留幽灵槽 |
+| G9 | generator:241-253 | StackTracker 不追踪 CallElement（VM栈有CE，tracker无） |
+| G10 | generator:493 | Ret 在 tracker 中保留了错误元素（应保留返回值但丢弃了它们） |
+| G11 | generator:512-516 | 复杂 Ref 表达式仅注释，不产生实际引用 |
+| G12 | generator:643-645 | 未处理 HirExpr 变体产生 TODO Comment，静默忽略 |
 
-```
-                    ┌──────────┐
-                    │   main   │ ✅ (CLI: run/check/repl/build)
-                    └────┬─────┘
-                         │
-                    ┌────▼─────┐
-                    │  lib.rs  │ ✅ (公共 API)
-                    └────┬─────┘
-                         │
-          ┌──────────────┼──────────────────┐
-          │              │                  │
-    ┌─────▼──────┐ ┌─────▼──────┐ ┌────────▼───────┐
-    │  frontend  │ ✅  │    hir     │ ✅  │      vm         │ ✅
-    │  lexer     │     │  lowering  │     │  stack, frame   │
-    │  parser    │     │  resolver  │     │  registry, id   │
-    │  ast,token │     │  hir types │     │  value, remote  │
-    └─────┬──────┘ └─────┬──────┘ └────────┬───────┘
-          │              │                  │
-          │         ┌────▼──────┐           │
-          │         │  typeck   │ ⚠️        │
-          │         │ type_table│ (缺type   │
-          │         │           │ _stack)   │
-          │         └────┬──────┘           │
-          │              │                  │
-          │         ┌────▼──────┐           │
-          │         │ borrowck  │ ⚠️        │
-          │         │ (name-    │           │
-          │         │  based)   │           │
-          │         └────┬──────┘           │
-          │              │                  │
-          │         ┌────▼──────┐    ┌──────▼──────┐
-          │         │    mir    │ ✅ │   codegen    │ ⚠️
-          │         │ generator │    │  stardust(⚠) │
-          │         │           │    │  llvm (❌)   │
-          │         └───────────┘    │  optimize(✅)│
-          │                          └──────────────┘
-          │
-     ┌────▼──────┐
-     │   repl    │ ✅ (交互式 REPL + 状态检查)
-     │   io.rs   │ ⚠️ (file ops 占位)
-     │diagnostics│ ✅ (JSON 诊断)
-     └───────────┘
-```
+---
 
-### 3.2 模块职责与实现状态
+## 4. VM 运行时问题
 
-| 模块 | 路径 | 状态 | 说明 |
-|------|------|------|------|
-| `vm` | `src/vm/` | ✅ 完整 | 双栈、帧管理、全局注册表、远程栈、ID分配、MIR解释器、错误类型、运行时配置 |
-| `frontend` | `src/frontend/` | ✅ 完整 | 词法分析 (760行)、语法解析 (1,110行)、AST定义、Token类型 |
-| `hir` | `src/hir/` | ✅ 完整 | HIR数据结构 (228行)、AST→HIR降级 (540行)、名称解析 (239行) |
-| `typeck` | `src/typeck/` | ⚠️ 部分 | 类型注册表 TypeTable (260行)；**缺: type_stack.rs (虚拟类型栈)** |
-| `borrowck` | `src/borrowck/` | ⚠️ 部分 | name-based 借用检查 (385行)、Drop代码生成 (56行)；**缺: ElementId-based 运行期检查** |
-| `mir` | `src/mir/` | ⚠️ 部分 | MIR生成器 (850行)；**注意: MirInst 定义在 vm/mir.rs 而非 mir/** |
-| `codegen` | `src/codegen/` | ⚠️ 部分 | Stardust代码生成 (239行)、MIR优化器 (184行)；**缺: llvm.rs, intrinsics.rs** |
-| `repl` | `src/repl.rs` | ✅ 完整 | 交互式 REPL 主循环、状态可视化 (215行) |
-| `io` | `src/io.rs` | ⚠️ 部分 | print/read 操作 (113行)；**file_read/write 为占位注释** |
-| `diagnostics` | `src/diagnostics.rs` | ✅ 完整 | JSON 诊断输出 (178行) |
-| `pipeline` | `src/pipeline.rs` | ✅ 完整 | 端到端编译流水线 (302行) |
+| # | 位置 | 问题 |
+|---|------|------|
+| V1 | mod.rs:785-793 | 主程序返回值静默丢弃，无 API 检索 |
+| V2 | mod.rs:788 | `saturating_sub(argc)` 当 argc>len 时截断整个栈，不报错 |
+| V3 | mod.rs:534-539 | SwitchToRemote/SwitchToLocal 为 no-op 占位 |
+| V4 | config.rs:5 | `max_call_depth` 在 run() 循环检查但 max_stack 无检查 |
+| V5 | stack.rs:84-101 | roll 的 O(n) remove/insert，大栈性能问题 |
+| V6 | id.rs:52-60 | derive_stack 碰撞域 2^63（高位置1），无去重 |
+| V7 | value.rs:120-121 | is_copy_type() 对 Ref/MutRef 返回 true（命名混淆） |
+| V8 | frame.rs:113-117 | jump_to_mark() 死代码，从未被调用 |
+| V9 | registry.rs:24 | alloc_remote 未使用 _call_id 参数 |
 
-### 3.3 各模块详细分析
+---
 
-#### 3.3.1 AST 节点类型 — ✅ 完成
+## 5. Stardust 代码生成器问题
 
-所有计划节点已实现：
-- Expr: Lit, Var, IdRef, Deref, Ref, Binary, Unary, Call, FieldAccess, Index, Tuple, Array, Repeat, StructLit, EnumLit, If, Match, Loop, While, For, Block, Break, Return, Ret, Unsafe, StardustMacro, Continue, As
-- Stmt: Let (含pattern/ty/mutable), Expr, Assign
-- Decl: Fn, Struct, Enum, Extern, Use
-- 额外实现: FnPtr类型, Never类型, Wildcard类型
+| # | 位置 | 问题 |
+|---|------|------|
+| S1 | stardust.rs:124-132 | Mark/Jump/UncondJump/Call/Ret 全部仅注释 |
+| S2 | stardust.rs:135-137 | BindVar/ReadVar/WriteVar 仅注释 |
+| S3 | stardust.rs:138-166 | 所有复合类型、远程栈、I/O 操作仅注释 |
+| S4 | stardust.rs:38-42 | Push 对 id 和 value 使用相同值 |
+| S5 | stardust.rs:54-73 | Roll 槽乘数应为 4 而非 2 |
+| S6 | stardust.rs:80-86 | Pick 处理器为死代码（生成器不发射 Pick） |
+| S7 | stardust.rs:74-79 | Swap 的 ShiftL×4 + ShiftR×2 语义存疑 |
 
-**与计划的差异**: `pattern.rs` 未独立创建——模式解析集成在 `parser.rs` 中（`parse_pattern()` 方法）。
+**结论**: Stardust 后端仅 ~12/45 MIR 指令生成实际代码，其余全部为注释。生成的 Stardust 源码无法独立执行。
 
-#### 3.3.2 名称解析 — ✅ 完成
+---
 
-作用域构建、变量绑定、名称消解、前向引用检测。
-函数前向引用合法（两遍处理：先收集签名，再解析体）。
+## 6. 解析器问题
 
-#### 3.3.3 类型检查器 — ⚠️ 仅 TypeTable
+| # | 位置 | 问题 |
+|---|------|------|
+| P1 | parser:323-346 | Enum::Variant 无数据时静默丢弃 variant (BUG-5) |
+| P2 | parser:38,96 | 属性被解析后丢弃 |
+| P3 | parser:256-257 | 仅 Var 类型赋值有效 |
+| P4 | parser:244-243 | use 不支持通配符/重命名/嵌套 |
+| P5 | parser:108-109 | FnParam 不支持 mut 或 _ |
+| P6 | token:28,60 | BoolLiteral 和 ElementId 为死代码（从不产生） |
+| P7 | token:127-141 | IntSuffix::parse 对未知后缀静默返回 None |
+| P8 | lexer:475-509 | 贪婪字母数字后缀消费，吞没后续标识符字符 |
+| P9 | lexer:375 | 不支持前导点/尾随点浮点数（.5, 1.） |
+| P10 | lexer:383-394 | 科学计数法仅在小数点后有效（1e5 不解析） |
+| P11 | error:30-36 | DuplicateField/UnknownAttribute/MissingAttributeArg 从不被构造 |
+| P12 | mod.rs:14-27 | parse() 在词法错误后仍运行解析器 |
+| P13 | ast:16,52,99 | Type::FnPtr/Pattern::Or/UnOp::Deref 为死代码变体 |
 
-| 组件 | 状态 |
+---
+
+## 7. HIR + 借用检查器问题
+
+| # | 位置 | 问题 |
+|---|------|------|
+| H1 | types:30 | HirType::Array 缺少大小维度 |
+| H2 | types:28 | HirType::Ref 无生命周期参数 |
+| H3 | types:33 | HirType::FnPtr 无 ABI/调用约定字段 |
+| H4 | types:153-157 | HirStmt::Assign 仅支持简单变量目标 |
+| H5 | lowering:236-242 | 复杂赋值目标被拒绝 |
+| H6 | lowering:265 | scope_depth=usize::MAX 哨兵未文档化 |
+| H7 | lowering:312-313 | stack_pass 绕过参数计数验证 |
+| H8 | lowering:131-133 | 函数参数全部不可变（mutable=false 硬编码） |
+| H9 | lowering:455-460 | pattern_var_name 仅处理 Var 模式 |
+| H10 | resolver:94-103 | declare_var 在无作用域时静默无操作 |
+| H11 | resolver:152 | register_fn 允许重复函数名 |
+| H12 | resolver:141-148 | is_mutable 返回 None 时调用者未处理 |
+| H13 | checker:84-87 | Move 类型硬编码（Vec/String/Box/StackHandle），用户类型不可扩展 |
+| H14 | checker:141-144 | 重复变量报 CannotAssignToImmutable（错误类型） |
+| H15 | checker:160-163 | 未定义变量报 UseAfterMove（错误类型） |
+| H16 | checker:121-129 | drop_order 返回所有作用域变量而非仅当前作用域 |
+| H17 | drop_gen:14-18 | 无条件 FreeRemote，不检查是否实际需要 |
+| H18 | resolver:27 | Binding 无类型字段，丢弃所有声明类型信息 |
+
+---
+
+## 8. 类型系统问题
+
+| # | 位置 | 问题 |
+|---|------|------|
+| T1 | type_table:74,78 | slots 始终为 1（不处理嵌套/展开槽） |
+| T2 | type_table:85 | all_copy 始终为 true（含非 Copy 字段亦然） |
+| T3 | type_table:102 | data_slots 始终为 1（不处理多槽数据变体） |
+| T4 | type_table:148 | field_offset 返回索引而非实际偏移量 |
+| T5 | type_table:205 | 泛型类型参数被丢弃 |
+| T6 | type_stack:124 | merge 错误 span 始终为 (0,0,0) |
+| T7 | type_stack:91-112 | roll 在 n=i32::MIN 时溢出（-n 在 debug 模式 panic） |
+| T8 | type_stack:84-89 | dup 在空栈上静默无操作 |
+| T9 | 全局 | TypeStack 从未被集成到流水线，完全是死代码 |
+| T10 | 全局 | 无类型检查 pass，类型错误仅在运行时暴露 |
+
+---
+
+## 9. IO / REPL / 诊断问题
+
+| # | 位置 | 问题 |
+|---|------|------|
+| I1 | io:57-68 | read_line 损坏 (BUG-15) |
+| I2 | io:70-82 | file_read/file_write 为注释占位 |
+| I3 | io:86-93 | print_str 未包含在 std_library 公开列表中 |
+| I4 | io:37-41 | print_str 无条件追加换行 |
+| R1 | repl:26 | 使用 RuntimeConfig::test() 限制生产使用 |
+| R2 | repl:81-85 | 声明检测脆弱（仅匹配 "fn "） |
+| R3 | repl:95-99 | 每行重新解析所有声明（O(n²)） |
+| R4 | repl:129-131 | 函数注册表泄漏（旧定义不清理） |
+| R5 | repl:133 | VM 状态跨行不重置（状态污染） |
+| R6 | repl:136 | 通过公共字段直接访问 VM 内部 |
+| D1 | diagnostics:148 | JSON 序列化失败返回无效 {}（非 DiagnosticReport） |
+| D2 | diagnostics:46-54 | SourceSpan 缺少 end_line/end_column |
+| D3 | diagnostics:15-19 | Warning/Note/Help 级别永不被生成 |
+| D4 | main.rs:88-92 | Check 命令绕过 check_source()，重复逻辑 |
+| D5 | main.rs:131 | 阶段完成声明过时（"Phases 0-10"） |
+
+---
+
+## 10. 死代码清单
+
+| 文件 | 行 | 项目 |
+|------|-----|------|
+| token.rs | 28 | `TokenKind::BoolLiteral` — lexer 从不产生 |
+| token.rs | 60 | `TokenKind::ElementId` — lexer 从不产生 |
+| ast.rs | 16 | `Type::FnPtr` — parser 从不构造 |
+| ast.rs | 52 | `Pattern::Or` — parser 从不构造 |
+| ast.rs | 99 | `UnOp::Deref` — parser 用 Expr::Deref 代替 |
+| error.rs | 30-36 | DuplicateField/UnknownAttribute/MissingAttributeArg — 从不构造 |
+| frame.rs | 113 | `jump_to_mark()` — 从不调用 |
+| stack.rs | 168 | `top_value_mut()` — 从不调用 |
+| var_stack.rs | 52 | `lookup_with_depth()` — 仅测试使用 |
+| var_stack.rs | 74 | `is_bound()` — 从不调用 |
+| error.rs(vm) | 32 | `ReturnArityMismatch` — 从不构造 |
+| type_stack.rs | 全部 | `TypeStack` — 从未集成 |
+| stardust.rs | 80-86 | `Pick` 处理器 — 生成器不发射 |
+| generator.rs | 151 | `active_vars` 字段 #[allow(dead_code)] |
+| lib.rs | 22 | `check_source` — CLI 不使用 |
+
+---
+
+## 11. 硬编码值清单
+
+| 文件 | 行 | 值 | 说明 |
+|------|-----|-----|------|
+| generator | 584 | `data_slots = 1` | 始终1槽 |
+| generator | 662 | `"Option"` | 枚举名fallback |
+| generator | 672 | `2` | total_slots默认值 |
+| generator | 701 | `0` | 字段偏移fallback |
+| generator | 421 | `FnId(0)` | 未知函数 |
+| generator | 822 | `FnId(0)` | stardust调用 |
+| generator | 790,794 | `index: 0` | Remote Store/Load |
+| generator | 447 | `else_label + 1000` | 脆弱算术 |
+| optimizer | 6 | `3` | 优化遍数上限 |
+| stardust | 51,93 | `1` | 新ID占位 |
+| stardust | 58 | `* 2` | 应为*4 |
+| type_table | 74 | `slots: 1` | 字段槽数 |
+| type_table | 85 | `all_copy: true` | 复制语义 |
+| type_table | 102 | `data_slots: 1` | 枚举数据槽 |
+| checker | 84-87 | `Vec/String/Box` | Move类型列表 |
+| lowering | 132 | `false` | 参数mutable |
+| io | 64 | `256` | read_line容量 |
+| repl | 26 | `RuntimeConfig::test()` | REPL配置 |
+| pipeline | 47 | 索引匹配 | 脆弱假设 |
+
+---
+
+## 12. 测试覆盖率缺口
+
+### 12.1 错误路径未覆盖
+- 所有 BorrowError 触发条件未测试
+- 所有 VmError 变体（除 StackUnderflow）未独立测试
+- 解析错误恢复路径未系统测试
+- Unicode/空字符串/极大数字边界条件未测试
+
+### 12.2 值断言缺失
+- `test_if_else` 仅检查 is_ok()，不验证执行了正确分支
+- `test_fibonacci` 不检查返回值是否为正确的斐波那契数
+- `test_while_loop` 不检查循环后变量值
+- `test_struct_construction` 不检查字段布局
+
+### 12.3 边界条件
+- 空栈上所有指令
+- 单元素栈 roll/swap/dup
+- 最大深度栈
+- 远程栈容量边界（刚好满、恰好扩容）
+- 负数/零除数
+- 超大/超小整数
+
+### 12.4 缺失的测试类别
+- Stardust 代码生成快照测试
+- 模糊测试（随机 MIR 序列）
+- 长时间运行稳定性测试
+- 性能回归测试
+- 跨平台确定性测试（f32::NAN → i64）
+
+---
+
+## 13. 已完成的修复
+
+以下问题已在本审计之前/期间修复：
+
+| 问题 | 修复 |
 |------|------|
-| TypeTable (结构体/枚举布局) | ✅ 完成 |
-| 虚拟类型栈 (TypeStack) | ❌ 未实现 |
-| 类型推断 | ❌ 未实现 |
-| 类型合并 (控制流) | ❌ 未实现 |
-| 类型错误类型 | ❌ 未实现 (error.rs 不存在) |
-
-**影响**: 无编译期类型检查，类型错误仅在 VM 运行时以 `TypeMismatch` 形式暴露。
-
-#### 3.3.4 MIR 生成 — ✅ 完成
-
-MirGen 完整实现：
-- ✅ 表达式 → MIR 指令序列
-- ✅ ReadVar → roll+dup+roll(-pos)
-- ✅ WriteVar → roll+pop+roll(-pos)
-- ✅ 函数调用 → PushCallElement + Call
-- ✅ if/while/loop → Mark/Jump/UncondJump
-- ✅ return/break/continue
-- ✅ 结构体/枚举字面量
-- ⚠️ 字段访问 → 基本 roll 实现（不处理多槽偏移）
-- ⚠️ Match/枚举匹配 → 简化实现（硬编码 "Option" 名）
-- ⚠️ 类型名 Vars → 跳过 ReadVar 生成（scope_depth == MAX）
-
-**MIR 优化** (已移至 `codegen/optimize.rs`):
-
-| 优化遍 | 状态 |
-|--------|------|
-| 常量折叠 | ✅ Push(a) Push(b) Add → Push(a+b) |
-| 死代码消除 | ✅ Push后立即Pop |
-| 窥孔优化 | ✅ Roll(0)→Nop, Swap+Swap→Nop, Dup+Pop→Nop |
-| 跳转优化 | ❌ 未实现 (Jump A; ... Mark A; UncondJump B → Jump B) |
-| 冗余Roll消除 | ✅ roll(n); roll(-n) → Nop |
-
-#### 3.3.5 借用检查器 — ⚠️ name-based 简化
-
-| 计划 | 实际 |
-|------|------|
-| ElementId-based 借用状态追踪 | name-based (HashMap<String, VarInfo>) |
-| 编译期 + 运行期双重检查 | 仅编译期 |
-| 作用域帧栈同步 | 简单 scope_depth 计数 |
-| Drop 语义 | 简化（所有 Move 类型统一 FreeRemote） |
-
-**限制**: 不能区分同一变量的多个 ElementId 实例的不同借用状态。
-
-#### 3.3.6 Stardust 代码生成 — ⚠️ 基本实现
-
-| 计划 | 实际 |
-|------|------|
-| 双栈→单栈交错映射 | ✅ Push/Pop/Dup/Roll 翻译 |
-| Roll 指令展开 | ✅ n×2 ShiftL/ShiftR |
-| 多栈调用翻译 | ⚠️ Call/Ret 仅注释，无实际指令 |
-| 远程栈→Stardust堆映射 | ⚠️ 注释占位 |
-| 算术/比较/逻辑 | ✅ 含 ID 清理序列 |
-
-**限制**: 生成的 Stardust 代码不完整——函数调用和返回仅为注释标记，不能直接在 Stardust 解释器中运行。
-
-#### 3.3.7 LLVM 代码生成 — ❌ 未实现
-
-整个 `codegen/llvm.rs` 和 `codegen/intrinsics.rs` 未创建。
+| EnumTag 硬编码 2 槽 | 添加 total_slots 字段 |
+| Match 硬编码 "Option" | infer_enum_name 从 TypeTable 推断 |
+| 跳转优化缺失 | 添加 jump_optimization 遍 |
+| TypeStack 缺失 | 创建 typeck/type_stack.rs |
+| 集成测试缺失 | 创建 tests/ + 4 参考程序 |
+| hello.fb 缺失 | 创建 examples/hello.fb |
+| TypeTable 无迭代器 | 添加 iter() 方法 |
 
 ---
 
-## 4. 关键算法
-
-### 4.1 变量访问的编译 (read_var / write_var 展开) — ✅ 完整
-
-VM 执行期动态查找 ElementId + roll/dup/roll(-pos) 序列。
-
-**优化方案（未实现）**: 编译时推断静态偏移量、绕过运行时 ID 查找。
-
-### 4.2 类型栈的控制流合并 — ❌ 未实现
-
-无虚拟类型栈，因此无法在控制流合并点检查分支类型一致性。
-
-### 4.3 远程栈的增长 (Vec push) — ✅ 完整
-
-扩容逻辑：分配新栈（容量翻倍，最小4）→ 复制旧元素 → 更新 GlobalRegistry → 释放旧栈。
-
-### 4.4 函数调用的完整 MIR 序列 — ✅ 完成
-
-命名/位置参数 + 栈传参 + CallElement 机制。
-
-### 4.5 ID→位置的运行时查找优化 — ❌ 未实现
-
-朴素线性扫描 O(d)，无 HashMap 缓存。
-对典型函数 (d < 100)，线性扫描开销可忽略。
-
----
-
-## 5. 已完成功能
-
-以下所有功能的实现计划已完成并可归档：
-
-### Phase 0: 项目搭建
-Cargo 项目、CLI 框架、Value/ElementId/StackId/FnId、IdAllocator、DualStack 基础。
-
-### Phase 1: 双栈 VM 核心
-DualStack::roll/swap/pick、VarStack、CallFrame、GlobalRegistry、MirInst 指令集、VM 解释器主循环、算术/比较/逻辑执行、ReadVar/WriteVar、控制流。
-
-### Phase 2: 前端
-Lexer（完整词法+转义+注释）、Parser（递归下降+Pratt 表达式）、AST（含 Span）、错误恢复、stardust! 宏解析。
-
-### Phase 3: HIR + 名称解析
-HIR 类型、作用域构建、变量消解、前向引用检测、函数声明收集。
-
-### Phase 4: MIR 生成 + 端到端
-MirGen、ReadVar/WriteVar 序列、函数调用、if/while/loop 跳转、CLI 集成。Fibonacci/阶乘可运行。
-
-### Phase 5: 复合类型
-TypeTable、结构体/枚举布局、字段访问、构造/解构、元组、固定数组。
-
-### Phase 6: 可变长度类型
-远程栈模型、AllocRemote/FreeRemote/RemotePush/RemotePop/RemoteLoad/RemoteStore/RemoteLen、扩容逻辑。
-
-### Phase 7: 所有权与借用检查
-BorrowState 状态机、借用规则、Move 语义、Drop 生成、6 种错误类型。
-
-### Phase 8: Unsafe + FFI + stardust!
-Unsafe 块、stardust! 宏指令翻译（27种）、extern FFI。
-
-### Phase 9: 代码生成
-MIR 优化器（4 种优化遍）、Stardust 代码生成器（双栈→单栈交错映射）。
-
-### Phase 10: 工具链
-IO 标准库、REPL（:stack/:vars/:info）、JSON 诊断输出。
-
-### Phase 11: VSCode + 文档
-VSCode 扩展（.fb 语法高亮）、USAGE.md 使用指南。
-
----
-
-## 6. 部分实现 — 待完善
-
-以下功能已实现基本骨架，但在细节、健壮性或完整度上有不足，需要继续完善。
-
-### 6.1 类型系统 (高优先级)
-
-| 问题 | 位置 | 影响 |
-|------|------|------|
-| **虚拟类型栈 (TypeStack) 缺失** | `typeck/type_stack.rs` 不存在 | 无法在编译期验证栈深度和类型一致性 |
-| **类型错误类型缺失** | `typeck/error.rs` 不存在 | 类型错误没有结构化诊断 |
-| **TypeTable 字段类型不完整** | `type_table.rs:34` | `slots` 固定为 1（不处理嵌套结构体/元组展开） |
-| **字段偏移量计算简化** | `vm/mod.rs:327` | 假设结构体占 (index+1) 槽，未使用 TypeTable 信息 |
-
-**建议**: 实现完整的 TypeStack，在 MIR 生成前遍历 HIR 并维护类型栈，在控制流合并点检查一致性。
-
-### 6.2 借用检查器 (高优先级)
-
-| 问题 | 位置 | 影响 |
-|------|------|------|
-| **Name-based 而非 ElementId-based** | `borrowck/checker.rs:68` | 无法区分同一变量的不同 ElementId 实例 |
-| **无运行期悬空引用检测** | 整个 `borrowck/` | debug 模式下不检测 ElementId 是否仍有效 |
-| **Drop 生成过于简化** | `borrowck/drop_gen.rs:13` | 对所有 Move 类型统一 FreeRemote，无类型感知 |
-| **无 NLL (Non-Lexical Lifetime)** | `borrowck/checker.rs` | 基于词法作用域，可能拒绝合法程序 |
-
-**建议**: 
-1. 增加 ElementId 维度的借用追踪
-2. VM debug 模式在 Deref 前检查 `find_id(id).is_some()`
-3. 根据 TypeTable 的 all_copy 标记决定是否生成 Drop 代码
-
-### 6.3 MIR 生成器
-
-| 问题 | 位置 | 影响 |
-|------|------|------|
-| **字段访问偏移量未使用 TypeTable** | `mir/generator.rs:630` | `resolve_field_offset()` 始终返回 0 |
-| **Match/枚举匹配硬编码** | `mir/generator.rs:610` | 枚举名硬编码为 "Option" |
-| **Match 分支生成不完整** | `mir/generator.rs:594-620` | 只处理第一个 Enum variant 模式，无通配符 fallthrough |
-| **Stardust 宏内 Call 使用 FnId(0)** | `mir/generator.rs:783` | 占位 FnId，调用不会成功 |
-| **参数绑定 roll 序列追踪** | `mir/generator.rs:240-253` | StackTracker 与 MIR 同步可能偏差 |
-
-### 6.4 VM 运行时
-
-| 问题 | 位置 | 影响 |
-|------|------|------|
-| **FieldAccess 结构体大小假定** | `vm/mod.rs:327` | 假设字段偏移即 roll 距离 |
-| **EnumTag 硬编码 2 槽** | `vm/mod.rs:373` | `enum_slots = 2` 固定，不能处理 4 槽枚举 (如 Color) |
-| **MakeEnum 无实际布局操作** | `vm/mod.rs:353-366` | 仅分配 ElementId，不确保 tag 在 data 下方 |
-| **ID 查找线性扫描** | `stack.rs:find_id()` | O(d) 无缓存 |
-| **Deref 后 roll(-pos) 越界** | `vm/mod.rs:305-307` | 当目标在栈底时 roll(-pos) 可能越界 |
-| **WriteVar roll(-pos) 边界** | `vm/mod.rs:657` | 当旧值在栈底时需特殊处理（已有 fix） |
-
-### 6.5 Stardust 代码生成
-
-| 问题 | 位置 | 影响 |
-|------|------|------|
-| **Call/Ret 仅注释** | `codegen/stardust.rs:139-141` | 生成的 Stardust 代码不可独立执行 |
-| **算术/比较操作序列复杂** | `stardust.rs:emit_binary_op` | Pop/Pop/Swap/Pop/Pop/Swap 序列可能不精确 |
-| **无远程栈→堆映射** | `stardust.rs` | AllocRemote 等仅注释 |
-| **无跳转标签生成** | `stardust.rs` | Mark/Jump 仅注释 |
-
-### 6.6 IO 库
-
-| 问题 | 位置 | 影响 |
-|------|------|------|
-| **file_read/write 为注释占位** | `io.rs:71-80` | 无实际文件 I/O |
-| **read_line 简化为单字符** | `io.rs:65` | 不能读取完整行 |
-| **无 String 类型支持** | 全局 | 字符串操作需在 unsafe 块通过 stardust! 实现 |
-
-### 6.7 复合类型
-
-| 问题 | 位置 | 影响 |
-|------|------|------|
-| **无元组字段访问偏移计算** | `mir/generator.rs` | 元组字段访问未经测试 |
-| **枚举零数据变体执行问题** | `pipeline.rs:250` | 已知 bug，待修复 |
-| **结构体解构未经端到端测试** | `let Point {x, y} = p` | 模式解构实现但未验证 |
-
----
-
-## 7. 未实现 — 待开发
-
-### 7.1 LLVM 后端 (Phase 9 剩余)
-
-- ❌ `codegen/llvm.rs` — LLVM IR 代码生成器
-- ❌ `codegen/intrinsics.rs` — 内建函数
-- ❌ 栈槽→SSA 寄存器映射
-- ❌ 控制流边界栈 flush/reload
-
-### 7.2 类型系统增强
-
-- ❌ `typeck/type_stack.rs` — 虚拟类型栈
-- ❌ `typeck/error.rs` — 类型错误类型
-- ❌ 类型推断（简单情况）
-- ❌ 控制流合并点的类型栈验证
-
-### 7.3 标准库类型
-
-- ❌ **String** — Vec<u8> 包装 + UTF-8 有效性验证
-- ❌ **Box\<T\>** — 单值远程栈分配
-- ❌ **Vec\<T\>** 语法糖 — `vec![1, 2, 3]` 宏/语法
-- ❌ **Option\<T\>** / **Result\<T, E\>** 泛型支持
-- ❌ 泛型系统 (类型参数)
-
-### 7.4 测试与 CI
-
-- ❌ `tests/integration_test.rs` — 集成测试
-- ❌ `tests/programs/*.fb` — 参考程序集
-- ❌ `tests/mir_snapshots/` — MIR 快照测试
-- ❌ `examples/hello.fb` — Hello World 示例文件
-- ❌ CI 配置 (GitHub Actions)
-- ❌ 模糊测试 (proptest)
-
-### 7.5 工具链
-
-- ❌ **调试器** — 单步执行、交互式断点
-- ❌ **包管理器** (`freebird package`)
-- ❌ **LSP 服务器** (Language Server Protocol)
-- ❌ **保存时检查** (VSCode 扩展调用 `freebird check`)
-- ❌ 悬停提示 (类型信息)
-
-### 7.6 Stardust 代码生成完善
-
-- ❌ 多栈调用 → Stardust 调用序列翻译
-- ❌ 远程栈 → Stardust 堆映射
-- ❌ Roll 在 Stardust 后端的 O(n) 展开优化
-- ❌ 生成的 Stardust 代码可直接执行
-
-### 7.7 所有权系统增强
-
-- ❌ NLL (Non-Lexical Lifetime) 借用检查
-- ❌ 运行期悬空引用检测 (debug 模式)
-- ❌ 析构顺序验证（按创建逆序）
-
-### 7.8 性能优化
-
-- ❌ HashMap<ElementId, usize> ID 位置缓存
-- ❌ 编译时静态偏移量推断（绕过运行时 find_id）
-- ❌ Stardust 后端性能路径 (LLVM 替代)
-
-### 7.9 结构性问题
-
-- ❌ MirInst 定义在 `vm/mir.rs` — 应移至 `mir/inst.rs` 或 `mir/mod.rs`
-- ❌ `optimize.rs` 在 `codegen/` — 应移至 `mir/optimize.rs`
-- ❌ `pattern.rs` 未独立 — 模式解析逻辑应提取为独立模块
-- ❌ `remote.rs` 未创建 — 远程栈逻辑内联在 `vm/mod.rs`
-- ❌ `repl/` 应恢复为目录模块 (mod.rs + executor.rs + display.rs)
-
----
-
-## 8. 技术风险与缓解
-
-| 风险 | 影响 | 概率 | 当前状态 | 缓解措施 |
-|------|------|------|---------|----------|
-| **`roll(n)` 在 Stardust 后端的 O(n) 展开** | 中 | 高 | ⚠️ 基本实现 | MIR 优化消除冗余 roll；LLVM 后端作为性能路径 |
-| **ID 查找的线性扫描在大栈上成为瓶颈** | 中 | 低 | ⚠️ 未优化 | HashMap 缓存待实现；不优化更简单 |
-| **借用检查器实现复杂度超预期** | 高 | 中 | ⚠️ name-based | 完整 ElementId-based 检查推迟 |
-| **Stardust `Call` 模型与 Freebird 调用元素不兼容** | 高 | 中 | ⚠️ Call/Ret 仅注释 | 调用元素在 Stardust 后端需完整翻译 |
-| **LLVM 后端的 SSA 化与任意 roll 操作冲突** | 高 | 中 | ❌ 未开始 | roll 在 LLVM 后端编译为 extractvalue/insertvalue |
-| **远程栈重分配时更新本地句柄的竞争条件** | 中 | 低 | ✅ 已实现 | 单线程 VM 无竞争 |
-| **类型检查缺失导致运行时错误** | 中 | 高 | ⚠️ 无虚拟类型栈 | VM 运行时 TypeMismatch 捕获部分错误 |
-
----
-
-## 9. 测试覆盖现状
-
-### 9.1 测试统计
-
-| 模块 | 测试数 | 覆盖内容 |
-|------|--------|---------|
-| `vm::stack` | 14 | push/pop, dup, roll(正/负/零/往返/越界/空栈), swap, pick, find_id |
-| `vm::var_stack` | 5 | 作用域进出, 遮蔽, update, 未定义, 内层遮蔽更新 |
-| `vm::tests` | 8 | 算术, 变量读写, if/else, Call/Ret, 远程栈(alloc/free/push/pop/load/len) |
-| `frontend::lexer` | 11 | 关键字, 标识符, 整数/浮点/字符/字符串, 运算符, 分隔符, 注释, stardust!, # |
-| `frontend::parser` | 35 | 每种表达式, 语句, 声明, 模式, 控制流 |
-| `hir::resolver` | 5 | 声明+解析, 遮蔽, 未定义, 前向引用, 重复定义 |
-| `hir::lowering` | 7 | 简单函数, 变量解析, 未定义变量, 前向引用, 遮蔽, 函数前向引用, 参数不匹配 |
-| `typeck::type_table` | 3 | 结构体注册, 枚举注册, AST构建 |
-| `borrowck::checker` | 5 | 共享借用, 独占借用, Move语义, 释放引用, 不可变赋值 |
-| `borrowck::drop_gen` | 3 | 空Drop, 单Drop, scope exit |
-| `codegen::optimize` | 4 | 常量折叠, Roll(0), Push+Pop, 冗余Roll |
-| `codegen::stardust` | 2 | 简单算术生成, Roll翻译 |
-| `io` | 2 | print_str, std_library |
-| `diagnostics` | 2 | 空诊断, 解析错误诊断 |
-| `pipeline` | 10 | 算术, 变量, if/else, while, Fibonacci, 嵌套调用, stardust!, unsafe, extern, 结构体构造 |
-| **总计** | **122** | |
-
-### 9.2 测试缺口
-
-| 优先级 | 测试类别 | 建议 |
-|--------|---------|------|
-| 高 | 结构体字段访问端到端 | `Point { x, y }; .x` 读写 |
-| 高 | 元组构造与解构 | `let (a, b) = (1, 2)` |
-| 高 | 枚举匹配端到端 | `match opt { None => ..., Some(v) => ... }` |
-| 高 | Vec 操作端到端 | push/pop/index/len 完整流程 |
-| 中 | 借用检查器错误路径 | 各种 BorrowError 触发条件 |
-| 中 | Stardust 代码生成快照 | 与预期 Stardust 输出比对 |
-| 中 | 远程栈扩容 | 超过初始 capacity 的 push |
-| 低 | 模糊测试 | 随机 MIR 序列 → VM 无 crash |
-| 低 | 性能基准 | Fibonacci 大参数、深度递归 |
-
----
-
-## 10. 项目实际结构
-
-```
-freebird/
-├── Cargo.toml
-├── Cargo.lock
-├── readme.md                         # Freebird 语言规范 v0.5.0
-├── IMPROVEMENTS.md                   # 本文件：实现状态
-├── USAGE.md                          # 使用指南
-├── LICENSE
-├── .gitignore
-│
-├── src/
-│   ├── main.rs                       # CLI 入口 (run/check/repl/build)
-│   ├── lib.rs                        # 库入口 (公共 API)
-│   ├── pipeline.rs                   # 端到端编译流水线
-│   ├── io.rs                         # IO 标准库 (⚠️ file ops 占位)
-│   ├── repl.rs                       # REPL (✅ 完整)
-│   ├── diagnostics.rs                # JSON 诊断 (✅ 完整)
-│   │
-│   ├── frontend/                     # ✅ 完整
-│   │   ├── mod.rs, lexer.rs, parser.rs
-│   │   ├── ast.rs, token.rs, error.rs
-│   │   └── parser_tests.rs
-│   │
-│   ├── hir/                          # ✅ 完整
-│   │   ├── mod.rs, types.rs
-│   │   ├── lowering.rs, resolver.rs
-│   │
-│   ├── typeck/                       # ⚠️ 仅 TypeTable
-│   │   ├── mod.rs, type_table.rs
-│   │   # ❌ type_stack.rs, error.rs
-│   │
-│   ├── borrowck/                     # ⚠️ name-based
-│   │   ├── mod.rs, checker.rs, drop_gen.rs
-│   │
-│   ├── mir/                          # ⚠️ MirInst 在 vm/
-│   │   ├── mod.rs, generator.rs
-│   │
-│   ├── vm/                           # ✅ 完整
-│   │   ├── mod.rs, stack.rs, frame.rs
-│   │   ├── registry.rs, value.rs, id.rs
-│   │   ├── mir.rs (⚠️ 应为 mir/inst.rs)
-│   │   ├── error.rs, config.rs, var_stack.rs
-│   │   # ❌ remote.rs
-│   │
-│   └── codegen/                      # ⚠️ 缺 LLVM
-│       ├── mod.rs, stardust.rs, optimize.rs
-│       # ❌ llvm.rs, intrinsics.rs
-│
-├── vscode/                           # ✅ VSCode 扩展
-│   ├── package.json
-│   ├── language-configuration.json
-│   ├── .vscodeignore, README.md
-│   ├── icons/ (dark + light SVG)
-│   └── syntaxes/ (freebird.tmLanguage.json)
-│
-├── tests/                            # ❌ 未创建
-│   # 缺: integration_test.rs, programs/*.fb, mir_snapshots/
-│
-└── examples/                         # ❌ 未创建
-    # 缺: hello.fb
-```
-
----
-
-## 实现完成度总结
-
-| 类别 | 完成度 | 说明 |
-|------|--------|------|
-| 编译流水线 | 90% | 源码→AST→HIR→MIR→VM 完整 |
-| 虚拟机核心 | 85% | 双栈/远程栈完整；ID缓存/静态偏移量待优化 |
-| 类型系统 | 40% | TypeTable 完成；缺虚拟类型栈 |
-| 借用检查 | 55% | name-based 完成；缺 ElementId 维度 |
-| 代码生成 | 35% | Stardust 基本完成；LLVM 未开始；Call/Ret 仅注释 |
-| 标准库 | 30% | print/read 可用；String/Box/Vec 语法糖未实现 |
-| 工具链 | 65% | REPL/CLI/诊断完成；调试器/LSP/包管理未实现 |
-| 测试 | 55% | 122 个单元测试；缺集成测试/快照测试/参考程序 |
-| 文档 | 60% | README/USAGE/IMPROVEMENTS；缺标准库文档 |
-
-**总体完成度: ~65%**
+## 14. 项目整体评估
+
+### 14.1 完成度矩阵
+
+| 组件 | 完整度 | 最严重问题 |
+|------|--------|-----------|
+| Lexer | 85% | 空字面量不报错，f32后缀丢失 |
+| Parser | 70% | Enum::None丢失，属性丢弃，赋值受限 |
+| HIR 降级 | 60% | 5处filter_map吞错误，错误类型误用 |
+| 名称解析 | 75% | 未初始化变量误标已初始化 |
+| 借用检查 | 40% | 仅name-based，用户类型不可扩展 |
+| 类型系统 | 25% | TypeStack未集成，slots/all_copy硬编码 |
+| MIR 生成 | 55% | if-else反向，Break不工作，字段偏移错误 |
+| VM 核心 | 70% | roll-back算法全部错误，无溢出检查 |
+| 远程栈 | 75% | RemotePop空栈不报错 |
+| Stardust | 15% | 仅12/45指令有代码，Call/Ret仅注释 |
+| IO 库 | 20% | read_line损坏，file I/O占位 |
+| REPL | 60% | 状态污染，测试配置限制，O(n²) |
+| 诊断 | 50% | Warning/Note/Help未使用，span不完整 |
+| 测试 | 45% | 缺少值断言、错误路径、边界测试 |
+| **整体** | **~55%** | — |
+
+### 14.2 优先修复顺序
+
+1. **B-1**: if-else 反向 → 1行修复 (加 Not)
+2. **B-2/B-3**: roll-back 算法 → 统一改为直接索引访问
+3. **B-4**: Break 不工作 → 传递 loop_end label
+4. **B-5**: Enum::None 丢失 → 解析器 ColonColon 修复
+5. **G1**: Drop 代码生成 → 连接 DropGen 到 gen_block
+6. **T9**: TypeStack 集成 → 在 MIR 生成前调用
+7. **S1-S3**: Stardust 控制流 → 生成实际 Stardust 指令
+8. **B-11**: Let 无 init BindVar → 生成缺失值的错误
+9. **BUG-H3**: filter_map 吞错误 → 改为 collect+检查
+10. **I1**: read_line 修复 → 实现循环逻辑
 
 ---
 
