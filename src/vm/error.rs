@@ -22,6 +22,8 @@ pub enum VmError {
     },
     /// 步数超限
     StepLimitExceeded,
+    /// 数据栈溢出
+    StackOverflow { limit: usize },
     /// 调用栈溢出
     CallStackOverflow,
     /// 调用栈为空
@@ -67,6 +69,9 @@ impl fmt::Display for VmError {
             }
             VmError::StepLimitExceeded => {
                 write!(f, "step limit exceeded")
+            }
+            VmError::StackOverflow { limit } => {
+                write!(f, "stack overflow: exceeded maximum stack depth of {limit}")
             }
             VmError::CallStackOverflow => {
                 write!(f, "call stack overflow")

@@ -215,8 +215,8 @@ impl Lowering {
                         Ok(depth) => {
                             // 检查可变性（报错但不阻止降级）
                             if self.resolver.is_mutable(name) == Some(false) {
-                                self.errors.push(ResolveError::UndefinedVariable {
-                                    name: format!("cannot assign to immutable variable `{name}`"),
+                                self.errors.push(ResolveError::CannotAssignToImmutable {
+                                    name: name.clone(),
                                     span: *tspan,
                                 });
                             }
@@ -311,11 +311,10 @@ impl Lowering {
                 // 验证参数个数
                 if let Some(ref sig) = fn_sig
                     && !stack_pass && args.len() as u32 != sig.n {
-                        self.errors.push(ResolveError::UndefinedVariable {
-                            name: format!(
-                                "function `{}` expects {} arguments, got {}",
-                                sig.name, sig.n, args.len()
-                            ),
+                        self.errors.push(ResolveError::ArgumentCountMismatch {
+                            expected: sig.n,
+                            got: args.len(),
+                            fn_name: sig.name.clone(),
                             span: *span,
                         });
                     }

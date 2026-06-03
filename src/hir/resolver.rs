@@ -10,6 +10,8 @@ pub enum ResolveError {
     ForwardReference { name: String, span: Span },
     DuplicateDefinition { name: String, first: Span, second: Span },
     DuplicateField { name: String, first: Span, second: Span },
+    ArgumentCountMismatch { expected: u32, got: usize, fn_name: String, span: Span },
+    CannotAssignToImmutable { name: String, span: Span },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -26,6 +28,12 @@ impl std::fmt::Display for ResolveError {
             }
             ResolveError::DuplicateField { name, first, second } => {
                 write!(f, "{second}: duplicate field `{name}` (first defined at {first})")
+            }
+            ResolveError::ArgumentCountMismatch { expected, got, fn_name, span } => {
+                write!(f, "{span}: function `{fn_name}` expects {expected} arguments, got {got}")
+            }
+            ResolveError::CannotAssignToImmutable { name, span } => {
+                write!(f, "{span}: cannot assign to immutable variable `{name}`")
             }
         }
     }

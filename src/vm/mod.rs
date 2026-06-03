@@ -132,7 +132,8 @@ impl Vm {
             MirInst::Push { value, .. } => {
                 let new_id = self.id_alloc.alloc_element();
                 let mut frame = self.pop_frame()?;
-                frame.data.push(new_id, value.clone());
+                let limit = self.config.max_stack;
+                frame.data.push_checked(new_id, value.clone(), limit)?;
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }

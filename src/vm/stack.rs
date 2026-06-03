@@ -38,7 +38,17 @@ impl DualStack {
         self.ids.is_empty()
     }
 
-    /// Push — 同步压入 ID 和值
+    /// Push — 同步压入 ID 和值，若超过 limit 返回 Err
+    pub fn push_checked(&mut self, id: ElementId, value: Value, limit: usize) -> Result<(), crate::vm::error::VmError> {
+        if self.len() >= limit {
+            return Err(crate::vm::error::VmError::StackOverflow { limit });
+        }
+        self.ids.push(id);
+        self.values.push(value);
+        Ok(())
+    }
+
+    /// Push — 同步压入 ID 和值（不检查限制）
     pub fn push(&mut self, id: ElementId, value: Value) {
         self.ids.push(id);
         self.values.push(value);

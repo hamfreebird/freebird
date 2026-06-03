@@ -82,6 +82,12 @@ pub fn resolve_to_diagnostics(errors: &[ResolveError]) -> Vec<Diagnostic> {
             ResolveError::DuplicateField { second, .. } => {
                 (*second, Some("rename or remove the duplicate field".to_string()))
             }
+            ResolveError::ArgumentCountMismatch { span, expected, got, .. } => {
+                (*span, Some(format!("expected {expected} arguments, got {got}")))
+            }
+            ResolveError::CannotAssignToImmutable { span, .. } => {
+                (*span, Some("declare the variable with `let mut` to make it mutable".to_string()))
+            }
         };
         Diagnostic {
             level: DiagnosticLevel::Error,
