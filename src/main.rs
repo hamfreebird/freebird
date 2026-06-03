@@ -3,7 +3,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use freebird::{build_stardust, check_source, run_source, RuntimeConfig};
+use freebird::{build_stardust, run_source, RuntimeConfig};
+use freebird::diagnostics;
+use freebird::frontend::parse;
+use freebird::hir::lower;
+use freebird::repl::Repl;
 
 /// Freebird — 一门基于双栈虚拟机的高级系统编程语言
 #[derive(Parser)]
@@ -80,19 +84,24 @@ fn main() {
                 process::exit(1);
             });
 
-            match check_source(&source) {
-                Ok(()) => println!("{}: OK", file.display()),
-                Err(errors) => {
-                    for e in &errors {
-                        eprintln!("{e}");
-                    }
-                    process::exit(1);
-                }
+            // JSON 诊断输出
+            let (ast, parse_errors) = parse(&source);
+            let (_, resolve_errors) = lower(&ast);
+            let json = diagnostics::generate_diagnostic_json(
+                &source, &parse_errors, &resolve_errors, &[],
+            );
+            println!("{json}");
+
+            if !parse_errors.is_empty() || !resolve_errors.is_empty() {
+                process::exit(1);
             }
         }
         Some(Command::Repl) => {
-            println!("Freebird REPL v0.1.0");
-            println!("[Phase 4] REPL not yet implemented. Use interactive mode via the library API.");
+            let mut repl = Repl::new();
+            if let Err(e) = repl.run() {
+                eprintln!("REPL error: {e}");
+                process::exit(1);
+            }
         }
         Some(Command::Build { file, target }) => {
             let source = fs::read_to_string(&file).unwrap_or_else(|e| {
@@ -119,7 +128,7 @@ fn main() {
         }
         None => {
             println!("Freebird v0.1.0 — type 'freebird --help' for usage.");
-            println!("Current: Phase 4 — end-to-end compilation pipeline available via library API.");
+            println!("Phases 0-10 complete: parser, HIR, MIR, VM, codegen, REPL, IO library.");
         }
     }
 }
