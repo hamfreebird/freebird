@@ -310,9 +310,11 @@ impl Vm {
                         id: target_id.0,
                         name: "deref target".to_string(),
                     })?;
-                frame.data.roll(pos as i32)?;
-                frame.data.dup(&mut self.id_alloc)?;
-                frame.data.roll(-(pos as i32))?;
+                let idx = frame.data.len() - 1 - pos;
+                let val = frame.data.values[idx].clone();
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.ids.push(new_id);
+                frame.data.values.push(val);
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -326,10 +328,12 @@ impl Vm {
                 // 从栈顶向下数：目标字段位置 = total - 1 - index
                 // 简化：假设结构体占 (index+1) 槽（已知到目标字段的深度）
                 // 实际应由类型表确定，这里先 roll+dup+roll 实现字段读取
-                let pos = index; // offset from struct top (reverse of declaration order)
-                frame.data.roll(*pos as i32)?;
-                frame.data.dup(&mut self.id_alloc)?;
-                frame.data.roll(-(*pos as i32))?;
+                let pos = *index as usize;
+                let idx = frame.data.len().saturating_sub(1 + pos);
+                let val = frame.data.values[idx].clone();
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.ids.push(new_id);
+                frame.data.values.push(val);
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -344,10 +348,13 @@ impl Vm {
                 let (_, _arr_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
                 // 对于固定数组（栈上连续槽），通过 roll + dup 实现索引
                 // 简化：直接访问位置 idx 的元素
-                let pos = idx;
-                frame.data.roll(pos as i32)?;
-                frame.data.dup(&mut self.id_alloc)?;
-                frame.data.roll(-(pos as i32))?;
+                let val_idx = frame.data.len().saturating_sub(1 + idx);
+                if val_idx < frame.data.len() {
+                    let val = frame.data.values[val_idx].clone();
+                    let new_id = self.id_alloc.alloc_element();
+                    frame.data.ids.push(new_id);
+                    frame.data.values.push(val);
+                }
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -838,9 +845,12 @@ impl Vm {
         };
 
         let mut frame = self.pop_frame()?;
-        frame.data.roll(pos as i32)?;
-        frame.data.dup(&mut self.id_alloc)?;
-        frame.data.roll(-(pos as i32))?;
+        // 直接索引访问，避免 roll/dup/roll 栈破坏
+        let idx = frame.data.len() - 1 - pos;
+        let val = frame.data.values[idx].clone();
+        let new_id = self.id_alloc.alloc_element();
+        frame.data.ids.push(new_id);
+        frame.data.values.push(val);
         frame.advance_pc();
         self.call_stack.push(frame);
         Ok(())

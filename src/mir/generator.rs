@@ -310,13 +310,11 @@ impl MirGen {
                 // 求值 RHS（如果有）
                 if let Some(init_expr) = init {
                     self.gen_expr(init_expr, fn_sig);
-                }
-
-                // 提取变量名并绑定
-                if let ast::Pattern::Var(name, _) = pattern {
-                    // RHS 的值在栈顶 → BindVar
-                    self.mir.push(MirInst::BindVar { name: name.clone() });
-                    self.stack.push_var(name.clone());
+                    // 仅在有 init 值时绑定变量
+                    if let ast::Pattern::Var(name, _) = pattern {
+                        self.mir.push(MirInst::BindVar { name: name.clone() });
+                        self.stack.push_var(name.clone());
+                    }
                 }
             }
             HirStmt::Expr(expr, _) => {
@@ -438,13 +436,15 @@ impl MirGen {
                 let else_label = self.labels.fresh();
                 let end_label = self.labels.fresh();
 
-                // 条件
+                // 条件 — VM的Jump在条件为真时跳转，故先取反
                 self.gen_expr(cond, fn_sig);
-                self.mir.push(MirInst::Jump(else_label)); // 条件为假时跳到 else
+                self.mir.push(MirInst::Not);  // cond==false → true
+                self.mir.push(MirInst::Jump(else_label));
                 self.stack.pop(); // pop cond
 
                 // then 分支
-                self.mir.push(MirInst::Mark(else_label + 1000)); // then 标记（临时）
+                let then_label = self.labels.fresh();
+                self.mir.push(MirInst::Mark(then_label));
                 self.gen_block(then_block, fn_sig);
                 self.mir.push(MirInst::UncondJump(end_label));
 

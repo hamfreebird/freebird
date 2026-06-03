@@ -403,8 +403,13 @@ impl Lexer {
                 }
             }
         } else {
-            // 整数，可能带后缀
-            let suffix = self.lex_int_suffix();
+            // 整数，可能带后缀（i8/i16/i32/i64/u8..u64/f32/f64）
+            let (suffix, is_float) = self.lex_int_suffix();
+            if is_float {
+                if let Ok(v) = num_str.parse::<f64>() {
+                    return Token::new(TokenKind::FloatLiteral(v), start_span);
+                }
+            }
             match num_str.parse::<i64>() {
                 Ok(v) => Token::new(TokenKind::IntLiteral(v, suffix), start_span),
                 Err(_) => {
@@ -427,7 +432,7 @@ impl Lexer {
             num_str.push(self.current_char());
             self.advance();
         }
-        let suffix = self.lex_int_suffix();
+        let (suffix, _) = self.lex_int_suffix();
         match i64::from_str_radix(&num_str, 16) {
             Ok(v) => Token::new(TokenKind::IntLiteral(v, suffix), start_span),
             Err(_) => Token::new(TokenKind::Error("invalid hex literal".to_string()), start_span),
@@ -443,7 +448,7 @@ impl Lexer {
             num_str.push(self.current_char());
             self.advance();
         }
-        let suffix = self.lex_int_suffix();
+        let (suffix, _) = self.lex_int_suffix();
         match i64::from_str_radix(&num_str, 8) {
             Ok(v) => Token::new(TokenKind::IntLiteral(v, suffix), start_span),
             Err(_) => Token::new(TokenKind::Error("invalid octal literal".to_string()), start_span),
@@ -459,16 +464,16 @@ impl Lexer {
             num_str.push(self.current_char());
             self.advance();
         }
-        let suffix = self.lex_int_suffix();
+        let (suffix, _) = self.lex_int_suffix();
         match i64::from_str_radix(&num_str, 2) {
             Ok(v) => Token::new(TokenKind::IntLiteral(v, suffix), start_span),
             Err(_) => Token::new(TokenKind::Error("invalid binary literal".to_string()), start_span),
         }
     }
 
-    fn lex_int_suffix(&mut self) -> IntSuffix {
+    fn lex_int_suffix(&mut self) -> (IntSuffix, bool) {
         if self.is_eof() {
-            return IntSuffix::None;
+            return (IntSuffix::None, false);
         }
         let ch = self.current_char();
         match ch {
@@ -480,7 +485,7 @@ impl Lexer {
                     s.push(self.current_char());
                     self.advance();
                 }
-                IntSuffix::parse(&s)
+                (IntSuffix::parse(&s), false)
             }
             'u' => {
                 self.advance();
@@ -489,7 +494,7 @@ impl Lexer {
                     s.push(self.current_char());
                     self.advance();
                 }
-                IntSuffix::parse(&s)
+                (IntSuffix::parse(&s), false)
             }
             'f' => {
                 self.advance();
@@ -500,12 +505,12 @@ impl Lexer {
                     self.advance();
                 }
                 match s.as_str() {
-                    "f32" => IntSuffix::I32,  // 语法糖
-                    "f64" => IntSuffix::I64,
-                    _ => IntSuffix::None,
+                    "f32" => (IntSuffix::I32, true),
+                    "f64" => (IntSuffix::I64, true),
+                    _ => (IntSuffix::None, false),
                 }
             }
-            _ => IntSuffix::None,
+            _ => (IntSuffix::None, false),
         }
     }
 
