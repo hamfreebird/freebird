@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use freebird::{check_source, run_source, RuntimeConfig};
+use freebird::{build_stardust, check_source, run_source, RuntimeConfig};
 
 /// Freebird — 一门基于双栈虚拟机的高级系统编程语言
 #[derive(Parser)]
@@ -95,9 +95,27 @@ fn main() {
             println!("[Phase 4] REPL not yet implemented. Use interactive mode via the library API.");
         }
         Some(Command::Build { file, target }) => {
-            let target_name = target.map_or("stardust".to_string(), |t| format!("{t:?}"));
-            println!("Building: {} (target={})", file.display(), target_name);
-            println!("[Phase 4] Code generation not yet implemented (Phase 9).");
+            let source = fs::read_to_string(&file).unwrap_or_else(|e| {
+                eprintln!("Error reading {}: {e}", file.display());
+                process::exit(1);
+            });
+
+            let target_name = target.unwrap_or(Target::Stardust);
+            match target_name {
+                Target::Stardust => {
+                    match build_stardust(&source) {
+                        Ok(code) => println!("{code}"),
+                        Err(e) => {
+                            eprintln!("Build error: {e}");
+                            process::exit(1);
+                        }
+                    }
+                }
+                Target::Llvm => {
+                    eprintln!("LLVM backend not yet implemented (Phase 9).");
+                    process::exit(1);
+                }
+            }
         }
         None => {
             println!("Freebird v0.1.0 — type 'freebird --help' for usage.");
