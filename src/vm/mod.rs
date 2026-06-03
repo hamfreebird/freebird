@@ -226,7 +226,10 @@ impl Vm {
             MirInst::Jump(mark) => {
                 let mut frame = self.pop_frame()?;
                 let (_, cond) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
-                let cond_val = cond.as_i64().unwrap_or(0);
+                let cond_val = cond.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer or bool".to_string(),
+                    found: cond.type_name().to_string(),
+                })?;
                 if cond_val != 0 {
                     let target = *frame.marks.get(mark).ok_or(VmError::InvalidJumpTarget(*mark))?;
                     frame.pc = target;
@@ -472,7 +475,9 @@ impl Vm {
                     // 先压回句柄，再压结果（结果在栈顶）
                     frame.data.push(self.id_alloc.alloc_element(), Value::StackHandle(sid));
                     if len == 0 {
-                        frame.data.push(self.id_alloc.alloc_element(), Value::Unit);
+                        return Err(VmError::AssertionFailed(
+                            "cannot pop from empty remote stack".to_string()
+                        ));
                     } else {
                         let val = remote.values[2 + len - 1].clone();
                         remote.values[0] = Value::Usize((len - 1) as i64);

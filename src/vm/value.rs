@@ -62,8 +62,8 @@ impl Value {
             | Value::Usize(v) => Some(*v),
             Value::Bool(b) => Some(if *b { 1 } else { 0 }),
             Value::Char(c) => Some(*c as i64),
-            Value::F32(f) => Some(*f as i64),
-            Value::F64(f) => Some(*f as i64),
+            Value::F32(f) => if f.is_finite() { Some(*f as i64) } else { None },
+            Value::F64(f) => if f.is_finite() { Some(*f as i64) } else { None },
             _ => None,
         }
     }

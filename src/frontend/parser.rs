@@ -328,6 +328,7 @@ impl Parser {
                     };
                     self.advance();
                     let segment = self.expect_ident("path segment")?;
+                    let span = self.pos_span();
                     if self.check(TokenKind::LParen) {
                         self.advance(); // skip (
                         let data = if !self.check(TokenKind::RParen) {
@@ -340,6 +341,14 @@ impl Parser {
                             name: vec![enum_name],
                             variant: segment,
                             data,
+                            span,
+                        };
+                    } else {
+                        // 无数据的枚举变体: Option::None
+                        lhs = Expr::EnumLit {
+                            name: vec![enum_name],
+                            variant: segment,
+                            data: None,
                             span,
                         };
                     }

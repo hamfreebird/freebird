@@ -433,6 +433,13 @@ impl Lexer {
             self.advance();
         }
         let (suffix, _) = self.lex_int_suffix();
+        if num_str.is_empty() {
+            self.errors.push(FrontendError::new(
+                FrontendErrorKind::InvalidNumber("0x".to_string()),
+                start_span,
+            ));
+            return Token::new(TokenKind::Error("empty hex literal".to_string()), start_span);
+        }
         match i64::from_str_radix(&num_str, 16) {
             Ok(v) => Token::new(TokenKind::IntLiteral(v, suffix), start_span),
             Err(_) => Token::new(TokenKind::Error("invalid hex literal".to_string()), start_span),
@@ -449,6 +456,13 @@ impl Lexer {
             self.advance();
         }
         let (suffix, _) = self.lex_int_suffix();
+        if num_str.is_empty() {
+            self.errors.push(FrontendError::new(
+                FrontendErrorKind::InvalidNumber("0o".to_string()),
+                start_span,
+            ));
+            return Token::new(TokenKind::Error("empty octal literal".to_string()), start_span);
+        }
         match i64::from_str_radix(&num_str, 8) {
             Ok(v) => Token::new(TokenKind::IntLiteral(v, suffix), start_span),
             Err(_) => Token::new(TokenKind::Error("invalid octal literal".to_string()), start_span),
@@ -465,6 +479,13 @@ impl Lexer {
             self.advance();
         }
         let (suffix, _) = self.lex_int_suffix();
+        if num_str.is_empty() {
+            self.errors.push(FrontendError::new(
+                FrontendErrorKind::InvalidNumber("0b".to_string()),
+                start_span,
+            ));
+            return Token::new(TokenKind::Error("empty binary literal".to_string()), start_span);
+        }
         match i64::from_str_radix(&num_str, 2) {
             Ok(v) => Token::new(TokenKind::IntLiteral(v, suffix), start_span),
             Err(_) => Token::new(TokenKind::Error("invalid binary literal".to_string()), start_span),

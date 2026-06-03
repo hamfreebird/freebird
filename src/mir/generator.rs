@@ -416,7 +416,10 @@ impl MirGen {
                     _ => "unknown".to_string(),
                 };
 
-                let fn_id = self.name_to_id.get(&fn_name).copied().unwrap_or(FnId(0));
+                let fn_id = self.name_to_id.get(&fn_name).copied().unwrap_or_else(|| {
+                    self.mir.push(MirInst::Comment(format!("ERROR: unknown function '{fn_name}'")));
+                    FnId(0)
+                });
                 self.mir.push(MirInst::Call { fn_id });
 
                 // 弹出参数和 CallElement，压入返回值
