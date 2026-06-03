@@ -1,14 +1,17 @@
 //! Freebird 语言运行时库
 //!
-//! 提供双栈虚拟机核心、MIR 指令集、词法/语法分析器、HIR 名称解析。
+//! 提供编译流水线、双栈 VM 核心、词法/语法、HIR、MIR 生成。
 
 pub mod frontend;
 pub mod hir;
+pub mod mir;
+pub mod pipeline;
 pub mod vm;
 
 // 重导出常用类型
 pub use frontend::parse;
 pub use hir::lower;
+pub use pipeline::{check_source, run_source};
 pub use vm::Vm;
 pub use vm::config::RuntimeConfig;
 pub use vm::error::VmError;
