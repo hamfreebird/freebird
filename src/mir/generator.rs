@@ -629,11 +629,17 @@ impl MirGen {
                 }
                 self.mir.push(MirInst::Mark(end_label));
             }
-            HirExpr::StardustMacro(_insts, _) => {
-                self.mir.push(MirInst::Comment("stardust! macro".to_string()));
+            HirExpr::StardustMacro(insts, _) => {
+                // 翻译 stardust! 宏指令为 MIR
+                for inst in insts {
+                    self.gen_stardust_inst(inst);
+                }
             }
             HirExpr::Unsafe(block, _) => {
+                // unsafe 块：标记作用域并生成代码（跳过类型检查）
+                self.mir.push(MirInst::Comment("unsafe block begin".to_string()));
                 self.gen_block(block, fn_sig);
+                self.mir.push(MirInst::Comment("unsafe block end".to_string()));
             }
 
             // 其他表达式：占位
@@ -659,6 +665,134 @@ impl MirGen {
     #[allow(dead_code)]
     fn get_variant_tag(&self, enum_name: &str, variant: &str) -> u32 {
         self.type_table.variant_tag(enum_name, variant).unwrap_or(0)
+    }
+
+    /// 将 stardust! 宏指令翻译为 MIR
+    fn gen_stardust_inst(&mut self, inst: &crate::frontend::ast::StardustInst) {
+        match inst {
+            crate::frontend::ast::StardustInst::Push(v) => {
+                self.mir.push(MirInst::Push { value: Value::I64(*v), ty: TypeId::Unknown });
+                self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Pop => {
+                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                self.stack.pop();
+            }
+            crate::frontend::ast::StardustInst::Dup => {
+                self.mir.push(MirInst::Dup { ty: TypeId::Unknown });
+                self.stack.dup();
+            }
+            crate::frontend::ast::StardustInst::Swap => {
+                self.mir.push(MirInst::Swap);
+                self.stack.swap();
+            }
+            crate::frontend::ast::StardustInst::Add => {
+                self.mir.push(MirInst::Add { ty: TypeId::Unknown });
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Sub => {
+                self.mir.push(MirInst::Sub { ty: TypeId::Unknown });
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Mul => {
+                self.mir.push(MirInst::Mul { ty: TypeId::Unknown });
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Div => {
+                self.mir.push(MirInst::Div { ty: TypeId::Unknown });
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Mod => {
+                self.mir.push(MirInst::Mod { ty: TypeId::Unknown });
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Eq => {
+                self.mir.push(MirInst::Eq);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Ne => {
+                self.mir.push(MirInst::Ne);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Lt => {
+                self.mir.push(MirInst::Lt);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Gt => {
+                self.mir.push(MirInst::Gt);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Le => {
+                self.mir.push(MirInst::Le);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Ge => {
+                self.mir.push(MirInst::Ge);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::And => {
+                self.mir.push(MirInst::And);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Or => {
+                self.mir.push(MirInst::Or);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Not => {
+                self.mir.push(MirInst::Not);
+                // Not: pop 1, push 1 — stack unchanged
+            }
+            crate::frontend::ast::StardustInst::Xor => {
+                self.mir.push(MirInst::Xor);
+                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Store => {
+                self.mir.push(MirInst::RemoteStore { index: 0 });
+                self.stack.pop(); self.stack.pop();
+            }
+            crate::frontend::ast::StardustInst::Load => {
+                self.mir.push(MirInst::RemoteLoad { index: 0 });
+                self.stack.pop(); self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::ShiftL => {
+                self.mir.push(MirInst::Roll { n: -1 });
+                self.stack.roll(-1);
+            }
+            crate::frontend::ast::StardustInst::ShiftR => {
+                self.mir.push(MirInst::Roll { n: 1 });
+                self.stack.roll(1);
+            }
+            crate::frontend::ast::StardustInst::Depth => {
+                let len = self.stack.len() as i64;
+                self.mir.push(MirInst::Push { value: Value::I64(len), ty: TypeId::Unknown });
+                self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::Reverse => {
+                self.mir.push(MirInst::Comment("stardust Reverse (not implemented)".to_string()));
+            }
+            crate::frontend::ast::StardustInst::Rotate => {
+                self.mir.push(MirInst::Roll { n: 2 });
+                self.stack.roll(2);
+            }
+            crate::frontend::ast::StardustInst::Call { n, m } => {
+                self.mir.push(MirInst::Push {
+                    value: Value::CallElement { argc: *n },
+                    ty: TypeId::Unknown,
+                });
+                self.stack.push_temp();
+                self.mir.push(MirInst::Call { fn_id: FnId(0) }); // 占位 FnId
+                // 清理栈追踪
+                for _ in 0..*n { self.stack.pop(); }
+                self.stack.pop(); // CallElement
+                for _ in 0..*m { self.stack.push_temp(); }
+            }
+            crate::frontend::ast::StardustInst::Ret { m } => {
+                self.mir.push(MirInst::Ret { argc: *m });
+            }
+            crate::frontend::ast::StardustInst::Ident(_) => {
+                self.mir.push(MirInst::Comment("stardust custom ident".to_string()));
+            }
+        }
     }
 }
 

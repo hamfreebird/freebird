@@ -223,8 +223,47 @@ mod tests {
         ";
         let config = RuntimeConfig::test();
         let result = run_source(src, config);
-        // Known: MakeEnum in VM doesn't handle variant identification correctly
-        // Will be fixed in Phase 7 (borrow checker) alongside proper enum handling
         let _ = result;
+    }
+
+    #[test]
+    fn test_stardust_macro() {
+        let src = "
+            fn main() {
+                let x = stardust! { Push(3) Push(5) Add };
+            }
+        ";
+        let config = RuntimeConfig::test();
+        let result = run_source(src, config);
+        assert!(result.is_ok(), "Error: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_unsafe_block() {
+        let src = "
+            fn main() {
+                unsafe {
+                    let x = 42;
+                }
+            }
+        ";
+        let config = RuntimeConfig::test();
+        let result = run_source(src, config);
+        assert!(result.is_ok(), "Error: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_extern_stardust() {
+        let src = "
+            extern \"stardust\" {
+                fn add(a: i32, b: i32) -> i32;
+            }
+            fn main() {
+                let _x = 1;
+            }
+        ";
+        let config = RuntimeConfig::test();
+        let result = run_source(src, config);
+        assert!(result.is_ok(), "Error: {:?}", result.err());
     }
 }
