@@ -1,0 +1,6 @@
+// 枚举声明与构造（匹配执行有已知限制）
+enum Option { None, Some(i32) }
+
+fn main() {
+    let _opt = Option::Some(42);
+}

@@ -8,7 +8,8 @@ pub fn optimize_mir(mir: &mut Vec<MirInst>) {
             constant_folding(mir) ||
             peephole_optimize(mir) ||
             remove_dead_code(mir) ||
-            eliminate_redundant_roll(mir);
+            eliminate_redundant_roll(mir) ||
+            jump_optimization(mir);
         if !changed {
             break;
         }
@@ -134,7 +135,35 @@ fn eliminate_redundant_roll(mir: &mut Vec<MirInst>) -> bool {
     changed
 }
 
-#[cfg(test)]
+/// 跳转优化: Jump A; ... Mark A; UncondJump B → Jump B
+fn jump_optimization(mir: &mut Vec<MirInst>) -> bool {
+    let mut changed = false;
+    // 首先收集所有 Mark 位置
+    let mut mark_positions: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for (i, inst) in mir.iter().enumerate() {
+        if let MirInst::Mark(n) = inst {
+            mark_positions.insert(*n, i);
+        }
+    }
+    let mut i = 0;
+    while i < mir.len() {
+        if let MirInst::Jump(n) = &mir[i] {
+            if let Some(&target_pos) = mark_positions.get(n) {
+                // 查找跳转目标后的指令
+                if target_pos + 1 < mir.len() {
+                    if let MirInst::UncondJump(m) = &mir[target_pos + 1] {
+                        // Jump A → ... Mark A; UncondJump B → 改为 Jump B
+                        mir[i] = MirInst::Jump(*m);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    changed
+}
+
 mod tests {
     use super::*;
     use crate::vm::value::Value;

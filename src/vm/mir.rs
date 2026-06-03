@@ -146,7 +146,7 @@ pub enum MirInst {
     FieldAccess { index: usize }, // 字段/元组元素访问
     IndexAccess,                  // arr[i] (pop i, pop arr, push arr[i])
     MakeEnum { variant: usize, data_slots: u32 },
-    EnumTag, // 读取枚举标签
+    EnumTag { total_slots: u32 }, // 读取枚举标签（total_slots = 1 + max_data_slots）
 
     // === 远程栈操作 ===
     AllocRemote,                 // 分配远程栈（pop capacity, push StackHandle）
@@ -240,7 +240,7 @@ impl std::fmt::Display for MirInst {
                 variant,
                 data_slots,
             } => write!(f, "MakeEnum(variant={variant}, data_slots={data_slots})"),
-            MirInst::EnumTag => write!(f, "EnumTag"),
+            MirInst::EnumTag { total_slots } => write!(f, "EnumTag(total_slots={total_slots})"),
             MirInst::AllocRemote => write!(f, "AllocRemote"),
             MirInst::FreeRemote => write!(f, "FreeRemote"),
             MirInst::RemotePush => write!(f, "RemotePush"),

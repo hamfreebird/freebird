@@ -365,16 +365,19 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
-            MirInst::EnumTag => {
-                // 读取枚举标签：枚举值的第一个槽是 tag
-                // 枚举布局: [tag, data...]（底部→顶部，tag 在底部，data 在顶部）
+            MirInst::EnumTag { total_slots } => {
+                // 枚举布局: [tag, data...]（底部→顶部）
+                // tag 在底部，距栈顶 total_slots - 1 个位置
                 let mut frame = self.pop_frame()?;
-                // roll 将 tag 提取到栈顶
-                let enum_slots = 2; // 简化：假设 2 槽枚举（tag + data）
-                let tag_pos = enum_slots - 1; // tag 距栈顶的位置
-                frame.data.roll(tag_pos)?;
-                frame.data.dup(&mut self.id_alloc)?;
-                frame.data.roll(-tag_pos)?;
+                let tag_pos = (*total_slots as usize).saturating_sub(1);
+                if tag_pos > 0 && tag_pos < frame.data.len() {
+                    frame.data.roll(tag_pos as i32)?;
+                    frame.data.dup(&mut self.id_alloc)?;
+                    frame.data.roll(-(tag_pos as i32))?;
+                } else if frame.data.len() >= 1 {
+                    // 单槽枚举（无数据变体）：栈顶即标签
+                    frame.data.dup(&mut self.id_alloc)?;
+                }
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
