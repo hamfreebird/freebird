@@ -2,6 +2,7 @@
 //!
 //! 提供编译流水线、双栈 VM 核心、词法/语法、HIR、MIR 生成。
 
+pub mod borrowck;
 pub mod frontend;
 pub mod hir;
 pub mod mir;

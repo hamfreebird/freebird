@@ -270,6 +270,7 @@ impl MirGen {
 
     fn gen_block(&mut self, block: &HirBlock, fn_sig: &FnSignature) {
         self.mir.push(MirInst::EnterScope);
+        let scope_start = self.mir.len();
 
         for stmt in &block.stmts {
             self.gen_stmt(stmt, fn_sig);
@@ -277,11 +278,28 @@ impl MirGen {
 
         if let Some(ref tail) = block.tail {
             self.gen_expr(tail, fn_sig);
-            // 尾表达式的值是隐式返回值
-            // 如果函数没有显式 return，尾表达式的结果留在栈顶作为返回值
+        }
+
+        // 收集本作用域中声明的 Move 类型变量，生成 Drop 指令
+        let drop_vars: Vec<String> = self.collect_drop_vars();
+        if !drop_vars.is_empty() {
+            for name in drop_vars.iter().rev() {
+                self.mir.push(MirInst::Comment(format!("drop {name}")));
+                self.mir.push(MirInst::ReadVar { name: name.clone() });
+                self.mir.push(MirInst::FreeRemote);
+                self.stack.pop(); // pop handle after FreeRemote
+            }
         }
 
         self.mir.push(MirInst::ExitScope);
+        let _ = scope_start;
+    }
+
+    /// 收集需要 Drop 的变量（Move 类型，在当前作用域中）
+    fn collect_drop_vars(&self) -> Vec<String> {
+        // 从栈追踪器中收集绑定到 StackHandle 的变量
+        // 简化：返回空 vec，让 DropGen 在后续处理
+        Vec::new()
     }
 
     // ─── 语句 ───
