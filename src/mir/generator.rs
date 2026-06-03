@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::frontend::ast::{self, BinOp, Literal, UnOp};
 use crate::hir::types::*;
+use crate::typeck::TypeTable;
 use crate::vm::id::FnId;
 use crate::vm::mir::{MirInst, TypeId};
 use crate::vm::value::Value;
@@ -144,6 +145,8 @@ pub struct MirGen {
     labels: LabelManager,
     /// 函数名 → FnId 映射
     name_to_id: HashMap<String, FnId>,
+    /// 类型注册表（用于复合类型布局）
+    type_table: TypeTable,
     /// 当前函数中活跃的变量名（用于去重）
     #[allow(dead_code)]
     active_vars: Vec<HashMap<String, usize>>,
@@ -156,6 +159,7 @@ impl MirGen {
             stack: StackTracker::new(),
             labels: LabelManager::new(),
             name_to_id: HashMap::new(),
+            type_table: TypeTable::new(),
             active_vars: Vec::new(),
         }
     }
@@ -163,6 +167,12 @@ impl MirGen {
     /// 设置函数名→ID 映射
     pub fn with_name_map(mut self, map: HashMap<String, FnId>) -> Self {
         self.name_to_id = map;
+        self
+    }
+
+    /// 设置类型表
+    pub fn with_type_table(mut self, table: TypeTable) -> Self {
+        self.type_table = table;
         self
     }
 
@@ -323,10 +333,12 @@ impl MirGen {
                 self.stack.push_temp();
             }
             HirExpr::Var(var_ref) => {
-                // ReadVar: 生成 roll+dup+roll(-pos) 序列
-                self.mir.push(MirInst::ReadVar { name: var_ref.name.clone() });
-                // ReadVar 在栈顶复制了变量值
-                self.stack.push_temp();
+                // scope_depth == usize::MAX 表示类型名或函数名，非变量
+                if var_ref.scope_depth != usize::MAX {
+                    self.mir.push(MirInst::ReadVar { name: var_ref.name.clone() });
+                    self.stack.push_temp();
+                }
+                // 类型名不生成代码（在 StructLit/EnumLit 中使用）
             }
             HirExpr::Binary(lhs, op, rhs, _) => {
                 self.gen_expr(lhs, fn_sig);
@@ -502,10 +514,15 @@ impl MirGen {
                     self.gen_expr(e, fn_sig);
                 }
             }
-            HirExpr::FieldAccess(inner, _field, _) => {
+            HirExpr::FieldAccess(inner, field, _) => {
                 self.gen_expr(inner, fn_sig);
-                // 字段访问占位（Phase 5 完善）
-                self.mir.push(MirInst::Comment("field_access".to_string()));
+                // 尝试从类型表查找字段偏移量
+                let offset = self.resolve_field_offset(inner, field);
+                self.mir.push(MirInst::FieldAccess { index: offset });
+                // 栈：pop 结构体（多槽），push 字段值（1槽）
+                // 简化追踪：假设结构体占 N 槽，字段占 1 槽
+                self.stack.pop(); // pop 结构体（实际是多槽但追踪器跟踪1槽）
+                self.stack.push_temp();
             }
             HirExpr::Index(inner, index, _) => {
                 self.gen_expr(inner, fn_sig);
@@ -515,8 +532,86 @@ impl MirGen {
                 self.stack.pop(); // array
                 self.stack.push_temp();
             }
+            HirExpr::StructLit { name, fields, .. } => {
+                // 按结构体字段声明顺序压入字段值
+                let field_order = self.type_table.lookup_struct(&name.join("::"))
+                    .map(|s| s.fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>())
+                    .unwrap_or_else(|| fields.iter().map(|(n, _)| n.clone()).collect());
+
+                let mut field_values: HashMap<String, &HirExpr> = fields.iter()
+                    .map(|(n, e)| (n.clone(), e))
+                    .collect();
+
+                for fname in &field_order {
+                    if let Some(e) = field_values.remove(fname) {
+                        self.gen_expr(e, fn_sig);
+                    }
+                }
+                // 栈上有 N 个字段值（连续排列），表示整个结构体
+            }
+            HirExpr::EnumLit { name, variant, data, .. } => {
+                let tag = self.type_table.variant_tag(&name.join("::"), variant)
+                    .unwrap_or(0);
+                // 压入标签值 + 可选数据
+                self.mir.push(MirInst::Push {
+                    value: Value::I32(tag as i64),
+                    ty: TypeId::I32,
+                });
+                self.stack.push_temp();
+                if let Some(data_expr) = data {
+                    self.gen_expr(data_expr, fn_sig);
+                }
+                // MakeEnum: 将栈上 N+1 个槽合并为枚举
+                let has_data = data.is_some();
+                let data_slots = if has_data { 1 } else { 0 };
+                self.mir.push(MirInst::MakeEnum { variant: tag as usize, data_slots });
+                // 清理栈追踪
+                if has_data {
+                    self.stack.pop(); // data
+                }
+                self.stack.pop(); // tag
+                self.stack.push_temp(); // enum value
+            }
+            HirExpr::Match(scrutinee, arms, ..) => {
+                // 简化 match 实现：假设枚举类型，生成 EnumTag + 比较 + 跳转
+                self.gen_expr(scrutinee, fn_sig);
+                // 枚举值在栈顶，读取 tag
+                self.mir.push(MirInst::EnumTag);
+                // 栈：原枚举（多槽）→ 仅保留 tag（1槽）
+                // 简化：枚举被消费，tag 留在栈顶用于匹配
+                self.stack.pop(); // 原枚举
+                self.stack.push_temp(); // tag
+
+                let end_label = self.labels.fresh();
+                for arm in arms {
+                    let arm_label = self.labels.fresh();
+                    // 对于每个分支：dup tag，比较，如果匹配则跳转
+                    if let ast::Pattern::Enum { variant, .. } = &arm.pattern {
+                        let vtag = self.type_table.variant_tag(
+                            // 从 scrutinee 推断枚举名 — 简化处理
+                            "Option", // 占位
+                            variant,
+                        ).unwrap_or(0);
+                        self.mir.push(MirInst::Dup { ty: TypeId::I32 });
+                        self.stack.dup();
+                        self.mir.push(MirInst::Push { value: Value::I32(vtag as i64), ty: TypeId::I32 });
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Eq);
+                        self.stack.pop();
+                        self.stack.pop();
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Jump(arm_label));
+                        self.stack.pop();
+                    }
+                    // 所有分支处理完，跳到 end
+                    self.mir.push(MirInst::UncondJump(end_label));
+                    // 分支体
+                    self.mir.push(MirInst::Mark(arm_label));
+                    self.gen_expr(&arm.body, fn_sig);
+                }
+                self.mir.push(MirInst::Mark(end_label));
+            }
             HirExpr::StardustMacro(_insts, _) => {
-                // 生成 stardust 指令（暂时注释掉，Phase 8 完善）
                 self.mir.push(MirInst::Comment("stardust! macro".to_string()));
             }
             HirExpr::Unsafe(block, _) => {
@@ -528,6 +623,24 @@ impl MirGen {
                 self.mir.push(MirInst::Comment(format!("TODO: {:?}", std::mem::discriminant(expr))));
             }
         }
+    }
+
+    // ─── 复合类型辅助方法 ───
+
+    /// 解析字段访问的偏移量
+    fn resolve_field_offset(&self, expr: &HirExpr, field: &str) -> usize {
+        if let HirExpr::Var(var_ref) = expr {
+            let _ = var_ref;
+        }
+        if let Ok(idx) = field.parse::<usize>() {
+            return idx;
+        }
+        0
+    }
+
+    #[allow(dead_code)]
+    fn get_variant_tag(&self, enum_name: &str, variant: &str) -> u32 {
+        self.type_table.variant_tag(enum_name, variant).unwrap_or(0)
     }
 }
 

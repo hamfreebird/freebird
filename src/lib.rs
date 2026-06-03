@@ -6,6 +6,7 @@ pub mod frontend;
 pub mod hir;
 pub mod mir;
 pub mod pipeline;
+pub mod typeck;
 pub mod vm;
 
 // 重导出常用类型

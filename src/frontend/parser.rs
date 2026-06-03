@@ -169,9 +169,22 @@ impl Parser {
             let name = self.expect_ident("variant name")?;
             let span = self.current_span();
             let data = if self.eat(TokenKind::LParen) {
-                let ty = self.parse_type()?;
-                self.expect(TokenKind::RParen)?;
-                Some(ty)
+                let first_ty = self.parse_type()?;
+                if self.eat(TokenKind::Comma) {
+                    // 多类型元组: (u8, u8, u8)
+                    let mut types = vec![first_ty];
+                    loop {
+                        types.push(self.parse_type()?);
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    Some(Type::Tuple(types, span))
+                } else {
+                    self.expect(TokenKind::RParen)?;
+                    Some(first_ty)
+                }
             } else {
                 None
             };
@@ -284,7 +297,7 @@ impl Parser {
 
         loop {
             let tk = self.peek();
-            if matches!(tk, TokenKind::Eof | TokenKind::RBrace | TokenKind::Semicolon | TokenKind::RParen | TokenKind::RBracket) {
+            if matches!(tk, TokenKind::Eof | TokenKind::RBrace | TokenKind::Semicolon | TokenKind::RParen | TokenKind::RBracket | TokenKind::Comma | TokenKind::FatArrow) {
                 break;
             }
 
@@ -306,6 +319,40 @@ impl Parser {
                     let span = self.expect(TokenKind::RBracket)?.span;
                     lhs = Expr::Index(Box::new(lhs), Box::new(index), span);
                     continue;
+                }
+                TokenKind::ColonColon if matches!(lhs, Expr::Var(_, _)) => {
+                    // Enum::Variant 或路径
+                    let enum_name = match lhs {
+                        Expr::Var(ref n, _) => n.clone(),
+                        _ => "?".to_string(),
+                    };
+                    self.advance();
+                    let segment = self.expect_ident("path segment")?;
+                    if self.check(TokenKind::LParen) {
+                        self.advance(); // skip (
+                        let data = if !self.check(TokenKind::RParen) {
+                            Some(Box::new(self.parse_expr(0)?))
+                        } else {
+                            None
+                        };
+                        let span = self.expect(TokenKind::RParen)?.span;
+                        lhs = Expr::EnumLit {
+                            name: vec![enum_name],
+                            variant: segment,
+                            data,
+                            span,
+                        };
+                    }
+                    continue;
+                }
+                TokenKind::LBrace if matches!(lhs, Expr::Var(_, _)) => {
+                    // 结构体构造: Point { x: 1, y: 2 }
+                    if let Expr::Var(n, _) = lhs {
+                        let fields = self.parse_struct_literal_fields()?;
+                        let span = self.pos_span();
+                        lhs = Expr::StructLit { name: vec![n], fields, span };
+                        continue;
+                    }
                 }
                 _ => {}
             }
@@ -576,7 +623,8 @@ impl Parser {
 
     fn parse_match_expr(&mut self) -> Result<Expr, FrontendError> {
         let span = self.advance().span;
-        let scrutinee = self.parse_expr(0)?;
+        // 使用 parse_expr_prefix 避免 suffix 循环将 { 误解为 struct literal
+        let scrutinee = self.parse_expr_prefix()?;
         self.expect(TokenKind::LBrace)?;
         let arms = self.parse_match_arms()?;
         self.expect(TokenKind::RBrace)?;
@@ -973,6 +1021,27 @@ impl Parser {
     }
 
     // ─── match 分支 ───
+
+    /// 解析结构体字面量字段: { x: 1, y: 2 }
+    fn parse_struct_literal_fields(&mut self) -> Result<Vec<(String, Expr)>, FrontendError> {
+        self.expect(TokenKind::LBrace)?;
+        let mut fields = Vec::new();
+        if self.check(TokenKind::RBrace) {
+            self.advance();
+            return Ok(fields);
+        }
+        loop {
+            let fname = self.expect_ident("field name")?;
+            self.expect(TokenKind::Colon)?;
+            let value = self.parse_expr(0)?;
+            fields.push((fname, value));
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::RBrace)?;
+        Ok(fields)
+    }
 
     fn parse_match_arms(&mut self) -> Result<Vec<MatchArm>, FrontendError> {
         let mut arms = Vec::new();
