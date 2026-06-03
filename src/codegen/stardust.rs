@@ -85,25 +85,17 @@ impl StardustGen {
                 self.emit("Pick(1) Pick(0) Push(1) Swap");
             }
             MirInst::Add { .. } => {
-                // Add: pop 2 values (and their IDs) → push 1 pair
-                self.emit("// Add: pop 2 pairs, push 1 result");
-                self.emit("Pop Pop  // discard rhs pair");
-                self.emit("Swap Pop Pop Swap"); // discard lhs pair, keep result position
-                self.emit("Add");
-                self.emit("Push(1)  // new id");
-                self.emit("Swap");
+                self.emit("// Add: Pick values, operate, discard old pairs");
+                self.emit("Pick(0) Pick(2) Add");
+                self.emit("Pop Pop Pop Pop Push(1) Swap");
             }
             MirInst::Sub { .. } => { self.emit("// Sub"); self.emit_binary_op("Sub"); }
             MirInst::Mul { .. } => { self.emit("// Mul"); self.emit_binary_op("Mul"); }
             MirInst::Div { .. } => { self.emit("// Div"); self.emit_binary_op("Div"); }
             MirInst::Mod { .. } => { self.emit("// Mod"); self.emit_binary_op("Mod"); }
             MirInst::Neg { .. } => {
-                self.emit("// Neg: pop value, negate, push new id");
-                self.emit("Pop  // discard id");
-                self.emit("Swap Pop Swap"); // swap to bring value to top
-                self.emit("Neg");
-                self.emit("Push(1)  // new id");
-                self.emit("Swap");
+                self.emit("// Neg: Pick value, negate, push new id");
+                self.emit("Pick(0) Neg Pop Pop Push(1) Swap");
             }
             MirInst::Eq => { self.emit("// Eq"); self.emit_cmp_op("Eq"); }
             MirInst::Ne => { self.emit("// Ne"); self.emit_cmp_op("Ne"); }
@@ -170,19 +162,22 @@ impl StardustGen {
     }
 
     fn emit_binary_op(&mut self, op: &str) {
-        // Binary op: pop 2 pairs, push 1 pair
-        self.emit(&format!("Pop Pop  // discard rhs id,value"));
-        self.emit("Swap  // bring lhs to top");
-        self.emit("Pop Pop  // discard lhs id,value");
-        self.emit(&format!("Swap {op}  // perform {op}"));
+        // Interleaved: [..., lhs_id, lhs_val, rhs_id, rhs_val] (top)
+        // Pick values: Pick(0)=rhs_val, Pick(2)=lhs_val (skip IDs)
+        self.emit("Pick(0)  // copy rhs value");
+        self.emit("Pick(2)  // copy lhs value");
+        self.emit(&format!("{op}  // perform {op}"));
+        self.emit("Pop Pop Pop Pop  // discard old pairs");
         self.emit("Push(1)  // new id");
         self.emit("Swap");
     }
 
     fn emit_cmp_op(&mut self, op: &str) {
-        self.emit(&format!("Pop Pop  // discard rhs"));
-        self.emit("Swap Pop Pop Swap  // discard lhs");
+        // Same Pick-based approach for comparison
+        self.emit("Pick(0)  // copy rhs value");
+        self.emit("Pick(2)  // copy lhs value");
         self.emit(&format!("{op}  // compare"));
+        self.emit("Pop Pop Pop Pop  // discard old pairs");
         self.emit("Push(1)  // new id for bool");
         self.emit("Swap");
     }

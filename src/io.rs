@@ -57,13 +57,33 @@ impl IoLib {
     /// 生成 read_line() 的 MIR 指令（循环读取直到换行）
     /// 将字符串存储在远程栈中，返回 StackHandle
     pub fn read_line() -> Vec<MirInst> {
-        // 分配初始容量的远程栈，循环读取字符直到换行
+        // 分配远程栈 (cap=256)，循环读字符直到 '\n'
+        // 使用 Mark/Jump 实现循环: for each char, RemotePush if not '\n'
         let mut insts = vec![
             MirInst::Push { value: Value::Usize(256), ty: TypeId::Usize },
             MirInst::AllocRemote,
         ];
-        // 简化为单字符读取（完整实现需要循环逻辑）
+        // Mark(0): loop start
+        insts.push(MirInst::Mark(0));
+        // Read char
         insts.push(MirInst::CharIn);
+        // Dup char, Push '\n', Eq, Not → true if char != '\n'
+        insts.push(MirInst::Dup { ty: TypeId::Char });
+        insts.push(MirInst::Push { value: Value::Char('\n' as u32), ty: TypeId::Char });
+        insts.push(MirInst::Eq);
+        insts.push(MirInst::Not);
+        // Jump to end (mark 1) if char == '\n'
+        insts.push(MirInst::Jump(1));
+        // Push char to remote (RemotePush consumes handle+value, re-pushes handle)
+        insts.push(MirInst::Dup { ty: TypeId::Unknown }); // dup handle (at pos 1 after char)
+        insts.push(MirInst::Swap); // handle on top, then char
+        insts.push(MirInst::RemotePush);
+        // Loop back
+        insts.push(MirInst::UncondJump(0));
+        // Mark(1): loop end — skip newline, keep handle on stack
+        insts.push(MirInst::Mark(1));
+        insts.push(MirInst::Pop { ty: TypeId::Char }); // discard newline
+        insts.push(MirInst::Pop { ty: TypeId::Char }); // discard dup'd newline
         insts
     }
 

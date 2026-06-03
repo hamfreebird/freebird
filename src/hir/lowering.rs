@@ -319,17 +319,17 @@ impl Lowering {
                         });
                     }
 
-                let hir_args: Vec<HirCallArg> = args
-                    .iter()
-                    .filter_map(|arg| match arg {
-                        ast::CallArg::Pos(e, s) => {
-                            self.lower_expr(e).map(|he| HirCallArg::Pos(he, *s))
-                        }
-                        ast::CallArg::Named(n, e, s) => {
-                            self.lower_expr(e).map(|he| HirCallArg::Named(n.clone(), he, *s))
-                        }
-                    })
-                    .collect();
+                let mut hir_args: Vec<HirCallArg> = Vec::new();
+                for arg in args {
+                    let lowered = match arg {
+                        ast::CallArg::Pos(e, s) => self.lower_expr(e).map(|he| HirCallArg::Pos(he, *s)),
+                        ast::CallArg::Named(n, e, s) => self.lower_expr(e).map(|he| HirCallArg::Named(n.clone(), he, *s)),
+                    };
+                    match lowered {
+                        Some(a) => hir_args.push(a),
+                        None => { /* error already pushed by lower_expr */ }
+                    }
+                }
 
                 Some(HirExpr::Call {
                     func: Box::new(hir_func),
@@ -349,11 +349,13 @@ impl Lowering {
                 Some(HirExpr::Index(Box::new(hir_inner), Box::new(hir_index), *span))
             }
             ast::Expr::Tuple(elems, span) => {
-                let hir_elems: Vec<HirExpr> = elems.iter().filter_map(|e| self.lower_expr(e)).collect();
+                let mut hir_elems = Vec::new();
+                for e in elems { if let Some(he) = self.lower_expr(e) { hir_elems.push(he); } }
                 Some(HirExpr::Tuple(hir_elems, *span))
             }
             ast::Expr::Array(elems, span) => {
-                let hir_elems: Vec<HirExpr> = elems.iter().filter_map(|e| self.lower_expr(e)).collect();
+                let mut hir_elems = Vec::new();
+                for e in elems { if let Some(he) = self.lower_expr(e) { hir_elems.push(he); } }
                 Some(HirExpr::Array(hir_elems, *span))
             }
             ast::Expr::Repeat(elem, count, span) => {
@@ -385,19 +387,18 @@ impl Lowering {
             }
             ast::Expr::Match(scrutinee, arms, span) => {
                 let hir_scrutinee = self.lower_expr(scrutinee)?;
-                let hir_arms: Vec<HirMatchArm> = arms
-                    .iter()
-                    .filter_map(|arm| {
-                        let guard = arm.guard.as_ref().and_then(|g| self.lower_expr(g).map(Box::new));
-                        let body = self.lower_expr(&arm.body)?;
-                        Some(HirMatchArm {
+                let mut hir_arms = Vec::new();
+                for arm in arms {
+                    let guard = arm.guard.as_ref().and_then(|g| self.lower_expr(g).map(Box::new));
+                    if let Some(body) = self.lower_expr(&arm.body) {
+                        hir_arms.push(HirMatchArm {
                             pattern: arm.pattern.clone(),
                             guard,
                             body: Box::new(body),
                             span: arm.span,
-                        })
-                    })
-                    .collect();
+                        });
+                    }
+                }
                 Some(HirExpr::Match(Box::new(hir_scrutinee), hir_arms, *span))
             }
             ast::Expr::Loop(body, span) => {
@@ -429,7 +430,8 @@ impl Lowering {
             }
             ast::Expr::Continue(span) => Some(HirExpr::Continue(*span)),
             ast::Expr::Return(values, span) => {
-                let hir_values: Vec<HirExpr> = values.iter().filter_map(|e| self.lower_expr(e)).collect();
+                let mut hir_values = Vec::new();
+                for e in values { if let Some(he) = self.lower_expr(e) { hir_values.push(he); } }
                 Some(HirExpr::Return(hir_values, *span))
             }
             ast::Expr::Ret(n, span) => Some(HirExpr::Ret(*n, *span)),

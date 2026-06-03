@@ -147,6 +147,8 @@ pub struct MirGen {
     name_to_id: HashMap<String, FnId>,
     /// 类型注册表（用于复合类型布局）
     type_table: TypeTable,
+    /// 活跃的 loop end label 栈（用于 break 跳转）
+    loop_ends: Vec<usize>,
     /// 当前函数中活跃的变量名（用于去重）
     #[allow(dead_code)]
     active_vars: Vec<HashMap<String, usize>>,
@@ -160,6 +162,7 @@ impl MirGen {
             labels: LabelManager::new(),
             name_to_id: HashMap::new(),
             type_table: TypeTable::new(),
+            loop_ends: Vec::new(),
             active_vars: Vec::new(),
         }
     }
@@ -465,11 +468,14 @@ impl MirGen {
 
                 self.mir.push(MirInst::Mark(loop_start));
                 self.gen_expr(cond, fn_sig);
-                self.mir.push(MirInst::Not); // 取反：cond==false 时跳出
+                self.mir.push(MirInst::Not);
                 self.mir.push(MirInst::Jump(loop_end));
-                self.stack.pop(); // pop cond
+                self.stack.pop();
 
+                self.loop_ends.push(loop_end);
                 self.gen_block(body, fn_sig);
+                self.loop_ends.pop();
+
                 self.mir.push(MirInst::UncondJump(loop_start));
                 self.mir.push(MirInst::Mark(loop_end));
             }
@@ -478,7 +484,11 @@ impl MirGen {
                 let loop_end = self.labels.fresh();
 
                 self.mir.push(MirInst::Mark(loop_start));
+
+                self.loop_ends.push(loop_end);
                 self.gen_block(body, fn_sig);
+                self.loop_ends.pop();
+
                 self.mir.push(MirInst::UncondJump(loop_start));
                 self.mir.push(MirInst::Mark(loop_end));
             }
@@ -500,9 +510,12 @@ impl MirGen {
                 if let Some(val) = value {
                     self.gen_expr(val, fn_sig);
                 }
-                // Break 由上层处理（loop/while 提供 loop_end label）
-                // 简化：生成注释
-                self.mir.push(MirInst::Comment("break".to_string()));
+                // 跳转到最内层循环的 end label
+                if let Some(&loop_end) = self.loop_ends.last() {
+                    self.mir.push(MirInst::UncondJump(loop_end));
+                } else {
+                    self.mir.push(MirInst::Comment("break outside loop".to_string()));
+                }
             }
             HirExpr::Ref(inner, mutable, _) => {
                 // &x: 查找 x 的 ElementId
@@ -654,20 +667,20 @@ impl MirGen {
 
     // ─── 复合类型辅助方法 ───
 
-    /// 解析字段访问的偏移量
-    /// 从表达式推断枚举名
+    /// 从表达式推断枚举名（尝试所有已注册枚举）
     fn infer_enum_name(&self, expr: &HirExpr) -> String {
         match expr {
-            HirExpr::Var(var_ref) => {
-                // 从变量名无法直接推断枚举类型，遍历 TypeTable
-                for (name, _) in self.type_table.iter() {
-                    if self.type_table.lookup_enum(name).is_some() {
+            HirExpr::EnumLit { name, .. } => name.join("::"),
+            HirExpr::Var(_) => {
+                // 遍历所有枚举，返回第一个（作为最佳猜测）
+                // 未来需要类型标注来精确判断
+                for (name, def) in self.type_table.iter() {
+                    if matches!(def, crate::typeck::type_table::TypeDef::Enum(_)) {
                         return name.clone();
                     }
                 }
-                "Option".to_string() // 默认回退
+                "?".to_string()
             }
-            HirExpr::EnumLit { name, .. } => name.join("::"),
             _ => "?".to_string(),
         }
     }
@@ -675,32 +688,35 @@ impl MirGen {
     /// 从表达式推断枚举总槽数
     fn infer_enum_slots(&self, expr: &HirExpr) -> u32 {
         match expr {
-            HirExpr::Var(_) => 2, // 默认 2 槽
             HirExpr::EnumLit { name, .. } => {
                 self.type_table.lookup_enum(&name.join("::"))
                     .map(|e| e.total_slots)
                     .unwrap_or(2)
             }
-            _ => 2,
+            _ => {
+                // 尝试从已注册枚举获取槽数
+                for (_, def) in self.type_table.iter() {
+                    if let crate::typeck::type_table::TypeDef::Enum(e) = def {
+                        return e.total_slots;
+                    }
+                }
+                2
+            }
         }
     }
 
-    fn resolve_field_offset(&self, expr: &HirExpr, field: &str) -> usize {
-        // 尝试从变量名推断类型（通过栈追踪器）
-        if let HirExpr::Var(var_ref) = expr {
-            // 从栈追踪器查找变量对应的结构体类型
-            // 简化：遍历 TypeTable 查找匹配的字段
-            for (_type_name, type_def) in self.type_table.iter() {
-                if let crate::typeck::type_table::TypeDef::Struct(s) = type_def {
-                    for f in &s.fields {
-                        if f.name == var_ref.name {
-                            // 变量名匹配某个字段名？不对，应该匹配变量名→类型
-                        }
+    fn resolve_field_offset(&self, _expr: &HirExpr, field: &str) -> usize {
+        // 搜索所有已注册结构体，找到包含该字段名的第一个
+        for (_, type_def) in self.type_table.iter() {
+            if let crate::typeck::type_table::TypeDef::Struct(s) = type_def {
+                for f in &s.fields {
+                    if f.name == field {
+                        return f.index;
                     }
                 }
             }
         }
-        // 回退：如果字段名是数字，按元组索引处理
+        // 元组索引回退
         if let Ok(idx) = field.parse::<usize>() {
             return idx;
         }
