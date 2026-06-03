@@ -615,10 +615,13 @@ impl MirGen {
                         self.mir.push(MirInst::Push { value: Value::I32(vtag as i64), ty: TypeId::I32 });
                         self.stack.push_temp();
                         self.mir.push(MirInst::Eq);
-                        self.stack.pop();
-                        self.stack.pop();
-                        self.stack.push_temp();
+                        self.stack.pop(); // vtag
+                        self.stack.pop(); // tag_copy (consumed by Eq)
+                        self.stack.push_temp(); // bool result
                         self.mir.push(MirInst::Jump(arm_label));
+                        self.stack.pop(); // bool (consumed by Jump)
+                        // 清理: pop 当前 arm 未匹配时的 Dup 残留
+                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
                         self.stack.pop();
                     }
                     // 所有分支处理完，跳到 end
