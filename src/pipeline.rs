@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::codegen::{optimize_mir, StardustGen};
 use crate::frontend::parse;
 use crate::hir::lower;
 use crate::mir::MirGen;
@@ -78,6 +79,38 @@ pub fn check_source(source: &str) -> Result<(), Vec<String>> {
     } else {
         Err(all_errors)
     }
+}
+
+/// 编译到 Stardust 源码
+pub fn build_stardust(source: &str) -> Result<String, String> {
+    let (ast, ast_errors) = parse(source);
+    if !ast_errors.is_empty() {
+        let msg: Vec<String> = ast_errors.iter().map(|e| e.to_string()).collect();
+        return Err(format!("Parse errors:\n{}", msg.join("\n")));
+    }
+
+    let (hir, hir_errors) = lower(&ast);
+    if !hir_errors.is_empty() {
+        let msg: Vec<String> = hir_errors.iter().map(|e| e.to_string()).collect();
+        return Err(format!("Resolve errors:\n{}", msg.join("\n")));
+    }
+
+    let type_table = TypeTable::from_ast_decls(&ast.decls);
+    let mut generator = MirGen::new().with_type_table(type_table);
+    let functions = generator.gen_program(&hir);
+
+    let mut output = String::new();
+    for (fn_id, mir) in &functions {
+        let mut optimized = mir.clone();
+        optimize_mir(&mut optimized);
+        let mut sd_gen = StardustGen::new();
+        let stardust_code = sd_gen.generate(&optimized);
+        output.push_str(&format!("// Function FnId({})\n", fn_id.0));
+        output.push_str(&stardust_code);
+        output.push_str("\n");
+    }
+
+    Ok(output)
 }
 
 #[cfg(test)]
