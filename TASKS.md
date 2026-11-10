@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 198 unit + 23 integration 全绿（2026-11-10）。
+> 当前：`cargo test` = 199 unit + 25 integration 全绿（2026-11-10）。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
 ## P0 — 基础正确性与可验证性
@@ -19,7 +19,7 @@
 | ENUM-2 | MIR / VM | `Match` 生成顺序与标签泄漏有已知问题 | 多分支 match 行为不可靠 | 已完成 |
 | VEC-1 | 前端 / 类型 / VM | `vec![...]` 未解析，数组是裸栈槽 | 宏直接 parse error；数组索引顺序错误 | 已完成 |
 | VEC-2 | 类型 / VM | `Vec` 方法（push/pop/len）、`String`、`Box<T>` 与远程栈未落地 | `v.push(4)`、`Box::new(42)` 等不可用 | 已完成（单槽 Tuple 表示） |
-| CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine UTF-8 解码/NumIn/CharIn；`&mut` 引用堆单元支持跨函数写回；FileRead/FileWrite 与远程栈仍是占位） |
+| CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine UTF-8 解码与堆块扩容/NumIn/CharIn；`&mut` 引用堆单元支持跨函数写回；FileRead/FileWrite 与远程栈仍是占位） |
 | CGEN-2 | LLVM 后端 | `--target llvm` 未实现 | 直接退出 “not implemented” | 暂缓 |
 | BORROW-1 | 借用检查 | `BorrowChecker` 未接入流水线 | 借用/移动错误无法在编译期发现 | 已完成 |
 | DROP-1 | MIR / 借用检查 | `collect_drop_vars` 恒空，`DropGen` 未调用 | 远程栈资源不会在作用域退出时释放 | 已完成 |

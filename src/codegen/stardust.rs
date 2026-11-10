@@ -1490,20 +1490,25 @@ impl StardustGen {
     /// `ReadLine`：用 CharIn 逐字节读取一行，并按 UTF-8 解码成字符序列。
     ///
     /// 块中保存的是 Unicode 码点（与字符串字面量一致），因此 `print_str`
-    /// 可以直接 CharOut。最多保存 1024 个字符；换行/回车结束且不进入结果。
+    /// 可以直接 CharOut。块从 16 个字符开始按需翻倍，行尾的 `\r` 会在
+    /// 读到 `\n` 后统一去掉（与 VM 的 trim 行为一致）。
     /// 输入 EOF 仍无法检测（CharIn 会报错），非法首字节按 U+FFFD 处理。
     fn gen_read_line(&mut self) {
-        const READLINE_CAP: i64 = 1024;
-        self.emit_alloc_const(BLOCK_HEADER as usize + READLINE_CAP as usize);
+        const INITIAL_CAP: i64 = 16;
+        self.emit_alloc_const(BLOCK_HEADER as usize + INITIAL_CAP as usize);
         self.emit_store_scratch(HEAP_HANDLE);
         self.emit_write_header_const(HEAP_HANDLE, 0, 0);
-        self.emit_write_header_const(HEAP_HANDLE, 1, READLINE_CAP);
+        self.emit_write_header_const(HEAP_HANDLE, 1, INITIAL_CAP);
         self.emit_push_int(0);
         self.emit_store_scratch(HEAP_COUNTER);
 
         let read_loop = self.fresh_helper_label();
+        let grow = self.fresh_helper_label();
+        let grow_copy = self.fresh_helper_label();
+        let grow_copy_end = self.fresh_helper_label();
         let newline_end = self.fresh_helper_label();
-        let cap_end = self.fresh_helper_label();
+        let trim_loop = self.fresh_helper_label();
+        let trim_end = self.fresh_helper_label();
         let ascii = self.fresh_helper_label();
         let invalid = self.fresh_helper_label();
         let utf8_2 = self.fresh_helper_label();
@@ -1516,17 +1521,16 @@ impl StardustGen {
         self.raw_inst(read_loop, '`');
         // 容量检查放在读取之前，避免多消费一个输入字节。
         self.emit_load_scratch(HEAP_COUNTER);
-        self.emit_push_int(READLINE_CAP);
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-'); // Load capacity
         self.emit_ge();
-        self.raw_inst(cap_end, '\'');
+        self.raw_inst(grow, '\'');
 
         self.raw_inst(1, ','); // CharIn: b0
         self.emit_dup();
         self.emit_push_int(10); // '\n'
-        self.raw_inst(0, '=');
-        self.raw_inst(newline_end, '\'');
-        self.emit_dup();
-        self.emit_push_int(13); // '\r'
         self.raw_inst(0, '=');
         self.raw_inst(newline_end, '\'');
 
@@ -1630,12 +1634,81 @@ impl StardustGen {
         self.emit_store_scratch(HEAP_COUNTER);
         self.raw_inst(read_loop, '~');
 
-        // 换行结束：栈顶还有那个换行字节，丢弃。
+        // 容量不足：分配两倍大小的新块并复制已有字符。
+        self.raw_inst(grow, '`');
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-'); // Load capacity
+        self.emit_push_int(2);
+        self.raw_inst(2, '*'); // Mul
+        self.emit_store_scratch(HEAP_INDEX); // new capacity
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_alloc_from_stack();
+        self.emit_store_scratch(HEAP_NEW_HANDLE);
+        self.emit_write_header_slot(HEAP_NEW_HANDLE, 0, HEAP_COUNTER);
+        self.emit_write_header_slot(HEAP_NEW_HANDLE, 1, HEAP_INDEX);
+
+        // 逐个复制旧字符（HEAP_SIZE 复用为下标）。
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_SIZE);
+        self.raw_inst(grow_copy, '`');
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_ge();
+        self.raw_inst(grow_copy_end, '\'');
+        self.emit_load_scratch(HEAP_NEW_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_add();
+        self.raw_inst(1, '-'); // Load old char
+        self.emit_swap();
+        self.raw_inst(0, '-'); // Store new char
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_SIZE);
+        self.raw_inst(grow_copy, '~');
+        self.raw_inst(grow_copy_end, '`');
+        self.emit_load_scratch(HEAP_NEW_HANDLE);
+        self.emit_store_scratch(HEAP_HANDLE);
+        self.raw_inst(read_loop, '~');
+
+        // 换行结束：丢弃 \n，再删除行尾所有 \r（CRLF 与 VM 对齐）。
         self.raw_inst(newline_end, '`');
         self.emit_pop();
+        self.raw_inst(trim_loop, '`');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(0);
+        self.raw_inst(0, '=');
+        self.raw_inst(trim_end, '\'');
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.raw_inst(1, '-'); // Load last char
+        self.emit_push_int(13); // '\r'
+        self.raw_inst(1, '='); // Ne
+        self.raw_inst(trim_end, '\'');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.raw_inst(trim_loop, '~');
+        self.raw_inst(trim_end, '`');
 
-        // 正常容量结束或换行结束：写回长度并留下句柄。
-        self.raw_inst(cap_end, '`');
+        // 写回长度并留下句柄。
         self.emit_write_header_slot(HEAP_HANDLE, 0, HEAP_COUNTER);
         self.emit_load_scratch(HEAP_HANDLE);
     }

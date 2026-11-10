@@ -332,6 +332,24 @@ mod tests {
     }
 
     #[test]
+    fn test_read_line_trims_crlf_in_preloaded_input() {
+        let src = "
+            fn main() {
+                let a = read_line();
+                let b = read_line();
+                print_str(a);
+                print_char('\\n');
+                print_str(b);
+                print_char('\\n');
+            }
+        ";
+        let mut config = RuntimeConfig::test();
+        config.input = b"alpha\r\nbravo\r\n".to_vec();
+        let output = run_source(src, config).expect("CRLF input should run");
+        assert_eq!(output, b"alpha\nbravo\n");
+    }
+
+    #[test]
     fn test_string_io_builtins() {
         let src = r#"fn main() { print_str("abc"); println_str("def"); }"#;
         let output = run_source(src, RuntimeConfig::test()).expect("string io should run");

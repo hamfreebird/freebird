@@ -95,7 +95,10 @@ impl Vm {
                 None => (rest, rest.len()),
             };
             self.input_pos += consumed;
-            return Ok(String::from_utf8_lossy(line).into_owned());
+            // 与真实 stdin 路径一致：行尾的 `\r` 不进入结果（CRLF）。
+            return Ok(String::from_utf8_lossy(line)
+                .trim_end_matches('\r')
+                .to_string());
         }
         let mut line = String::new();
         io::stdin().read_line(&mut line)?;

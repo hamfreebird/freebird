@@ -339,6 +339,38 @@ fn main() {
 }
 
 #[test]
+fn test_stardust_backend_read_line_crlf() {
+    let source = r#"
+fn main() {
+    let a = read_line();
+    let b = read_line();
+    print(a.len());
+    print_str(a);
+    print_char('\n');
+    print(b.len());
+    print_str(b);
+    print_char('\n');
+}
+"#;
+    assert_stardust_matches_vm(source, "read_line_crlf", "alpha\r\nbråvo\r\n".as_bytes());
+}
+
+#[test]
+fn test_stardust_backend_read_line_grows_beyond_initial_capacity() {
+    let source = r#"
+fn main() {
+    let line = read_line();
+    print(line.len());
+    print_str(line);
+    print_char('\n');
+}
+"#;
+    // 1100 > 1024，覆盖旧实现的上限以及 read_line 的堆块翻倍逻辑。
+    let input = format!("{}\n", "x".repeat(1100));
+    assert_stardust_matches_vm(source, "read_line_long", input.as_bytes());
+}
+
+#[test]
 fn test_stardust_backend_mutable_reference_write_back() {
     let source = r#"
 fn main() {

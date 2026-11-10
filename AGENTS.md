@@ -5,7 +5,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Commands
 
 - Build: `cargo build --release` (edition 2024, Rust 1.85+).
-- Test: `cargo test` — current baseline is 198 unit + 23 integration tests, all green.
+- Test: `cargo test` — current baseline is 199 unit + 25 integration tests, all green.
 - Single test: `cargo test <test_name>`; integration only: `cargo test --test integration_test test_fib_program`.
 - CLI: `cargo run -- run <file.fb>`, `cargo run -- check <file.fb>`, `cargo run -- build [--target stardust|llvm] <file.fb>`, `cargo run -- repl`.
 - Run tests from the repo root: integration tests load fixtures via relative paths. `tests/programs/*.fb` are not auto-discovered (`enum_match.fb` is currently unused); add an explicit test for each new fixture.
@@ -27,11 +27,11 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 
 - Builtins are registered from `src/io.rs::BUILTINS`: `print`/`print_int`, `print_char`, `print_str`, `println_str`, `read_int`, `read_char`, `read_line`, `file_read`, and `file_write`.
 - Tuple destructuring (`let (a, b) = ...`), enum `match` with payload bindings, `vec![...]`, arrays, `Box`, indexing, and field/index assignment work in the VM. Mutable parameters (`fn f(mut x: T)`) are not part of the syntax.
-- Stardust backend limits: `file_read`/`file_write` and remote stacks are placeholders; `read_line` decodes UTF-8 (up to 1024 characters) and does not special-case EOF.
+- Stardust backend limits: `file_read`/`file_write` and remote stacks are placeholders; `read_line` decodes UTF-8 into a growable block and does not special-case EOF.
 
 ## I/O quirks
 
 - `run_source` returns VM output bytes; the CLI prints them once. Assert against the returned bytes rather than process stdout.
-- Stardust `read_line` decodes UTF-8 bytes into a character block (up to 1024 characters); invalid leading bytes become U+FFFD and EOF is not special-cased. `\r` and `\n` both end a line, so CRLF input leaves the `\n` for the next read. VM `read_line` trims `\n`/`\r`.
+- Stardust `read_line` decodes UTF-8 bytes into a growable character block (starts at 16 characters, doubles as needed); invalid leading bytes become U+FFFD and EOF is not special-cased. A line ends at `\n`, and trailing `\r` characters are trimmed, so CRLF input matches VM (`read_line` trims `\n`/`\r`).
 - VM and Stardust both resolve `&mut` writes across call frames: `fn set(p: &mut i64) { *p = 42; }` propagates back to the caller's variable.
 - `print(x); print(x)` works now: the builtin call is no longer treated as leaving an extra value on the stack.
