@@ -5,7 +5,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Commands
 
 - Build: `cargo build --release` (edition 2024, Rust 1.85+).
-- Test: `cargo test` — current baseline is 199 unit + 25 integration tests, all green.
+- Test: `cargo test` — current baseline is 199 unit + 26 integration tests, all green.
 - Single test: `cargo test <test_name>`; integration only: `cargo test --test integration_test test_fib_program`.
 - CLI: `cargo run -- run <file.fb>`, `cargo run -- check <file.fb>`, `cargo run -- build [--target stardust|llvm] <file.fb>`, `cargo run -- repl`.
 - Run tests from the repo root: integration tests load fixtures via relative paths. `tests/programs/*.fb` are not auto-discovered (`enum_match.fb` is currently unused); add an explicit test for each new fixture.

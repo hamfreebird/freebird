@@ -64,6 +64,16 @@ REPL 命令：
 
 ## 语言示例
 
+### 完整语言巡礼
+
+`examples/tour.fb` 展示了字符串/Unicode、`String`、变量与遮蔽、`while`、递归、元组解构、结构体、枚举匹配、`Vec`、数组、`Box`、`&mut` 写回和 `stardust!` 宏：
+
+```bash
+cargo run -- run examples/tour.fb
+cargo run -- build --target stardust examples/tour.fb > /tmp/tour.sd
+./stardust/stardust-linux-x86_64 /tmp/tour.sd
+```
+
 ### Hello World
 
 ```freebird

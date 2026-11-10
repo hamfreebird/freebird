@@ -118,6 +118,46 @@ fn test_hello_example() {
 }
 
 #[test]
+fn test_tour_example() {
+    let source = fs::read_to_string("examples/tour.fb").expect("read tour.fb");
+    let output = run_source(&source, RuntimeConfig::test()).expect("tour.fb should run");
+    let expected = "\
+== Freebird 语言巡礼 ==
+[1] 字符串 / Unicode / 字符
+你好，Freebird!
+name.len() = 8
+String::new + push -> FB
+[2] 变量 / while / 作用域遮蔽
+sum(0..4) = 10
+inner total = 100
+outer total = 10
+[3] 函数 / 递归 / 元组解构
+fib(10) = 55
+17 / 5 = 3
+17 % 5 = 2
+[4] 结构体 / 字段赋值
+p.x + p.y = 14
+[5] 枚举 / match 模式匹配
+Circle(2) area = 12
+Square(3) area = 9
+Dot area = 0
+[6] Vec / 数组 / Box
+v.len() = 4
+v.pop() = 1
+v[0] after store = 30
+array repeat [7;3] sum = 14
+*Box::new(6 * 7) = 42
+[7] &mut 引用跨函数写回
+counter after bump = 42
+[8] stardust! 宏
+20 + 22 = 42
+== 巡礼结束 ==
+";
+    assert_eq!(String::from_utf8(output).expect("tour output UTF-8"), expected);
+    assert_stardust_matches_vm(&source, "tour", b"");
+}
+
+#[test]
 fn test_stardust_backend_variables_and_control_flow() {
     let source = r#"
 fn main() {
