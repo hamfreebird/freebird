@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::frontend::error::FrontendError;
 use crate::hir::resolver::ResolveError;
 use crate::borrowck::checker::BorrowError;
+use crate::typeck::TypeCheckError;
 use crate::frontend::token::Span;
 
 /// 诊断级别
@@ -88,11 +89,59 @@ pub fn resolve_to_diagnostics(errors: &[ResolveError]) -> Vec<Diagnostic> {
             ResolveError::CannotAssignToImmutable { span, .. } => {
                 (*span, Some("declare the variable with `let mut` to make it mutable".to_string()))
             }
+            ResolveError::InvalidAssignmentTarget { span } => {
+                (*span, Some("assignment targets must be a variable, `*ref`, field, or index".to_string()))
+            }
         };
         Diagnostic {
             level: DiagnosticLevel::Error,
             message: format!("{e}"),
             span: SourceSpan::from_span(span),
+            notes: vec![],
+            suggestion,
+        }
+    }).collect()
+}
+
+/// 将类型检查错误转换为诊断消息
+pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
+    errors.iter().map(|e| {
+        let suggestion = match e {
+            TypeCheckError::TypeMismatch { .. } => {
+                Some("change the value or the expected type annotation".to_string())
+            }
+            TypeCheckError::ConditionNotBool { .. } => {
+                Some("conditions must be `bool`; use a comparison or a bool variable".to_string())
+            }
+            TypeCheckError::UnknownType { name, .. } => {
+                Some(format!("declare `{name}` or fix the spelling"))
+            }
+            TypeCheckError::UnknownFunction { name, .. } => {
+                Some(format!("declare function `{name}` or fix the spelling"))
+            }
+            TypeCheckError::UnknownField { .. } => {
+                Some("check the field name and the struct type".to_string())
+            }
+            TypeCheckError::UnknownVariant { .. } => {
+                Some("check the variant name and the enum type".to_string())
+            }
+            TypeCheckError::UnknownStruct { name, .. } => {
+                Some(format!("declare struct `{name}` or fix the spelling"))
+            }
+            TypeCheckError::NotCallable { .. } => {
+                Some("only functions can be called".to_string())
+            }
+            TypeCheckError::ArgumentCountMismatch { .. } => {
+                Some("pass the number of arguments declared by the function".to_string())
+            }
+            TypeCheckError::ReturnArityMismatch { .. } => {
+                Some("return the same number of values as declared".to_string())
+            }
+        };
+        Diagnostic {
+            level: DiagnosticLevel::Error,
+            message: format!("{e}"),
+            span: SourceSpan::from_span(e.span()),
             notes: vec![],
             suggestion,
         }
@@ -137,11 +186,13 @@ pub fn generate_diagnostic_json(
     source: &str,
     parse_errors: &[FrontendError],
     resolve_errors: &[ResolveError],
+    type_errors: &[TypeCheckError],
     borrow_errors: &[BorrowError],
 ) -> String {
     let mut diagnostics = Vec::new();
     diagnostics.extend(frontend_to_diagnostics(parse_errors));
     diagnostics.extend(resolve_to_diagnostics(resolve_errors));
+    diagnostics.extend(type_to_diagnostics(type_errors));
     diagnostics.extend(borrow_to_diagnostics(borrow_errors));
 
     let error_count = diagnostics.len();
@@ -168,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_empty_diagnostics() {
-        let json = generate_diagnostic_json("", &[], &[], &[]);
+        let json = generate_diagnostic_json("", &[], &[], &[], &[]);
         assert!(json.contains("\"error_count\": 0"));
     }
 
@@ -178,7 +229,18 @@ mod tests {
             crate::frontend::error::FrontendErrorKind::UnexpectedChar('@'),
             Span::new(1, 1, 0),
         )];
-        let json = generate_diagnostic_json("@", &errors, &[], &[]);
+        let json = generate_diagnostic_json("@", &errors, &[], &[], &[]);
         assert!(json.contains("unexpected character"));
+    }
+
+    #[test]
+    fn test_type_error_diagnostic() {
+        let errors = vec![TypeCheckError::ConditionNotBool {
+            found: crate::hir::types::HirType::Path(vec!["i32".to_string()]),
+            span: Span::new(2, 5, 0),
+        }];
+        let json = generate_diagnostic_json("", &[], &[], &errors, &[]);
+        assert!(json.contains("condition must be bool"));
+        assert!(json.contains("\"error_count\": 1"));
     }
 }

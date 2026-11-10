@@ -203,6 +203,10 @@ impl Default for TypeTable {
 fn type_to_string(ty: &crate::frontend::ast::Type) -> String {
     match ty {
         crate::frontend::ast::Type::Path(segments, _) => segments.join("::"),
+        crate::frontend::ast::Type::Generic(base, args, _) => {
+            let args: Vec<String> = args.iter().map(type_to_string).collect();
+            format!("{}<{}>", type_to_string(base), args.join(", "))
+        }
         crate::frontend::ast::Type::Ref(inner, mutable, _) => {
             let m = if *mutable { "mut " } else { "" };
             format!("&{m}{}", type_to_string(inner))

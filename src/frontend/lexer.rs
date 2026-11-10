@@ -665,7 +665,7 @@ impl Lexer {
             _ => {
                 let ch = self.current_char();
                 self.advance();
-                Ok(ch as u32)
+                Err(FrontendErrorKind::InvalidEscapeSequence(ch.to_string()))
             }
         }
     }
@@ -753,6 +753,31 @@ mod tests {
         let kinds: Vec<TokenKind> = tokens.iter().map(|t| t.kind.clone()).collect();
         assert!(matches!(&kinds[0], TokenKind::CharLiteral(65))); // 'A'
         assert!(matches!(&kinds[1], TokenKind::CharLiteral(10))); // '\n'
+    }
+
+    #[test]
+    fn test_unknown_escape_is_error() {
+        let mut lexer = Lexer::new(r"'\q'");
+        let _ = lexer.tokenize();
+        assert!(
+            lexer
+                .errors()
+                .iter()
+                .any(|e| matches!(e.kind, FrontendErrorKind::InvalidEscapeSequence(_))),
+            "expected invalid escape error, got {:?}",
+            lexer.errors()
+        );
+
+        let mut lexer = Lexer::new(r#""a\q""#);
+        let _ = lexer.tokenize();
+        assert!(
+            lexer
+                .errors()
+                .iter()
+                .any(|e| matches!(e.kind, FrontendErrorKind::InvalidEscapeSequence(_))),
+            "expected invalid escape error in string, got {:?}",
+            lexer.errors()
+        );
     }
 
     #[test]

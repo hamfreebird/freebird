@@ -130,7 +130,14 @@ impl Repl {
                     self.vm.register_fn(*fn_id, f_mir.clone());
                 }
 
-                match self.vm.execute_mir(mir) {
+                let result = self.vm.execute_mir(mir);
+                let output = self.vm.take_output();
+                if !output.is_empty() {
+                    print!("{}", String::from_utf8_lossy(&output));
+                    let _ = io::stdout().flush();
+                }
+
+                match result {
                     Ok(()) => {
                         // 显示执行结果（栈顶值）
                         if let Some(frame) = self.vm.call_stack.last() {

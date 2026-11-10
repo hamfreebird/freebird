@@ -6,6 +6,44 @@
 use crate::vm::mir::{MirInst, TypeId};
 use crate::vm::value::Value;
 
+/// 内建函数元数据（HIR 解析与 MIR 生成共用）
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltinDef {
+    pub name: &'static str,
+    pub params: &'static [&'static str],
+    pub returns: &'static [&'static str],
+}
+
+/// 当前可直接调用的内建函数。
+///
+/// `print` 是历史兼容入口，等价于 `print_int`。
+pub const BUILTINS: &[BuiltinDef] = &[
+    BuiltinDef { name: "print", params: &["i64"], returns: &[] },
+    BuiltinDef { name: "print_int", params: &["i64"], returns: &[] },
+    BuiltinDef { name: "print_char", params: &["char"], returns: &[] },
+    BuiltinDef { name: "print_str", params: &["String"], returns: &[] },
+    BuiltinDef { name: "println_str", params: &["String"], returns: &[] },
+    BuiltinDef { name: "read_int", params: &[], returns: &["i64"] },
+    BuiltinDef { name: "read_char", params: &[], returns: &["char"] },
+    BuiltinDef { name: "read_line", params: &[], returns: &["String"] },
+    BuiltinDef { name: "file_read", params: &["String"], returns: &["String"] },
+    BuiltinDef {
+        name: "file_write",
+        params: &["String", "String"],
+        returns: &[],
+    },
+];
+
+/// 按名字查找内建函数
+pub fn builtin_def(name: &str) -> Option<&'static BuiltinDef> {
+    BUILTINS.iter().find(|b| b.name == name)
+}
+
+/// 是否为内建函数名
+pub fn is_builtin(name: &str) -> bool {
+    builtin_def(name).is_some()
+}
+
 /// IO 库 — 生成常用 I/O 操作的 MIR 指令
 pub struct IoLib;
 
@@ -22,7 +60,7 @@ impl IoLib {
         vec![MirInst::CharOut]
     }
 
-    /// 生成 print_str(s) 的 MIR 指令（逐字符输出）
+    /// 生成 print_str(s) 的 MIR 指令（逐字符输出，不追加换行）
     /// s 必须在常量中
     pub fn print_str(s: &str) -> Vec<MirInst> {
         let mut insts = Vec::new();
@@ -33,7 +71,12 @@ impl IoLib {
             });
             insts.push(MirInst::CharOut);
         }
-        // 输出换行
+        insts
+    }
+
+    /// 生成 println_str(s) 的 MIR 指令（输出后追加换行）
+    pub fn println_str(s: &str) -> Vec<MirInst> {
+        let mut insts = Self::print_str(s);
         insts.push(MirInst::Push {
             value: Value::Char('\n' as u32),
             ty: TypeId::Char,
@@ -54,52 +97,33 @@ impl IoLib {
         vec![MirInst::CharIn]
     }
 
-    /// 生成 read_line() 的 MIR 指令（循环读取直到换行）
-    /// 将字符串存储在远程栈中，返回 StackHandle
+    /// 生成 read_line() 的 MIR 指令（读取一行，结果在栈顶）
     pub fn read_line() -> Vec<MirInst> {
-        // 分配远程栈 (cap=256)，循环读字符直到 '\n'
-        // 使用 Mark/Jump 实现循环: for each char, RemotePush if not '\n'
-        let mut insts = vec![
-            MirInst::Push { value: Value::Usize(256), ty: TypeId::Usize },
-            MirInst::AllocRemote,
-        ];
-        // Mark(0): loop start
-        insts.push(MirInst::Mark(0));
-        // Read char
-        insts.push(MirInst::CharIn);
-        // Dup char, Push '\n', Eq, Not → true if char != '\n'
-        insts.push(MirInst::Dup { ty: TypeId::Char });
-        insts.push(MirInst::Push { value: Value::Char('\n' as u32), ty: TypeId::Char });
-        insts.push(MirInst::Eq);
-        insts.push(MirInst::Not);
-        // Jump to end (mark 1) if char == '\n'
-        insts.push(MirInst::Jump(1));
-        // Push char to remote (RemotePush consumes handle+value, re-pushes handle)
-        insts.push(MirInst::Dup { ty: TypeId::Unknown }); // dup handle (at pos 1 after char)
-        insts.push(MirInst::Swap); // handle on top, then char
-        insts.push(MirInst::RemotePush);
-        // Loop back
-        insts.push(MirInst::UncondJump(0));
-        // Mark(1): loop end — skip newline, keep handle on stack
-        insts.push(MirInst::Mark(1));
-        insts.push(MirInst::Pop { ty: TypeId::Char }); // discard newline
-        insts.push(MirInst::Pop { ty: TypeId::Char }); // discard dup'd newline
+        vec![MirInst::ReadLine]
+    }
+
+    /// 生成 file_read(path) 的 MIR 指令（编译期路径）
+    pub fn file_read(path: &str) -> Vec<MirInst> {
+        let mut insts = string_value_insts(path);
+        insts.push(MirInst::FileRead);
         insts
     }
 
-    /// 生成 file_read(path) 的 MIR 指令（简化版：仅输出注释）
-    pub fn file_read(_path: &str) -> Vec<MirInst> {
-        vec![
-            MirInst::Comment(format!("file_read: {_path}")),
-        ]
+    /// 生成 file_write(path, data) 的 MIR 指令（编译期路径与数据）
+    pub fn file_write(path: &str, data: &str) -> Vec<MirInst> {
+        let mut insts = string_value_insts(path);
+        insts.extend(string_value_insts(data));
+        insts.push(MirInst::FileWrite);
+        insts
     }
+}
 
-    /// 生成 file_write(path, data) 的 MIR 指令（简化版）
-    pub fn file_write(_path: &str, _data: &str) -> Vec<MirInst> {
-        vec![
-            MirInst::Comment(format!("file_write: {_path}")),
-        ]
-    }
+/// 生成压入字符串常量的指令（字符元组）。
+fn string_value_insts(s: &str) -> Vec<MirInst> {
+    vec![MirInst::Push {
+        value: Value::Tuple(s.chars().map(|c| Value::Char(c as u32)).collect()),
+        ty: TypeId::Unknown,
+    }]
 }
 
 /// 标准库函数集 — 返回 (函数名, MIR指令序列) 的列表
@@ -120,9 +144,31 @@ mod tests {
     #[test]
     fn test_print_str() {
         let insts = IoLib::print_str("Hello");
-        assert!(!insts.is_empty());
-        // "Hello\n" = 6 chars, each with Push + CharOut = 12 insts
-        assert_eq!(insts.len(), 12);
+        // 5 个字符，每个 Push + CharOut = 10 条；不再追加换行。
+        assert_eq!(insts.len(), 10);
+        assert!(!insts.iter().any(|i| matches!(
+            i,
+            MirInst::Push { value: Value::Char(10), .. }
+        )));
+    }
+
+    #[test]
+    fn test_println_str_adds_newline() {
+        let insts = IoLib::println_str("Hi");
+        assert_eq!(insts.len(), 6); // Push+CharOut ×2 + newline Push+CharOut
+        assert!(matches!(
+            insts[insts.len() - 2],
+            MirInst::Push { value: Value::Char(10), .. }
+        ));
+    }
+
+    #[test]
+    fn test_file_io_instructions() {
+        let read = IoLib::file_read("/tmp/x");
+        assert!(matches!(read.last(), Some(MirInst::FileRead)));
+
+        let write = IoLib::file_write("/tmp/x", "data");
+        assert!(matches!(write.last(), Some(MirInst::FileWrite)));
     }
 
     #[test]

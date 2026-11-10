@@ -29,6 +29,8 @@ pub enum Value {
     // === 复合类型 ===
     /// 元组（仅用于常量折叠，运行时展开到栈槽）
     Tuple(Vec<Value>),
+    /// Box<T>：单槽堆值
+    Boxed(Box<Value>),
 
     // === 引用类型 ===
     Ref(ElementId),    // &T
@@ -142,6 +144,7 @@ impl Value {
             Value::Char(_) => "char",
             Value::Unit => "()",
             Value::Tuple(_) => "tuple",
+            Value::Boxed(_) => "Box",
             Value::Ref(_) => "&T",
             Value::MutRef(_) => "&mut T",
             Value::StackHandle(_) => "StackHandle",
@@ -185,6 +188,7 @@ impl std::fmt::Display for Value {
                 }
                 write!(f, ")")
             }
+            Value::Boxed(inner) => write!(f, "Box({inner})"),
             Value::Ref(id) => write!(f, "&{:?}", id),
             Value::MutRef(id) => write!(f, "&mut {:?}", id),
             Value::StackHandle(sid) => write!(f, "StackHandle({:?})", sid),

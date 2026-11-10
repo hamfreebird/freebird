@@ -11,6 +11,8 @@ pub struct RuntimeConfig {
     pub time_limit: Option<u64>,
     /// 调试模式
     pub debug: bool,
+    /// 预置标准输入（空 = 读取真实 stdin；用于测试与嵌入）
+    pub input: Vec<u8>,
 }
 
 impl Default for RuntimeConfig {
@@ -21,6 +23,7 @@ impl Default for RuntimeConfig {
             max_steps: 10_000_000,
             time_limit: None,
             debug: false,
+            input: Vec::new(),
         }
     }
 }
@@ -46,6 +49,7 @@ impl RuntimeConfig {
             max_steps: 1_000_000,
             time_limit: None,
             debug: true,
+            input: Vec::new(),
         }
     }
 }

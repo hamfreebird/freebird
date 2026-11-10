@@ -6,15 +6,12 @@ pub struct DropGen;
 impl DropGen {
     /// 为一组待析构变量生成 Drop MIR 序列
     /// `vars`: 按逆序排列的变量名列表（后创建的先析构）
-    /// 每个变量生成 ReadVar + FreeRemote（仅对远程栈句柄）
+    /// 每个变量生成 DropVar（仅在持有远程栈句柄时释放资源）
     pub fn gen_drop(vars: &[String]) -> Vec<MirInst> {
         let mut insts = Vec::new();
         for name in vars {
-            // 简化：对所有 Move 类型生成 FreeRemote
-            // 实际应该根据类型信息判断
             insts.push(MirInst::Comment(format!("drop {name}")));
-            insts.push(MirInst::ReadVar { name: name.clone() });
-            insts.push(MirInst::FreeRemote);
+            insts.push(MirInst::DropVar { name: name.clone() });
         }
         insts
     }
@@ -43,9 +40,9 @@ mod tests {
     #[test]
     fn test_gen_drop_single() {
         let insts = DropGen::gen_drop(&["v".to_string()]);
-        // Comment + ReadVar + FreeRemote = 3
-        assert_eq!(insts.len(), 3);
-        assert!(matches!(insts[1], MirInst::ReadVar { ref name } if name == "v"));
+        // Comment + DropVar = 2
+        assert_eq!(insts.len(), 2);
+        assert!(matches!(insts[1], MirInst::DropVar { ref name } if name == "v"));
     }
 
     #[test]

@@ -40,6 +40,15 @@ freebird check hello.fb        # JSON 诊断输出
 freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 ```
 
+`--target llvm` 尚未实现；请求该目标会直接报错退出。
+
+## 当前实现状态
+
+- VM 已支持数值/字符/布尔、变量与作用域、控制流、函数调用/递归、数组、结构体、枚举匹配、`Vec`、`Box`、字符串、元组解构以及 `read_*`/`print_*`/文件 I/O。
+- 运行前会执行名称解析、基础类型检查和借用/移动检查；`check` 目前不报告借用错误。
+- Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆上。仍有限制：`file_read`/`file_write` 与远程栈只是占位；通过 `&mut` 的写入不会回写原变量；`read_line` 按 ASCII 字节读取（上限 1024 字节）。
+- LLVM 后端尚未实现。
+
 ### 交互式 REPL
 
 ```bash

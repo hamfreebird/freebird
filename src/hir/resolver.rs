@@ -12,6 +12,7 @@ pub enum ResolveError {
     DuplicateField { name: String, first: Span, second: Span },
     ArgumentCountMismatch { expected: u32, got: usize, fn_name: String, span: Span },
     CannotAssignToImmutable { name: String, span: Span },
+    InvalidAssignmentTarget { span: Span },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -34,6 +35,9 @@ impl std::fmt::Display for ResolveError {
             }
             ResolveError::CannotAssignToImmutable { name, span } => {
                 write!(f, "{span}: cannot assign to immutable variable `{name}`")
+            }
+            ResolveError::InvalidAssignmentTarget { span } => {
+                write!(f, "{span}: invalid assignment target")
             }
         }
     }

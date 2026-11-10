@@ -6,6 +6,8 @@ use crate::frontend::token::Span;
 pub enum Type {
     /// 路径类型: i32, std::Vec 等
     Path(Vec<String>, Span),
+    /// 泛型类型: Vec<i32>, Box<T>
+    Generic(Box<Type>, Vec<Type>, Span),
     /// 引用类型: &T, &mut T
     Ref(Box<Type>, bool, Span),
     /// 元组类型: (T1, T2, ...)

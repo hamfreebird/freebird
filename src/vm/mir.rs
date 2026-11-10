@@ -145,6 +145,16 @@ pub enum MirInst {
     // === 复合类型 ===
     FieldAccess { index: usize }, // 字段/元组元素访问
     IndexAccess,                  // arr[i] (pop i, pop arr, push arr[i])
+    StoreDeref,                   // *p = v (pop v, pop ref)
+    FieldStore { name: String, index: usize }, // obj.field = v
+    IndexStore { name: String },  // arr[i] = v (pop v, pop i)
+    MakeArray { count: u32 },     // 将栈顶 count 个值合并为单槽数组
+    MakeArrayRepeat,              // pop count, pop elem，生成重复数组
+    MakeBox,                      // 将栈顶值包装为 Box
+    ContainerLen,                 // pop 容器（数组/Vec/String），push 长度
+    VecPush { name: String },     // v.push(x): pop x，就地追加到变量
+    VecPop { name: String },      // v.pop(): 就地移除末元素，push 结果
+    DropVar { name: String },     // 作用域退出时释放变量持有的远程栈（若有）
     MakeEnum { variant: usize, data_slots: u32 },
     EnumTag { total_slots: u32 }, // 读取枚举标签（total_slots = 1 + max_data_slots）
 
@@ -164,6 +174,10 @@ pub enum MirInst {
     NumIn,
     CharOut,
     CharIn,
+    StrOut { newline: bool }, // 输出字符串（字符元组），可选换行
+    ReadLine,                 // 读取一行并压入字符串（字符元组）
+    FileRead,                 // pop path(String)，push 文件内容(String)
+    FileWrite,                // pop data(String), path(String)，写入文件
 
     // === 调试 ===
     DumpStack,
@@ -236,6 +250,18 @@ impl std::fmt::Display for MirInst {
             MirInst::Deref => write!(f, "Deref"),
             MirInst::FieldAccess { index } => write!(f, "FieldAccess({index})"),
             MirInst::IndexAccess => write!(f, "IndexAccess"),
+            MirInst::StoreDeref => write!(f, "StoreDeref"),
+            MirInst::FieldStore { name, index } => {
+                write!(f, "FieldStore({name}.{index})")
+            }
+            MirInst::IndexStore { name } => write!(f, "IndexStore({name})"),
+            MirInst::MakeArray { count } => write!(f, "MakeArray(count={count})"),
+            MirInst::MakeArrayRepeat => write!(f, "MakeArrayRepeat"),
+            MirInst::MakeBox => write!(f, "MakeBox"),
+            MirInst::ContainerLen => write!(f, "ContainerLen"),
+            MirInst::VecPush { name } => write!(f, "VecPush({name})"),
+            MirInst::VecPop { name } => write!(f, "VecPop({name})"),
+            MirInst::DropVar { name } => write!(f, "DropVar({name})"),
             MirInst::MakeEnum {
                 variant,
                 data_slots,
@@ -254,6 +280,12 @@ impl std::fmt::Display for MirInst {
             MirInst::NumIn => write!(f, "NumIn"),
             MirInst::CharOut => write!(f, "CharOut"),
             MirInst::CharIn => write!(f, "CharIn"),
+            MirInst::StrOut { newline } => {
+                write!(f, "StrOut(newline={newline})")
+            }
+            MirInst::ReadLine => write!(f, "ReadLine"),
+            MirInst::FileRead => write!(f, "FileRead"),
+            MirInst::FileWrite => write!(f, "FileWrite"),
             MirInst::DumpStack => write!(f, "DumpStack"),
             MirInst::DumpState => write!(f, "DumpState"),
             MirInst::Breakpoint => write!(f, "Breakpoint"),

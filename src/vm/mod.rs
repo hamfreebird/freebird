@@ -9,7 +9,7 @@ pub mod value;
 pub mod var_stack;
 
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::rc::Rc;
 
 use config::RuntimeConfig;
@@ -40,6 +40,10 @@ pub struct Vm {
     pub fn_table: FnTable,
     /// 输出缓冲区
     pub output: Vec<u8>,
+    /// 预置的标准输入缓冲（优先于真实 stdin）
+    input: Vec<u8>,
+    /// 输入缓冲读取位置
+    input_pos: usize,
 }
 
 impl Vm {
@@ -50,6 +54,7 @@ impl Vm {
 
     /// 使用指定配置创建 VM
     pub fn with_config(config: RuntimeConfig) -> Self {
+        let input = config.input.clone();
         Self {
             call_stack: Vec::new(),
             registry: GlobalRegistry::new(),
@@ -58,13 +63,54 @@ impl Vm {
             step_count: 0,
             fn_table: HashMap::new(),
             output: Vec::new(),
+            input,
+            input_pos: 0,
         }
+    }
+
+    /// 设置标准输入（覆盖配置中的预置输入）
+    pub fn set_input(&mut self, input: impl Into<Vec<u8>>) {
+        self.input = input.into();
+        self.input_pos = 0;
+    }
+
+    /// 读取一个输入字节；预置缓冲耗尽后回退到真实 stdin。
+    fn read_input_byte(&mut self) -> io::Result<u8> {
+        if self.input_pos < self.input.len() {
+            let b = self.input[self.input_pos];
+            self.input_pos += 1;
+            return Ok(b);
+        }
+        let mut buf = [0u8; 1];
+        io::stdin().read_exact(&mut buf)?;
+        Ok(buf[0])
+    }
+
+    /// 读取一行输入（不含行尾换行）；预置缓冲耗尽后回退到真实 stdin。
+    fn read_input_line(&mut self) -> io::Result<String> {
+        if self.input_pos < self.input.len() {
+            let rest = &self.input[self.input_pos..];
+            let (line, consumed) = match rest.iter().position(|&b| b == b'\n') {
+                Some(i) => (&rest[..i], i + 1),
+                None => (rest, rest.len()),
+            };
+            self.input_pos += consumed;
+            return Ok(String::from_utf8_lossy(line).into_owned());
+        }
+        let mut line = String::new();
+        io::stdin().read_line(&mut line)?;
+        Ok(line.trim_end_matches(['\n', '\r']).to_string())
     }
 
     /// 注册函数
     pub fn register_fn(&mut self, fn_id: FnId, instructions: Vec<MirInst>) {
         self.fn_table
             .insert(fn_id, Rc::new(instructions));
+    }
+
+    /// 取出并清空当前输出缓冲
+    pub fn take_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.output)
     }
 
     /// 加载主程序 MIR 并执行
@@ -77,10 +123,38 @@ impl Vm {
 
     /// 主执行循环
     fn run(&mut self) -> Result<(), VmError> {
+        let start = std::time::Instant::now();
+        let result = self.run_loop(start);
+        if let Err(ref error) = result
+            && self.config.debug
+        {
+            // `--debug`：运行时错误附带 VM 状态，便于定位。
+            eprintln!("[freebird debug] runtime error: {error}");
+            if let Some(frame) = self.call_stack.last() {
+                eprintln!(
+                    "  pc={} stack_depth={} call_depth={} steps={}",
+                    frame.pc,
+                    frame.data.len(),
+                    self.call_stack.len(),
+                    self.step_count
+                );
+            }
+        }
+        result
+    }
+
+    fn run_loop(&mut self, start: std::time::Instant) -> Result<(), VmError> {
         loop {
             // 步数限制检查
             if self.config.max_steps > 0 && self.step_count >= self.config.max_steps {
                 return Err(VmError::StepLimitExceeded);
+            }
+
+            // 执行时间限制检查
+            if let Some(limit) = self.config.time_limit
+                && start.elapsed().as_secs() >= limit
+            {
+                return Err(VmError::TimeLimitExceeded { limit });
             }
 
             // 检查调用栈深度
@@ -308,24 +382,26 @@ impl Vm {
             MirInst::Deref => {
                 let mut frame = self.pop_frame()?;
                 let (_, ref_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
-                let target_id = match ref_val {
-                    Value::Ref(id) | Value::MutRef(id) => id,
+                let val = match ref_val {
+                    Value::Ref(id) | Value::MutRef(id) => {
+                        let pos = frame
+                            .data
+                            .find_id(id)
+                            .ok_or(VmError::DanglingReference {
+                                id: id.0,
+                                name: "deref target".to_string(),
+                            })?;
+                        let idx = frame.data.len() - 1 - pos;
+                        frame.data.values[idx].clone()
+                    }
+                    Value::Boxed(inner) => *inner,
                     _ => {
                         return Err(VmError::TypeMismatch {
-                            expected: "&T or &mut T".to_string(),
+                            expected: "&T, &mut T or Box<T>".to_string(),
                             found: ref_val.type_name().to_string(),
                         })
                     }
                 };
-                let pos = frame
-                    .data
-                    .find_id(target_id)
-                    .ok_or(VmError::DanglingReference {
-                        id: target_id.0,
-                        name: "deref target".to_string(),
-                    })?;
-                let idx = frame.data.len() - 1 - pos;
-                let val = frame.data.values[idx].clone();
                 let new_id = self.id_alloc.alloc_element();
                 frame.data.ids.push(new_id);
                 frame.data.values.push(val);
@@ -335,67 +411,309 @@ impl Vm {
 
             // === 复合类型 ===
             MirInst::FieldAccess { index } => {
-                // 结构体/元组字段访问：栈顶 N 个槽为结构体
-                // index 是字段在结构体中的偏移量（0=第一个字段，在栈深处）
-                // roll(field_pos) 将目标字段旋转到栈顶
+                // 复合值以单槽 Value::Tuple 表示：弹出聚合值，压入字段副本。
+                // 需要保留聚合值的场景（如 match）由生成器显式插入 Dup。
                 let mut frame = self.pop_frame()?;
-                // 从栈顶向下数：目标字段位置 = total - 1 - index
-                // 简化：假设结构体占 (index+1) 槽（已知到目标字段的深度）
-                // 实际应由类型表确定，这里先 roll+dup+roll 实现字段读取
-                let pos = *index as usize;
-                let idx = frame.data.len().saturating_sub(1 + pos);
-                let val = frame.data.values[idx].clone();
+                let (_, aggregate) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let val = match aggregate {
+                    Value::Tuple(elems) => {
+                        elems.get(*index).cloned().ok_or(VmError::IndexOutOfBounds {
+                            index: *index as i64,
+                            len: elems.len(),
+                        })?
+                    }
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "tuple/struct".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, val);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::IndexAccess => {
+                // arr[i]: pop i, pop arr; 数组以单槽 Value::Tuple 表示。
+                let mut frame = self.pop_frame()?;
+                let (_, idx_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let idx = idx_val.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: idx_val.type_name().to_string(),
+                })?;
+                let (_, arr_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+
+                if idx < 0 {
+                    return Err(VmError::IndexOutOfBounds {
+                        index: idx,
+                        len: frame.data.len(),
+                    });
+                }
+                let idx = idx as usize;
+
+                if let Value::Tuple(values) = arr_val {
+                    let val = values.get(idx).cloned().ok_or(VmError::IndexOutOfBounds {
+                        index: idx as i64,
+                        len: values.len(),
+                    })?;
+                    let new_id = self.id_alloc.alloc_element();
+                    frame.data.ids.push(new_id);
+                    frame.data.values.push(val);
+                    frame.advance_pc();
+                    self.call_stack.push(frame);
+                    return Ok(());
+                }
+
+                // 兼容旧式多槽数组布局（元素连续排列在栈上）。
+                let len = frame.data.len();
+                let val_idx = len
+                    .checked_sub(1)
+                    .and_then(|last| last.checked_sub(idx))
+                    .ok_or(VmError::IndexOutOfBounds { index: idx as i64, len })?;
+
+                let val = frame.data.values[val_idx].clone();
                 let new_id = self.id_alloc.alloc_element();
                 frame.data.ids.push(new_id);
                 frame.data.values.push(val);
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
-            MirInst::IndexAccess => {
-                // arr[i]: pop i, pop arr, push arr[i]
+            MirInst::StoreDeref => {
+                // *p = v: 栈顶为 value，其下为引用
                 let mut frame = self.pop_frame()?;
-                let (_, idx_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
-                let idx = idx_val.as_i64().ok_or(VmError::TypeMismatch {
-                    expected: "integer".to_string(),
-                    found: idx_val.type_name().to_string(),
-                })? as usize;
-                let (_, _arr_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
-                // 对于固定数组（栈上连续槽），通过 roll + dup 实现索引
-                // 简化：直接访问位置 idx 的元素
-                let val_idx = frame.data.len().saturating_sub(1 + idx);
-                if val_idx < frame.data.len() {
-                    let val = frame.data.values[val_idx].clone();
-                    let new_id = self.id_alloc.alloc_element();
-                    frame.data.ids.push(new_id);
-                    frame.data.values.push(val);
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, reference) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let target_id = match reference {
+                    Value::Ref(id) | Value::MutRef(id) => id,
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "reference".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
+                };
+                let idx = frame
+                    .data
+                    .ids
+                    .iter()
+                    .rposition(|id| *id == target_id)
+                    .ok_or(VmError::DanglingReference {
+                        id: target_id.0,
+                        name: "<deref>".to_string(),
+                    })?;
+                frame.data.values[idx] = value;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::FieldStore { name, index } => {
+                // obj.field = v: 栈顶为 value；就地修改变量持有的 Tuple
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let var_id = frame
+                    .vars
+                    .lookup(name)
+                    .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
+                let pos = frame.data.find_id(var_id).ok_or(VmError::DanglingReference {
+                    id: var_id.0,
+                    name: name.clone(),
+                })?;
+                let idx = frame.data.len() - 1 - pos;
+                match &mut frame.data.values[idx] {
+                    Value::Tuple(elems) => {
+                        let len = elems.len();
+                        let slot = elems.get_mut(*index).ok_or(VmError::IndexOutOfBounds {
+                            index: *index as i64,
+                            len,
+                        })?;
+                        *slot = value;
+                    }
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "struct".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
                 }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::IndexStore { name } => {
+                // arr[i] = v: 栈顶为 value，其下为 index
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, index_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let index = index_val.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: index_val.type_name().to_string(),
+                })?;
+                if index < 0 {
+                    return Err(VmError::IndexOutOfBounds { index, len: 0 });
+                }
+                let index = index as usize;
+                let var_id = frame
+                    .vars
+                    .lookup(name)
+                    .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
+                let pos = frame.data.find_id(var_id).ok_or(VmError::DanglingReference {
+                    id: var_id.0,
+                    name: name.clone(),
+                })?;
+                let idx = frame.data.len() - 1 - pos;
+                match &mut frame.data.values[idx] {
+                    Value::Tuple(elems) => {
+                        let len = elems.len();
+                        let slot = elems.get_mut(index).ok_or(VmError::IndexOutOfBounds {
+                            index: index as i64,
+                            len,
+                        })?;
+                        *slot = value;
+                    }
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "array".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::MakeArray { count } => {
+                let mut frame = self.pop_frame()?;
+                let count = *count as usize;
+                let mut values = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                    values.push(value);
+                }
+                values.reverse();
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::Tuple(values));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::MakeArrayRepeat => {
+                let mut frame = self.pop_frame()?;
+                let (_, count_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let count = count_val.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: count_val.type_name().to_string(),
+                })?;
+                if count < 0 {
+                    return Err(VmError::IndexOutOfBounds { index: count, len: 0 });
+                }
+                let (_, elem) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let values = vec![elem; count as usize];
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::Tuple(values));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::MakeBox => {
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::Boxed(Box::new(value)));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::ContainerLen => {
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let len = match value {
+                    Value::Tuple(elems) => elems.len() as i64,
+                    Value::Boxed(_) => 1,
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "array/Vec/String".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::I64(len));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::VecPush { name } => {
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let var_id = frame
+                    .vars
+                    .lookup(name)
+                    .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
+                let pos = frame.data.find_id(var_id).ok_or(VmError::DanglingReference {
+                    id: var_id.0,
+                    name: name.clone(),
+                })?;
+                let idx = frame.data.len() - 1 - pos;
+                match &mut frame.data.values[idx] {
+                    Value::Tuple(elems) => elems.push(value),
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "Vec/String".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::VecPop { name } => {
+                let mut frame = self.pop_frame()?;
+                let var_id = frame
+                    .vars
+                    .lookup(name)
+                    .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
+                let pos = frame.data.find_id(var_id).ok_or(VmError::DanglingReference {
+                    id: var_id.0,
+                    name: name.clone(),
+                })?;
+                let idx = frame.data.len() - 1 - pos;
+                let popped = match &mut frame.data.values[idx] {
+                    Value::Tuple(elems) => elems.pop().unwrap_or(Value::Unit),
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "Vec/String".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, popped);
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
             MirInst::MakeEnum { variant: _, data_slots } => {
-                // 枚举布局: [tag, data_1, ..., data_n]（tag在底部，data在顶部）
-                // 生成器已按 tag→data 顺序压栈，确保布局不变即可
+                // 将 [tag, data...] 合并为单槽 Value::Tuple。
+                // 变量绑定只跟踪一个 ElementId，因此枚举必须作为单槽值保存；
+                // 原先的多槽布局会让 ReadVar 只复制最后一个槽。
                 let mut frame = self.pop_frame()?;
-                if *data_slots > 0 {
-                    frame.data.roll(*data_slots as i32)?;
-                    frame.data.roll(-(*data_slots as i32))?;
+                let count = *data_slots as usize + 1;
+                let mut values = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                    values.push(value);
                 }
+                values.reverse();
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::Tuple(values));
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
-            MirInst::EnumTag { total_slots } => {
-                // 枚举布局: [tag, data...]（底部→顶部）
-                // tag 在底部，距栈顶 total_slots - 1 个位置
+            MirInst::EnumTag { total_slots: _ } => {
+                // 从栈顶枚举值读取标签并压入副本，保留枚举本身。
                 let mut frame = self.pop_frame()?;
-                let tag_pos = (*total_slots as usize).saturating_sub(1);
-                if tag_pos > 0 && tag_pos < frame.data.len() {
-                    frame.data.roll(tag_pos as i32)?;
-                    frame.data.dup(&mut self.id_alloc)?;
-                    frame.data.roll(-(tag_pos as i32))?;
-                } else if frame.data.len() >= 1 {
-                    // 单槽枚举（无数据变体）：栈顶即标签
-                    frame.data.dup(&mut self.id_alloc)?;
-                }
+                let tag = match frame.data.top_value() {
+                    Some(Value::Tuple(values)) => {
+                        values.first().cloned().unwrap_or(Value::Unit)
+                    }
+                    Some(other) => other.clone(),
+                    None => return Err(VmError::StackUnderflow),
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, tag);
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -424,6 +742,18 @@ impl Vm {
                 // 压入句柄
                 let sid_val = Value::StackHandle(sid);
                 frame.data.push(self.id_alloc.alloc_element(), sid_val);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::DropVar { name } => {
+                let mut frame = self.pop_frame()?;
+                if let Some(var_id) = frame.vars.lookup(name)
+                    && let Some(pos) = frame.data.find_id(var_id)
+                {
+                    let idx = frame.data.len() - 1 - pos;
+                    let value = frame.data.values[idx].clone();
+                    Self::free_remote_handles(&mut self.registry, &value);
+                }
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -527,14 +857,11 @@ impl Vm {
                 })?;
                 let output_str = format!("{n}\n");
                 self.output.extend(output_str.as_bytes());
-                println!("{n}");
-                io::stdout().flush()?;
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
             MirInst::NumIn => {
-                let mut input = String::new();
-                io::stdin().read_line(&mut input)?;
+                let input = self.read_input_line()?;
                 let n: i64 = input.trim().parse().map_err(|_| {
                     VmError::IoError(format!("failed to parse input as integer: {input}"))
                 })?;
@@ -555,18 +882,56 @@ impl Vm {
                 )?;
                 let output_str = format!("{c}");
                 self.output.extend(output_str.as_bytes());
-                print!("{c}");
-                io::stdout().flush()?;
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
             MirInst::CharIn => {
-                let mut char_buf = [0u8; 1];
-                io::stdin().read_exact(&mut char_buf)?;
-                let c = char_buf[0] as u32;
+                let byte = self.read_input_byte()?;
+                let c = byte as u32;
                 let new_id = self.id_alloc.alloc_element();
                 let mut frame = self.pop_frame()?;
                 frame.data.push(new_id, Value::Char(c));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::ReadLine => {
+                let line = self.read_input_line()?;
+                let new_id = self.id_alloc.alloc_element();
+                let mut frame = self.pop_frame()?;
+                frame.data.push(new_id, string_to_value(&line));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::StrOut { newline } => {
+                let mut frame = self.pop_frame()?;
+                let (_, val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let s = value_to_string(&val)?;
+                self.output.extend(s.as_bytes());
+                if *newline {
+                    self.output.push(b'\n');
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::FileRead => {
+                let mut frame = self.pop_frame()?;
+                let (_, path_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let path = value_to_string(&path_val)?;
+                let contents = std::fs::read_to_string(&path)
+                    .map_err(|e| VmError::IoError(format!("failed to read `{path}`: {e}")))?;
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, string_to_value(&contents));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::FileWrite => {
+                let mut frame = self.pop_frame()?;
+                let (_, data_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, path_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let data = value_to_string(&data_val)?;
+                let path = value_to_string(&path_val)?;
+                std::fs::write(&path, data.as_bytes())
+                    .map_err(|e| VmError::IoError(format!("failed to write `{path}`: {e}")))?;
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -776,6 +1141,21 @@ impl Vm {
         }
     }
 
+    fn free_remote_handles(registry: &mut GlobalRegistry, value: &Value) {
+        match value {
+            Value::StackHandle(sid) => {
+                registry.remote_stacks.remove(sid);
+            }
+            Value::Boxed(inner) => Self::free_remote_handles(registry, inner),
+            Value::Tuple(elems) => {
+                for elem in elems {
+                    Self::free_remote_handles(registry, elem);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn remote_push_impl(
         registry: &mut GlobalRegistry,
         alloc: &mut IdAllocator,
@@ -950,16 +1330,22 @@ impl Vm {
             pos
         };
 
-        // roll(pos); pop; roll(-pos); update VarStack
+        // roll(pos); pop; roll(-(pos-1)); update VarStack
+        //
+        // 目标是把 RHS 放到旧变量原来的槽位，保持变量槽位置不变。
+        // roll(pos) 把旧变量移到栈顶；pop 丢弃旧值后，RHS 仍在栈顶，
+        // 此时列表长度为 L-1，需要用 roll(-(pos-1)) 才能把 RHS 插回
+        // 旧变量原来的索引 L-1-pos（roll(-pos) 会少移一位）。
         let mut frame = self.pop_frame()?;
+        // RHS 在栈顶；roll/pop 之后它会落到变量原来的位置，
+        // 因此必须记住它的 ElementId，不能用操作后的栈顶 ID。
+        let new_id = frame.data.top_id().ok_or(VmError::StackUnderflow)?;
         frame.data.roll(pos as i32)?;
         frame.data.pop(); // 丢弃旧值
-        // 新值归位（仅当旧值不是栈底元素时；若旧值在栈底，pop 后新值已在正确位置）
-        let new_len = frame.data.len();
-        if pos < new_len {
-            frame.data.roll(-(pos as i32))?;
+        let shift = pos.saturating_sub(1);
+        if shift > 0 {
+            frame.data.roll(-(shift as i32))?;
         }
-        let new_id = frame.data.top_id().ok_or(VmError::StackUnderflow)?;
         frame.vars.update(name, new_id)?;
         frame.advance_pc();
         self.call_stack.push(frame);
@@ -971,6 +1357,43 @@ impl Default for Vm {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 将 VM 值解释为字符串：字符串字面量以 `Value::Tuple([Char...])` 表示。
+fn value_to_string(value: &Value) -> Result<String, VmError> {
+    if let Value::Tuple(chars) = value {
+        let mut s = String::with_capacity(chars.len());
+        for ch in chars {
+            let code = match ch {
+                Value::Char(c) => *c,
+                other => {
+                    return Err(VmError::TypeMismatch {
+                        expected: "char".to_string(),
+                        found: other.type_name().to_string(),
+                    });
+                }
+            };
+            let c = char::from_u32(code).ok_or_else(|| {
+                VmError::IoError(format!("invalid char code in string: {code}"))
+            })?;
+            s.push(c);
+        }
+        return Ok(s);
+    }
+    if let Value::Char(c) = value {
+        let c = char::from_u32(*c)
+            .ok_or_else(|| VmError::IoError(format!("invalid char code: {c}")))?;
+        return Ok(c.to_string());
+    }
+    Err(VmError::TypeMismatch {
+        expected: "String".to_string(),
+        found: value.type_name().to_string(),
+    })
+}
+
+/// 将 Rust 字符串转换为 VM 的字符元组表示。
+fn string_to_value(s: &str) -> Value {
+    Value::Tuple(s.chars().map(|c| Value::Char(c as u32)).collect())
 }
 
 #[cfg(test)]
@@ -1059,6 +1482,29 @@ mod tests {
     }
 
     #[test]
+    fn test_write_var_preserves_slot_positions() {
+        let mut vm = make_vm();
+        let mir = vec![
+            MirInst::EnterScope,
+            MirInst::Push { value: i64_val(1), ty: TypeId::I64 },
+            MirInst::BindVar { name: "a".to_string() },
+            MirInst::Push { value: i64_val(2), ty: TypeId::I64 },
+            MirInst::BindVar { name: "b".to_string() },
+            // a = a + 10
+            MirInst::ReadVar { name: "a".to_string() },
+            MirInst::Push { value: i64_val(10), ty: TypeId::I64 },
+            MirInst::Add { ty: TypeId::I64 },
+            MirInst::WriteVar { name: "a".to_string() },
+            MirInst::ExitScope,
+        ];
+        vm.execute_mir(mir).unwrap();
+        let frame = vm.call_stack.last().unwrap();
+        // 赋值不能改变变量槽的位置：a 在 b 下面。
+        assert_eq!(frame.data.get_from_top(0).unwrap().1, &i64_val(2));
+        assert_eq!(frame.data.get_from_top(1).unwrap().1, &i64_val(11));
+    }
+
+    #[test]
     fn test_if_else_control_flow() {
         let mut vm = make_vm();
         // if true { push(1) } else { push(2) }
@@ -1113,6 +1559,20 @@ mod tests {
             MirInst::AllocRemote,
             // Stack top should be StackHandle
             MirInst::FreeRemote,
+        ];
+        vm.execute_mir(mir).unwrap();
+        assert!(vm.registry.remote_stacks.is_empty());
+    }
+
+    #[test]
+    fn test_drop_var_frees_remote_handle() {
+        let mut vm = make_vm();
+        let mir = vec![
+            MirInst::EnterScope,
+            MirInst::Push { value: Value::Usize(4), ty: TypeId::Usize },
+            MirInst::AllocRemote,
+            MirInst::BindVar { name: "v".to_string() },
+            MirInst::DropVar { name: "v".to_string() },
         ];
         vm.execute_mir(mir).unwrap();
         assert!(vm.registry.remote_stacks.is_empty());

@@ -1,4 +1,5 @@
 use crate::frontend::ast;
+use crate::frontend::token::Span;
 use crate::hir::resolver::{ResolveError, Resolver};
 use crate::hir::types::*;
 
@@ -179,17 +180,18 @@ impl Lowering {
             ast::Stmt::Let { pattern, ty, init, mutable, span } => {
                 // 先声明变量（未初始化），再求值 RHS
                 // 这样 RHS 中引用同名变量会触发前向引用错误
-                let var_name = self.pattern_var_name(pattern);
-                if let Some(ref name) = var_name
-                    && let Err(e) = self.resolver.declare_var(name, *mutable, *span) {
+                let var_names = self.pattern_var_names(pattern);
+                for name in &var_names {
+                    if let Err(e) = self.resolver.declare_var(name, *mutable, *span) {
                         self.errors.push(e);
                     }
+                }
 
                 // 求值 RHS
                 let hir_init = init.as_ref().and_then(|e| self.lower_expr(e));
 
                 // 标记已初始化
-                if let Some(ref name) = var_name {
+                for name in &var_names {
                     self.resolver.mark_initialized(name);
                 }
 
@@ -208,39 +210,84 @@ impl Lowering {
             }
             ast::Stmt::Assign { target, value, span } => {
                 let hir_value = self.lower_expr(value)?;
+                let hir_target = self.lower_assign_target(target, *span)?;
+                Some(HirStmt::Assign {
+                    target: hir_target,
+                    value: hir_value,
+                    span: *span,
+                })
+            }
+        }
+    }
 
-                // 解析赋值目标
-                if let ast::Expr::Var(name, tspan) = target {
-                    match self.resolver.resolve_var(name, *tspan) {
-                        Ok(depth) => {
-                            // 检查可变性（报错但不阻止降级）
-                            if self.resolver.is_mutable(name) == Some(false) {
-                                self.errors.push(ResolveError::CannotAssignToImmutable {
-                                    name: name.clone(),
-                                    span: *tspan,
-                                });
-                            }
-                            Some(HirStmt::Assign {
-                                target: name.clone(),
-                                depth,
-                                value: hir_value,
-                                span: *span,
-                            })
-                        }
-                        Err(e) => {
-                            self.errors.push(e);
-                            None
-                        }
+    /// 降级赋值目标（左值），并验证根变量可变性。
+    fn lower_assign_target(&mut self, target: &ast::Expr, fallback_span: Span) -> Option<HirAssignTarget> {
+        match target {
+            ast::Expr::Var(name, tspan) => {
+                let depth = match self.resolver.resolve_var(name, *tspan) {
+                    Ok(depth) => depth,
+                    Err(e) => {
+                        self.errors.push(e);
+                        return None;
                     }
-                } else {
-                    // 非简单变量赋值（如 *ptr = expr），暂不支持
-                    self.errors.push(ResolveError::UndefinedVariable {
-                        name: "complex assignment targets not yet supported".to_string(),
+                };
+                if self.resolver.is_mutable(name) == Some(false) {
+                    self.errors.push(ResolveError::CannotAssignToImmutable {
+                        name: name.clone(),
+                        span: *tspan,
+                    });
+                }
+                Some(HirAssignTarget::Var(HirVarRef {
+                    name: name.clone(),
+                    scope_depth: depth,
+                    span: *tspan,
+                }))
+            }
+            ast::Expr::Deref(inner, _) => {
+                let hir_inner = self.lower_expr(inner)?;
+                Some(HirAssignTarget::Deref(hir_inner))
+            }
+            ast::Expr::FieldAccess(inner, field, _) => {
+                self.check_assign_root_mutable(inner);
+                let hir_inner = self.lower_expr(inner)?;
+                Some(HirAssignTarget::Field {
+                    object: Box::new(hir_inner),
+                    field: field.clone(),
+                })
+            }
+            ast::Expr::Index(array, index, _) => {
+                self.check_assign_root_mutable(array);
+                let hir_array = self.lower_expr(array)?;
+                let hir_index = self.lower_expr(index)?;
+                Some(HirAssignTarget::Index {
+                    array: Box::new(hir_array),
+                    index: Box::new(hir_index),
+                })
+            }
+            _ => {
+                self.errors
+                    .push(ResolveError::InvalidAssignmentTarget { span: fallback_span });
+                None
+            }
+        }
+    }
+
+    /// 字段/索引赋值要求根变量可变。
+    fn check_assign_root_mutable(&mut self, expr: &ast::Expr) {
+        match expr {
+            ast::Expr::Var(name, span) => {
+                if self.resolver.is_mutable(name) == Some(false) {
+                    self.errors.push(ResolveError::CannotAssignToImmutable {
+                        name: name.clone(),
                         span: *span,
                     });
-                    None
                 }
             }
+            ast::Expr::FieldAccess(inner, _, _) | ast::Expr::Index(inner, _, _) => {
+                self.check_assign_root_mutable(inner);
+            }
+            ast::Expr::Deref(inner, _) => self.check_assign_root_mutable(inner),
+            _ => {}
         }
     }
 
@@ -299,6 +346,29 @@ impl Lowering {
                 Some(HirExpr::Unary(*op, Box::new(hir_inner), *span))
             }
             ast::Expr::Call { func, args, stack_pass, span } => {
+                // 方法调用: receiver.method(args)
+                if let ast::Expr::FieldAccess(receiver, method, _) = func.as_ref() {
+                    let hir_receiver = self.lower_expr(receiver)?;
+                    if matches!(method.as_str(), "push" | "pop") {
+                        self.check_assign_root_mutable(receiver);
+                    }
+                    let mut hir_args = Vec::new();
+                    for arg in args {
+                        let e = match arg {
+                            ast::CallArg::Pos(e, _) | ast::CallArg::Named(_, e, _) => e,
+                        };
+                        if let Some(he) = self.lower_expr(e) {
+                            hir_args.push(he);
+                        }
+                    }
+                    return Some(HirExpr::MethodCall {
+                        receiver: Box::new(hir_receiver),
+                        method: method.clone(),
+                        args: hir_args,
+                        span: *span,
+                    });
+                }
+
                 let hir_func = self.lower_expr(func)?;
 
                 // 查找函数签名（包括内建函数）
@@ -372,6 +442,25 @@ impl Lowering {
                 Some(HirExpr::StructLit { name: name.clone(), fields: hir_fields, span: *span })
             }
             ast::Expr::EnumLit { name, variant, data, span } => {
+                // 关联函数: Vec::new() / String::new() / Box::new(x)
+                if name.len() == 1
+                    && matches!(name[0].as_str(), "Vec" | "String" | "Box")
+                    && variant == "new"
+                {
+                    let mut hir_args = Vec::new();
+                    if let Some(e) = data
+                        && let Some(he) = self.lower_expr(e)
+                    {
+                        hir_args.push(he);
+                    }
+                    return Some(HirExpr::TypeMethod {
+                        type_name: name.clone(),
+                        method: variant.clone(),
+                        args: hir_args,
+                        span: *span,
+                    });
+                }
+
                 let hir_data = data.as_ref().and_then(|e| self.lower_expr(e).map(Box::new));
                 Some(HirExpr::EnumLit {
                     name: name.clone(),
@@ -390,8 +479,19 @@ impl Lowering {
                 let hir_scrutinee = self.lower_expr(scrutinee)?;
                 let mut hir_arms = Vec::new();
                 for arm in arms {
+                    // 每个分支拥有独立作用域，模式绑定的变量只在分支内可见。
+                    let bound_names = self.pattern_var_names(&arm.pattern);
+                    self.resolver.enter_scope();
+                    for name in &bound_names {
+                        let _ = self.resolver.declare_var(name, false, arm.span);
+                        self.resolver.mark_initialized(name);
+                    }
+
                     let guard = arm.guard.as_ref().and_then(|g| self.lower_expr(g).map(Box::new));
-                    if let Some(body) = self.lower_expr(&arm.body) {
+                    let body = self.lower_expr(&arm.body);
+                    self.resolver.exit_scope();
+
+                    if let Some(body) = body {
                         hir_arms.push(HirMatchArm {
                             pattern: arm.pattern.clone(),
                             guard,
@@ -453,11 +553,42 @@ impl Lowering {
 
     // ─── 辅助方法 ───
 
-    /// 从模式中提取变量名（仅简单变量模式）
-    fn pattern_var_name(&self, pattern: &ast::Pattern) -> Option<String> {
+    /// 从模式中提取所有变量名（递归处理解构模式）
+    fn pattern_var_names(&self, pattern: &ast::Pattern) -> Vec<String> {
+        let mut names = Vec::new();
+        Self::collect_pattern_var_names(pattern, &mut names);
+        names
+    }
+
+    fn collect_pattern_var_names(pattern: &ast::Pattern, names: &mut Vec<String>) {
         match pattern {
-            ast::Pattern::Var(name, _) => Some(name.clone()),
-            _ => None, // 解构模式暂不处理
+            ast::Pattern::Var(name, _) => names.push(name.clone()),
+            ast::Pattern::Tuple(elems, _, _) => {
+                for elem in elems {
+                    Self::collect_pattern_var_names(elem, names);
+                }
+            }
+            ast::Pattern::Struct { fields, .. } => {
+                for (_, field_pattern) in fields {
+                    if let Some(pat) = field_pattern {
+                        Self::collect_pattern_var_names(pat, names);
+                    }
+                }
+            }
+            ast::Pattern::Enum { inner, .. } => {
+                if let Some(inner) = inner {
+                    Self::collect_pattern_var_names(inner, names);
+                }
+            }
+            ast::Pattern::Ref(inner, _, _) => {
+                Self::collect_pattern_var_names(inner, names);
+            }
+            ast::Pattern::Or(patterns, _) => {
+                for pat in patterns {
+                    Self::collect_pattern_var_names(pat, names);
+                }
+            }
+            ast::Pattern::Lit(_, _) | ast::Pattern::Wildcard(_) => {}
         }
     }
 }
@@ -480,22 +611,37 @@ pub fn lower(ast_program: &ast::Program) -> (HirProgram, Vec<ResolveError>) {
 
 /// 检查函数名是否为内建/标准库函数
 fn is_builtin_fn(name: &str) -> bool {
-    matches!(name, "print")
+    crate::io::is_builtin(name)
+}
+
+/// 将内建函数声明的类型名转换为 HIR 类型
+fn builtin_type(name: &str) -> HirType {
+    match name {
+        "()" => HirType::Unit,
+        "!" => HirType::Never,
+        "_" => HirType::Wildcard,
+        other => HirType::Path(other.split("::").map(str::to_string).collect()),
+    }
 }
 
 /// 获取内建函数的签名
 fn builtin_fn_signature(name: &str) -> Option<FnSignature> {
-    match name {
-        "print" => Some(FnSignature {
-            name: "print".to_string(),
-            params: vec![("value".to_string(), HirType::Path(vec!["i64".to_string()]))],
-            return_types: vec![],
-            n: 1,
-            m: 0,
-            span: crate::frontend::token::Span::new(0, 0, 0),
-        }),
-        _ => None,
-    }
+    let def = crate::io::builtin_def(name)?;
+    let params: Vec<(String, HirType)> = def
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, ty)| (format!("arg{i}"), builtin_type(ty)))
+        .collect();
+    let return_types: Vec<HirType> = def.returns.iter().map(|ty| builtin_type(ty)).collect();
+    Some(FnSignature {
+        name: def.name.to_string(),
+        n: params.len() as u32,
+        m: return_types.len() as u32,
+        params,
+        return_types,
+        span: crate::frontend::token::Span::new(0, 0, 0),
+    })
 }
 
 #[cfg(test)]

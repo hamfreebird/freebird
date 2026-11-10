@@ -274,9 +274,56 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_multi_segment_path() {
+        let e = parse_expr("a::b::c");
+        match e {
+            Expr::EnumLit { name, variant, data, .. } => {
+                assert_eq!(name, vec!["a".to_string(), "b".to_string()]);
+                assert_eq!(variant, "c");
+                assert!(data.is_none());
+            }
+            other => panic!("expected EnumLit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_stardust_immediate_must_be_integer() {
+        let (_, errors) = parse_program("fn main() { stardust! { Ret(x) } }");
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e.kind, crate::frontend::error::FrontendErrorKind::InvalidNumber(_))),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
     fn test_parse_field_access() {
         let e = parse_expr("point.x");
         assert!(matches!(e, Expr::FieldAccess(_, f, _) if f == "x"));
+    }
+
+    #[test]
+    fn test_parse_vec_macro() {
+        let e = parse_expr("vec![1, 2, 3]");
+        match e {
+            Expr::Array(elems, _) => assert_eq!(elems.len(), 3),
+            other => panic!("expected Array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_generic_type() {
+        let d = parse_decl("fn f(v: Vec<i32>) { }");
+        let Decl::Fn(f) = d else {
+            panic!("expected Fn");
+        };
+        assert!(matches!(
+            &f.params[0].ty,
+            Type::Generic(base, args, _)
+                if matches!(**base, Type::Path(_, _)) && args.len() == 1
+        ));
     }
 
     #[test]

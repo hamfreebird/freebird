@@ -25,6 +25,7 @@ pub struct FnSignature {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HirType {
     Path(Vec<String>),
+    Generic(Box<HirType>, Vec<HirType>),
     Ref(Box<HirType>, bool),
     Tuple(Vec<HirType>),
     Array(Box<HirType>),
@@ -40,6 +41,10 @@ impl HirType {
     pub fn name(&self) -> String {
         match self {
             HirType::Path(segments) => segments.join("::"),
+            HirType::Generic(base, args) => {
+                let args: Vec<String> = args.iter().map(HirType::name).collect();
+                format!("{}<{}>", base.name(), args.join(", "))
+            }
             HirType::Ref(inner, true) => format!("&mut {}", inner.name()),
             HirType::Ref(inner, false) => format!("&{}", inner.name()),
             HirType::Tuple(types) => {
@@ -76,6 +81,20 @@ pub enum HirExpr {
         args: Vec<HirCallArg>,
         stack_pass: bool,
         fn_sig: Option<FnSignature>,
+        span: Span,
+    },
+    /// 方法调用: `receiver.method(args)`，目前用于 Vec/String 内建方法
+    MethodCall {
+        receiver: Box<HirExpr>,
+        method: String,
+        args: Vec<HirExpr>,
+        span: Span,
+    },
+    /// 关联函数调用: `Vec::new()`、`String::new()`、`Box::new(x)`
+    TypeMethod {
+        type_name: Vec<String>,
+        method: String,
+        args: Vec<HirExpr>,
         span: Span,
     },
     FieldAccess(Box<HirExpr>, String, Span),
@@ -150,11 +169,23 @@ pub enum HirStmt {
     },
     Expr(HirExpr, Span),
     Assign {
-        target: String,  // 变量名（已解析）
-        depth: usize,    // 作用域深度
+        target: HirAssignTarget,
         value: HirExpr,
         span: Span,
     },
+}
+
+/// HIR 赋值目标（左值）
+#[derive(Debug, Clone)]
+pub enum HirAssignTarget {
+    /// 简单变量
+    Var(HirVarRef),
+    /// 解引用赋值: *p = v
+    Deref(HirExpr),
+    /// 字段赋值: obj.field = v
+    Field { object: Box<HirExpr>, field: String },
+    /// 索引赋值: arr[i] = v
+    Index { array: Box<HirExpr>, index: Box<HirExpr> },
 }
 
 // ─── HIR 声明 ───
@@ -204,6 +235,10 @@ impl HirType {
     pub fn from_ast_type(ast_ty: &ast::Type) -> Self {
         match ast_ty {
             ast::Type::Path(segments, _) => HirType::Path(segments.clone()),
+            ast::Type::Generic(base, args, _) => HirType::Generic(
+                Box::new(HirType::from_ast_type(base)),
+                args.iter().map(HirType::from_ast_type).collect(),
+            ),
             ast::Type::Ref(inner, mutable, _) => {
                 HirType::Ref(Box::new(HirType::from_ast_type(inner)), *mutable)
             }

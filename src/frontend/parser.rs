@@ -320,39 +320,41 @@ impl Parser {
                     lhs = Expr::Index(Box::new(lhs), Box::new(index), span);
                     continue;
                 }
-                TokenKind::ColonColon if matches!(lhs, Expr::Var(_, _)) => {
-                    // Enum::Variant 或路径
-                    let enum_name = match lhs {
-                        Expr::Var(ref n, _) => n.clone(),
-                        _ => "?".to_string(),
+                TokenKind::ColonColon => {
+                    // 枚举变体或模块路径: A::B、A::B::C、A::B::C(payload)
+                    let path_prefix = match &lhs {
+                        Expr::Var(n, _) => Some(vec![n.clone()]),
+                        Expr::EnumLit { name, variant, data: None, .. } => {
+                            let mut path = name.clone();
+                            path.push(variant.clone());
+                            Some(path)
+                        }
+                        _ => None,
                     };
-                    self.advance();
-                    let segment = self.expect_ident("path segment")?;
-                    let span = self.pos_span();
-                    if self.check(TokenKind::LParen) {
-                        self.advance(); // skip (
-                        let data = if !self.check(TokenKind::RParen) {
-                            Some(Box::new(self.parse_expr(0)?))
+                    if let Some(path) = path_prefix {
+                        self.advance();
+                        let segment = self.expect_ident("path segment")?;
+                        let span = self.pos_span();
+                        let data = if self.check(TokenKind::LParen) {
+                            self.advance(); // skip (
+                            let data = if !self.check(TokenKind::RParen) {
+                                Some(Box::new(self.parse_expr(0)?))
+                            } else {
+                                None
+                            };
+                            self.expect(TokenKind::RParen)?;
+                            data
                         } else {
                             None
                         };
-                        let span = self.expect(TokenKind::RParen)?.span;
                         lhs = Expr::EnumLit {
-                            name: vec![enum_name],
+                            name: path,
                             variant: segment,
                             data,
                             span,
                         };
-                    } else {
-                        // 无数据的枚举变体: Option::None
-                        lhs = Expr::EnumLit {
-                            name: vec![enum_name],
-                            variant: segment,
-                            data: None,
-                            span,
-                        };
+                        continue;
                     }
-                    continue;
                 }
                 TokenKind::LBrace if matches!(lhs, Expr::Var(_, _)) => {
                     // 结构体构造: Point { x: 1, y: 2 }
@@ -426,6 +428,16 @@ impl Parser {
             TokenKind::Ident(name) => {
                 let name = name.clone();
                 self.advance();
+                // vec![...] 宏：目前与数组字面量语义一致，直接降级为 Expr::Array。
+                if name == "vec"
+                    && self.check(TokenKind::Bang)
+                    && self.tokens.get(self.pos + 1).is_some_and(|t| {
+                        matches!(t.kind, TokenKind::LBracket)
+                    })
+                {
+                    self.advance(); // !
+                    return self.parse_bracket_expr(span);
+                }
                 Ok(Expr::Var(name, span))
             }
 
@@ -495,36 +507,7 @@ impl Parser {
             }
 
             // 数组
-            TokenKind::LBracket => {
-                self.advance();
-                if self.check(TokenKind::RBracket) {
-                    let _ = self.expect(TokenKind::RBracket)?;
-                    return Ok(Expr::Array(vec![], span));
-                }
-                let first = self.parse_expr(0)?;
-                if self.eat(TokenKind::Semicolon) {
-                    let count = self.parse_expr(0)?;
-                    let _ = self.expect(TokenKind::RBracket)?;
-                    Ok(Expr::Repeat(Box::new(first), Box::new(count), span))
-                } else if self.eat(TokenKind::Comma) {
-                    let mut elems = vec![first];
-                    loop {
-                        if self.check(TokenKind::RBracket) {
-                            break;
-                        }
-                        let e = self.parse_expr(0)?;
-                        elems.push(e);
-                        if !self.eat(TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                    self.expect(TokenKind::RBracket)?;
-                    Ok(Expr::Array(elems, span))
-                } else {
-                    self.expect(TokenKind::RBracket)?;
-                    Ok(Expr::Array(vec![first], span))
-                }
-            }
+            TokenKind::LBracket => self.parse_bracket_expr(span),
 
             // 控制流
             TokenKind::If => self.parse_if_expr(),
@@ -606,6 +589,38 @@ impl Parser {
                     span,
                 ))
             }
+        }
+    }
+
+    /// 解析 `[...]` 数组字面量（当前 token 必须是 `[`）。
+    /// 同时支持 `[a, b, c]`、`[a; n]` 和空数组 `[]`。
+    fn parse_bracket_expr(&mut self, span: Span) -> Result<Expr, FrontendError> {
+        self.expect(TokenKind::LBracket)?;
+        if self.eat(TokenKind::RBracket) {
+            return Ok(Expr::Array(vec![], span));
+        }
+        let first = self.parse_expr(0)?;
+        if self.eat(TokenKind::Semicolon) {
+            let count = self.parse_expr(0)?;
+            self.expect(TokenKind::RBracket)?;
+            Ok(Expr::Repeat(Box::new(first), Box::new(count), span))
+        } else if self.eat(TokenKind::Comma) {
+            let mut elems = vec![first];
+            loop {
+                if self.check(TokenKind::RBracket) {
+                    break;
+                }
+                let e = self.parse_expr(0)?;
+                elems.push(e);
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBracket)?;
+            Ok(Expr::Array(elems, span))
+        } else {
+            self.expect(TokenKind::RBracket)?;
+            Ok(Expr::Array(vec![first], span))
         }
     }
 
@@ -931,7 +946,23 @@ impl Parser {
                     path.push(self.expect_ident("type name")?);
                 }
                 let span = self.current_span();
-                Ok(Type::Path(path, span))
+                let base = Type::Path(path, span);
+                if self.eat(TokenKind::Lt) {
+                    let mut args = Vec::new();
+                    loop {
+                        if self.check(TokenKind::Gt) {
+                            break;
+                        }
+                        args.push(self.parse_type()?);
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    let end = self.expect(TokenKind::Gt)?.span;
+                    Ok(Type::Generic(Box::new(base), args, end))
+                } else {
+                    Ok(base)
+                }
             }
             _ => {
                 let token = self.advance();
@@ -958,7 +989,18 @@ impl Parser {
                     let inst = match name.as_str() {
                         "Push" => {
                             self.expect(TokenKind::LParen)?;
-                            let v = if let Expr::Lit(Literal::Int(v, _), _) = self.parse_expr(0)? { v } else { 0 };
+                            let expr = self.parse_expr(0)?;
+                            let v = match expr {
+                                Expr::Lit(Literal::Int(v, _), _) => v,
+                                _ => {
+                                    return Err(FrontendError::new(
+                                        FrontendErrorKind::InvalidNumber(
+                                            "stardust Push expects an integer literal".to_string(),
+                                        ),
+                                        self.current_span(),
+                                    ));
+                                }
+                            };
                             self.expect(TokenKind::RParen)?;
                             StardustInst::Push(v)
                         }
@@ -1021,11 +1063,16 @@ impl Parser {
     }
 
     fn parse_expr_imm(&mut self) -> Result<u32, FrontendError> {
+        let span = self.current_span();
         let expr = self.parse_expr(0)?;
-        if let Expr::Lit(Literal::Int(v, _), _) = expr {
-            Ok(v as u32)
-        } else {
-            Ok(0)
+        match expr {
+            Expr::Lit(Literal::Int(v, _), _) => Ok(v as u32),
+            _ => Err(FrontendError::new(
+                FrontendErrorKind::InvalidNumber(
+                    "stardust instruction argument must be an integer literal".to_string(),
+                ),
+                span,
+            )),
         }
     }
 

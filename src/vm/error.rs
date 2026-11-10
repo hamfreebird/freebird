@@ -22,6 +22,8 @@ pub enum VmError {
     },
     /// 步数超限
     StepLimitExceeded,
+    /// 执行时间超限（秒）
+    TimeLimitExceeded { limit: u64 },
     /// 数据栈溢出
     StackOverflow { limit: usize },
     /// 调用栈溢出
@@ -36,6 +38,8 @@ pub enum VmError {
     DivisionByZero,
     /// 远程栈未找到
     RemoteStackNotFound { sid: u64 },
+    /// 数组/栈索引越界
+    IndexOutOfBounds { index: i64, len: usize },
     /// 断言失败（调试用）
     AssertionFailed(String),
     /// I/O 错误
@@ -70,6 +74,9 @@ impl fmt::Display for VmError {
             VmError::StepLimitExceeded => {
                 write!(f, "step limit exceeded")
             }
+            VmError::TimeLimitExceeded { limit } => {
+                write!(f, "time limit exceeded: more than {limit}s")
+            }
             VmError::StackOverflow { limit } => {
                 write!(f, "stack overflow: exceeded maximum stack depth of {limit}")
             }
@@ -93,6 +100,9 @@ impl fmt::Display for VmError {
             }
             VmError::RemoteStackNotFound { sid } => {
                 write!(f, "remote stack not found: StackId({sid})")
+            }
+            VmError::IndexOutOfBounds { index, len } => {
+                write!(f, "index out of bounds: {index} (available depth {len})")
             }
             VmError::AssertionFailed(msg) => {
                 write!(f, "assertion failed: {msg}")
