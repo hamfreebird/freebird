@@ -199,8 +199,9 @@ mod tests {
     #[test]
     fn test_builtin_is_not_shadowed_by_user_function() {
         let src = "fn print_int() { } fn main() { print_int(); }";
-        let result = run_source(src, RuntimeConfig::test());
-        assert!(result.is_ok(), "user function should override builtin: {result:?}");
+        let output = run_source(src, RuntimeConfig::test())
+            .expect("user function should override builtin");
+        assert!(output.is_empty());
     }
 
     #[test]
@@ -219,13 +220,9 @@ mod tests {
 
     #[test]
     fn test_run_simple_addition() {
-        let src = "fn main() { let x = 40 + 2; }";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
-        let output = result.unwrap();
-        // 没有 I/O 指令，输出为空
-        assert!(output.is_empty());
+        let src = "fn main() { let x = 40 + 2; print(x); }";
+        let output = run_source(src, RuntimeConfig::test()).expect("simple addition should run");
+        assert_eq!(output, b"42\n");
     }
 
     #[test]
@@ -236,11 +233,11 @@ mod tests {
             }
             fn main() {
                 let x = add(40, 2);
+                print(x);
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("return should run");
+        assert_eq!(output, b"42\n");
     }
 
     #[test]
@@ -248,11 +245,11 @@ mod tests {
         let src = "
             fn main() {
                 let x = if true { 1 } else { 2 };
+                print(x);
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("if else should run");
+        assert_eq!(output, b"1\n");
     }
 
     #[test]
@@ -531,6 +528,22 @@ mod tests {
     }
 
     #[test]
+    fn test_mutable_reference_writes_back_across_function_call() {
+        let src = "
+            fn inc(p: &mut i64) { *p = *p + 1; }
+            fn twice(p: &mut i64) { inc(p); inc(p); }
+            fn main() {
+                let mut x = 10;
+                twice(&mut x);
+                print(x);
+            }
+        ";
+        let output = run_source(src, RuntimeConfig::test())
+            .expect("reference passed to a function should write back");
+        assert_eq!(output, b"12\n");
+    }
+
+    #[test]
     fn test_struct_field_assignment() {
         let src = "
             struct Point { x: i32, y: i32 }
@@ -649,12 +662,11 @@ mod tests {
                 return fib(n - 1) + fib(n - 2);
             }
             fn main() {
-                let _x = fib(5);
+                print(fib(5));
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("fibonacci should run");
+        assert_eq!(output, b"5\n");
     }
 
     #[test]
@@ -665,11 +677,11 @@ mod tests {
                 while x < 5 {
                     x = x + 1;
                 }
+                print(x);
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("while loop should run");
+        assert_eq!(output, b"5\n");
     }
 
     #[test]
@@ -682,12 +694,11 @@ mod tests {
                 return square(a) + square(b);
             }
             fn main() {
-                let _x = sum_squares(3, 4);
+                print(sum_squares(3, 4));
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("nested calls should run");
+        assert_eq!(output, b"25\n");
     }
 
     #[test]
@@ -696,11 +707,11 @@ mod tests {
             struct Point { x: i32, y: i32 };
             fn main() {
                 let p = Point { x: 3, y: 4 };
+                print(p.x);
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("struct field should run");
+        assert_eq!(output, b"3\n");
     }
 
     #[test]
@@ -709,26 +720,24 @@ mod tests {
             struct Point { x: i32, y: i32 }
             fn main() {
                 let p = Point { x: 3, y: 4 };
+                print(p.x + p.y);
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("struct construction should run");
+        assert_eq!(output, b"7\n");
     }
 
     #[test]
     fn test_enum_declaration() {
-        // Phase 5: enum parsing and type table work, VM execution known issue
-        // The VM does not yet properly handle zero-slot enum variants
         let src = "
             enum Option { None, Some(i32) }
             fn main() {
-                let _x = Option::Some(42);
+                let x = Option::Some(42);
+                match x { Option::None => print(0), Option::Some(v) => print(v), }
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        let _ = result;
+        let output = run_source(src, RuntimeConfig::test()).expect("enum declaration should run");
+        assert_eq!(output, b"42\n");
     }
 
     #[test]
@@ -736,11 +745,11 @@ mod tests {
         let src = "
             fn main() {
                 let x = stardust! { Push(3) Push(5) Add };
+                print(x);
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("stardust macro should run");
+        assert_eq!(output, b"8\n");
     }
 
     #[test]
@@ -749,12 +758,12 @@ mod tests {
             fn main() {
                 unsafe {
                     let x = 42;
+                    print(x);
                 }
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("unsafe block should run");
+        assert_eq!(output, b"42\n");
     }
 
     #[test]
@@ -767,8 +776,7 @@ mod tests {
                 let _x = 1;
             }
         ";
-        let config = RuntimeConfig::test();
-        let result = run_source(src, config);
-        assert!(result.is_ok(), "Error: {:?}", result.err());
+        let output = run_source(src, RuntimeConfig::test()).expect("extern decl should run");
+        assert!(output.is_empty());
     }
 }

@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 195 unit + 15 integration 全绿（2026-11-10）。
+> 当前：`cargo test` = 196 unit + 20 integration 全绿（2026-11-10）。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
 ## P0 — 基础正确性与可验证性
@@ -19,7 +19,7 @@
 | ENUM-2 | MIR / VM | `Match` 生成顺序与标签泄漏有已知问题 | 多分支 match 行为不可靠 | 已完成 |
 | VEC-1 | 前端 / 类型 / VM | `vec![...]` 未解析，数组是裸栈槽 | 宏直接 parse error；数组索引顺序错误 | 已完成 |
 | VEC-2 | 类型 / VM | `Vec` 方法（push/pop/len）、`String`、`Box<T>` 与远程栈未落地 | `v.push(4)`、`Box::new(42)` 等不可用 | 已完成（单槽 Tuple 表示） |
-| CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine/NumIn/CharIn；FileRead/FileWrite 与远程栈仍是占位；`Ref` 写入不回写原变量） |
+| CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine UTF-8 解码/NumIn/CharIn；`&mut` 引用桶单元支持跨函数写回；FileRead/FileWrite 与远程栈仍是占位） |
 | CGEN-2 | LLVM 后端 | `--target llvm` 未实现 | 直接退出 “not implemented” | 暂缓 |
 | BORROW-1 | 借用检查 | `BorrowChecker` 未接入流水线 | 借用/移动错误无法在编译期发现 | 已完成 |
 | DROP-1 | MIR / 借用检查 | `collect_drop_vars` 恒空，`DropGen` 未调用 | 远程栈资源不会在作用域退出时释放 | 已完成 |
@@ -45,11 +45,11 @@
 
 | ID | 模块 | 未完成项 | 现状/影响 | 状态 |
 |---|---|---|---|---|
-| TEST-1 | 测试 | 管线/集成测试多为 `is_ok()`，缺少值断言 | 回归可能漏检 | 进行中（Stardust 集成测试已与 VM 输出逐项对比；管线仍有 14 个 `is_ok()` 冒烟测试） |
+| TEST-1 | 测试 | 管线/集成测试多为 `is_ok()`，缺少值断言 | 回归可能漏检 | 已完成（Stardust 集成测试与 VM 输出逐字节对比；fib/while/结构体/枚举/stardust! 等管线测试改为输出断言；仅剩 `check_source` 的合法程序断言） |
 | TEST-2 | 测试 | 缺枚举匹配、Vec、借用检查、Stardust 快照测试 | 关键功能无保护 | 已完成（新增结构体/枚举/Vec/Box/字符串/输入/COW 端到端测试与堆序列单元测试） |
 | CI-1 | 工程 | 无 CI 工作流 | 无自动回归门禁 | 已完成（`.github/workflows/ci.yml` 执行 release 构建与 `cargo test`） |
 | FMT-1 | 工程 | `cargo fmt --check` 失败；`cargo clippy` 有既有错误 | 不能直接作为门禁 | 待办（需单独的全树格式化/修复提交） |
-| DOC-1 | 文档 | `readme.md` / `USAGE.md` 描述的 LLVM、标准库、类型检查等多未实现 | 使用者会误判能力 | 进行中（`AGENTS.md` 与 `USAGE.md` 已更新；`readme.md` 仍是目标规范） |
+| DOC-1 | 文档 | `readme.md` / `USAGE.md` 描述的 LLVM、标准库、类型检查等多未实现 | 使用者会误判能力 | 已完成（`readme.md` 顶部注明目标规范与实现状态；`AGENTS.md` / `USAGE.md` 已同步当前能力与限制） |
 | TOOL-1 | 工具链 | 无包管理器、LSP、调试器 | 仅 CLI + REPL | 暂缓 |
 
 ## 执行顺序

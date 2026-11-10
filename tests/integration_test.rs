@@ -309,3 +309,81 @@ fn main() {
 "#;
     assert_stardust_matches_vm(source, "read_int_char", b"21\nZ");
 }
+
+#[test]
+fn test_stardust_backend_read_line_utf8() {
+    let source = r#"
+fn main() {
+    let line = read_line();
+    print(line.len());
+    print_str(line);
+    print_char('\n');
+}
+"#;
+    assert_stardust_matches_vm(source, "read_line_utf8", "héllo 世界 🎉\n".as_bytes());
+}
+
+#[test]
+fn test_stardust_backend_read_line_multiple_utf8_lines() {
+    let source = r#"
+fn main() {
+    let a = read_line();
+    let b = read_line();
+    print_str(a);
+    print_char('\n');
+    print_str(b);
+    print_char('\n');
+}
+"#;
+    assert_stardust_matches_vm(source, "read_line_multiple_utf8", "one\ntwø 世界\n".as_bytes());
+}
+
+#[test]
+fn test_stardust_backend_mutable_reference_write_back() {
+    let source = r#"
+fn main() {
+    let mut x = 1;
+    let p = &mut x;
+    *p = 5;
+    *p = *p + 2;
+    print(*p);
+    print(x);
+}
+"#;
+    // NLL 在最后一次使用 p 之后释放借用，因此 `print(x)` 之前必须已经写回。
+    assert_stardust_matches_vm(source, "mutable_ref_write_back", b"");
+}
+
+#[test]
+fn test_stardust_backend_reference_passed_to_function() {
+    let source = r#"
+fn inc(p: &mut i64) { *p = *p + 1; }
+fn twice(p: &mut i64) { inc(p); inc(p); }
+fn set(p: &mut i64) { *p = 42; }
+fn main() {
+    let mut x = 10;
+    twice(&mut x);
+    print(x);
+    let mut y = 1;
+    let p = &mut y;
+    set(p);
+    print(y);
+}
+"#;
+    assert_stardust_matches_vm(source, "reference_passed_to_function", b"");
+}
+
+#[test]
+fn test_stardust_backend_reference_replaces_struct_value() {
+    let source = r#"
+struct P { x: i64, y: i64 }
+fn main() {
+    let mut p = P { x: 1, y: 2 };
+    let r = &mut p;
+    *r = P { x: 30, y: 40 };
+    print(p.x);
+    print(p.y);
+}
+"#;
+    assert_stardust_matches_vm(source, "reference_struct_replace", b"");
+}

@@ -19,7 +19,7 @@
 //! 远程栈与文件 I/O 在 Stardust 解释器中没有对应原语，仍以占位注释保持
 //! 栈效果。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::vm::id::FnId;
 use crate::vm::mir::MirInst;
@@ -106,6 +106,10 @@ pub struct StardustGen {
     scopes: Vec<Scope>,
     /// 绑定 ID 分配器（函数内单调递增）。
     next_binding: usize,
+    /// 当前函数中需要按堆单元间接访问的变量名（被 `Ref` 取址过）。
+    indirect_names: HashSet<String>,
+    /// 当前函数中已标记为间接的绑定 ID。
+    indirect_bindings: HashSet<usize>,
     /// 前向跳转目标的状态记录。
     branch_states: HashMap<usize, BranchState>,
     /// 当前指令是否可达（Ret/UncondJump 之后为 false）。
@@ -137,6 +141,8 @@ impl StardustGen {
             stack: Vec::new(),
             scopes: Vec::new(),
             next_binding: 0,
+            indirect_names: HashSet::new(),
+            indirect_bindings: HashSet::new(),
             branch_states: HashMap::new(),
             reachable: true,
             fn_info: HashMap::new(),
@@ -255,10 +261,20 @@ impl StardustGen {
         self.current_fn = Some(fn_id);
         self.alias_body = alias_body;
         self.next_binding = 0;
+        self.indirect_names.clear();
+        self.indirect_bindings.clear();
         self.branch_states.clear();
         self.reachable = true;
         self.active_remote = false;
         self.scopes = vec![Scope::default()];
+
+        // 被 `Ref` 取址的变量需要改成堆单元间接访问，这样 `*p = v`
+        // 才能回写到变量本身。先扫描整个函数，保证 BindVar 时就能决定。
+        for inst in mir {
+            if let MirInst::Ref { name, .. } = inst {
+                self.indirect_names.insert(name.clone());
+            }
+        }
 
         // 函数帧布局：[CallElement(n), p1, ..., pn]
         self.stack = Vec::with_capacity(info.params as usize + 1);
@@ -458,17 +474,30 @@ impl StardustGen {
                 }
             }
             MirInst::BindVar { name } => {
-                if let Some(top) = self.stack.last_mut() {
-                    let id = self.next_binding;
-                    self.next_binding += 1;
-                    top.binding = Some(id);
-                    if let Some(scope) = self.scopes.last_mut() {
-                        scope.vars.insert(name.clone(), id);
-                    }
-                } else {
+                if self.stack.is_empty() {
                     self.emit_comment(&format!(
                         "WARNING: BindVar({name}) with empty codegen stack skipped"
                     ));
+                } else {
+                    let id = self.next_binding;
+                    self.next_binding += 1;
+                    let indirect = self.indirect_names.contains(name);
+                    if let Some(top) = self.stack.last_mut() {
+                        top.binding = Some(id);
+                        if indirect {
+                            // 被取址的变量不能保留编译期常量。
+                            top.constant = None;
+                        }
+                    }
+                    if let Some(scope) = self.scopes.last_mut() {
+                        scope.vars.insert(name.clone(), id);
+                    }
+                    if indirect {
+                        self.indirect_bindings.insert(id);
+                        // 运行时栈顶是初始值：包装成 [1, 1, value] 单元，
+                        // 变量槽改为保存该单元句柄。
+                        self.gen_make_box();
+                    }
                 }
             }
             MirInst::ReadVar { name } => self.gen_read_var(name),
@@ -476,13 +505,28 @@ impl StardustGen {
 
             // ─── 引用 ───
             MirInst::Ref { name, .. } => {
-                // Stardust 没有栈槽地址；把变量当前值复制进一个堆单元，
-                // 使 `&x` 至少能安全地解引用（写入不会回写原变量）。
-                self.emit_comment(&format!(
-                    "Ref({name}): copied into a heap cell (writes do not propagate back)"
-                ));
-                self.gen_read_var(name);
-                self.gen_make_box();
+                // 被取址的变量在 BindVar 时已包装成堆单元 [1, 1, value]，
+                // 变量槽保存单元句柄。这里直接返回句柄，使 `*p = v` 能
+                // 写回原变量。
+                let indirect = self
+                    .find_binding(name)
+                    .is_some_and(|binding| self.indirect_bindings.contains(&binding));
+                if indirect {
+                    let binding = self.find_binding(name).unwrap();
+                    let index = self.find_slot_index(binding).unwrap();
+                    let depth = self.stack.len() - 1 - index;
+                    self.emit_push_int(depth as i64);
+                    self.raw_inst(2, '<'); // Pick 单元句柄
+                    self.stack.push(Slot::unknown());
+                } else {
+                    // 兜底：变量未走间接绑定（例如生成器栈模型不完整）。
+                    // 复制值到堆单元，至少能安全解引用，但写入不会回写。
+                    self.emit_comment(&format!(
+                        "Ref({name}): copied into a heap cell (writes do not propagate back)"
+                    ));
+                    self.gen_read_var(name);
+                    self.gen_make_box();
+                }
             }
             MirInst::Deref => {
                 self.gen_deref();
@@ -713,7 +757,16 @@ impl StardustGen {
         let depth = self.stack.len() - 1 - index;
         self.emit_push_int(depth as i64);
         self.raw_inst(2, '<'); // Pick
-        let constant = self.stack[index].constant.clone();
+        let indirect = self.indirect_bindings.contains(&binding);
+        let constant = if indirect {
+            None
+        } else {
+            self.stack[index].constant.clone()
+        };
+        if indirect {
+            // 变量槽保存的是单元句柄，读出值需要解引用。
+            self.gen_deref();
+        }
         self.stack.push(Slot { binding: None, constant, call_element: None });
     }
 
@@ -730,6 +783,24 @@ impl StardustGen {
             self.pop_n_emit(1);
             return;
         };
+
+        if self.indirect_bindings.contains(&binding) {
+            // 间接变量：RHS 写入堆单元，变量槽中的句柄保持不变。
+            self.stack.pop(); // RHS
+            self.emit_store_scratch(HEAP_VALUE);
+            let depth = self.stack.len() - 1 - index;
+            self.emit_push_int(depth as i64);
+            self.raw_inst(2, '<'); // Pick 单元句柄
+            self.emit_push_int(2);
+            self.emit_add();
+            self.emit_load_scratch(HEAP_VALUE);
+            self.emit_swap();
+            self.raw_inst(0, '-'); // Store
+            if let Some(slot) = self.stack.get_mut(index) {
+                slot.constant = None;
+            }
+            return;
+        }
 
         let len = self.stack.len();
         let depth = len - 1 - index;
@@ -1416,7 +1487,11 @@ impl StardustGen {
         }
     }
 
-    /// `ReadLine`：用 CharIn 读取 ASCII 字节直到换行，最多 1024 字节。
+    /// `ReadLine`：用 CharIn 逐字节读取一行，并按 UTF-8 解码成字符序列。
+    ///
+    /// 块中保存的是 Unicode 码点（与字符串字面量一致），因此 `print_str`
+    /// 可以直接 CharOut。最多保存 1024 个字符；换行/回车结束且不进入结果。
+    /// 输入 EOF 仍无法检测（CharIn 会报错），非法首字节按 U+FFFD 处理。
     fn gen_read_line(&mut self) {
         const READLINE_CAP: i64 = 1024;
         self.emit_alloc_const(BLOCK_HEADER as usize + READLINE_CAP as usize);
@@ -1426,39 +1501,141 @@ impl StardustGen {
         self.emit_push_int(0);
         self.emit_store_scratch(HEAP_COUNTER);
 
-        let loop_label = self.fresh_helper_label();
-        let end_label = self.fresh_helper_label();
-        self.raw_inst(loop_label, '`');
-        self.raw_inst(1, ','); // CharIn
-        self.emit_dup();
-        self.emit_push_int(10); // '\n'
-        self.raw_inst(0, '='); // Eq
-        self.raw_inst(end_label, '\'');
-        self.emit_dup();
-        self.emit_push_int(13); // '\r'
-        self.raw_inst(0, '=');
-        self.raw_inst(end_label, '\'');
+        let read_loop = self.fresh_helper_label();
+        let newline_end = self.fresh_helper_label();
+        let cap_end = self.fresh_helper_label();
+        let ascii = self.fresh_helper_label();
+        let invalid = self.fresh_helper_label();
+        let utf8_2 = self.fresh_helper_label();
+        let utf8_3 = self.fresh_helper_label();
+        let utf8_4 = self.fresh_helper_label();
+        let cont_loop = self.fresh_helper_label();
+        let cont_done = self.fresh_helper_label();
+        let append = self.fresh_helper_label();
+
+        self.raw_inst(read_loop, '`');
+        // 容量检查放在读取之前，避免多消费一个输入字节。
         self.emit_load_scratch(HEAP_COUNTER);
         self.emit_push_int(READLINE_CAP);
         self.emit_ge();
-        self.raw_inst(end_label, '\'');
+        self.raw_inst(cap_end, '\'');
+
+        self.raw_inst(1, ','); // CharIn: b0
+        self.emit_dup();
+        self.emit_push_int(10); // '\n'
+        self.raw_inst(0, '=');
+        self.raw_inst(newline_end, '\'');
+        self.emit_dup();
+        self.emit_push_int(13); // '\r'
+        self.raw_inst(0, '=');
+        self.raw_inst(newline_end, '\'');
+
+        // UTF-8 首字节分类。
+        self.emit_dup();
+        self.emit_push_int(128);
+        self.raw_inst(2, '='); // Lt
+        self.raw_inst(ascii, '\'');
+        self.emit_dup();
+        self.emit_push_int(192);
+        self.raw_inst(2, '=');
+        self.raw_inst(invalid, '\'');
+        self.emit_dup();
+        self.emit_push_int(224);
+        self.raw_inst(2, '=');
+        self.raw_inst(utf8_2, '\'');
+        self.emit_dup();
+        self.emit_push_int(240);
+        self.raw_inst(2, '=');
+        self.raw_inst(utf8_3, '\'');
+        self.emit_dup();
+        self.emit_push_int(248);
+        self.raw_inst(2, '=');
+        self.raw_inst(utf8_4, '\'');
+        self.raw_inst(invalid, '~'); // 0xF8..0xFF 非法
+
+        // ASCII：码点就是该字节。
+        self.raw_inst(ascii, '`');
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(append, '~');
+
+        // 非法首字节：替换字符 U+FFFD。
+        self.raw_inst(invalid, '`');
+        self.emit_pop();
+        self.emit_push_int(0xFFFD);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(append, '~');
+
+        // 多字节首字节：先写入掩码后的高位。
+        self.raw_inst(utf8_2, '`');
+        self.emit_push_int(32); // 0x1F 掩码 = mod 32
+        self.raw_inst(4, '*'); // Mod
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_SIZE);
+        self.raw_inst(cont_loop, '~');
+
+        self.raw_inst(utf8_3, '`');
+        self.emit_push_int(16); // 0x0F 掩码 = mod 16
+        self.raw_inst(4, '*'); // Mod
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(2);
+        self.emit_store_scratch(HEAP_SIZE);
+        self.raw_inst(cont_loop, '~');
+
+        self.raw_inst(utf8_4, '`');
+        self.emit_push_int(8); // 0x07 掩码 = mod 8
+        self.raw_inst(4, '*'); // Mod
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(3);
+        self.emit_store_scratch(HEAP_SIZE);
+        self.raw_inst(cont_loop, '~');
+
+        // 读后续字节：acc = acc * 64 + (byte % 64)。
+        self.raw_inst(cont_loop, '`');
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_push_int(0);
+        self.raw_inst(0, '='); // Eq: SIZE == 0 时结束
+        self.raw_inst(cont_done, '\'');
+        self.raw_inst(1, ','); // CharIn
+        self.emit_push_int(64); // 0x3F 掩码 = mod 64
+        self.raw_inst(4, '*'); // Mod
         self.emit_store_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(64);
+        self.raw_inst(2, '*'); // Mul
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_SIZE);
+        self.raw_inst(cont_loop, '~');
+
+        self.raw_inst(cont_done, '`');
+
+        // 追加码点到块末尾。
+        self.raw_inst(append, '`');
         self.emit_load_scratch(HEAP_HANDLE);
         self.emit_push_int(BLOCK_HEADER);
         self.emit_add();
         self.emit_load_scratch(HEAP_COUNTER);
         self.emit_add();
-        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_INDEX);
         self.emit_swap();
         self.raw_inst(0, '-');
         self.emit_load_scratch(HEAP_COUNTER);
         self.emit_push_int(1);
         self.emit_add();
         self.emit_store_scratch(HEAP_COUNTER);
-        self.raw_inst(loop_label, '~');
+        self.raw_inst(read_loop, '~');
 
-        self.raw_inst(end_label, '`');
-        self.emit_pop(); // 丢弃换行/末字符
+        // 换行结束：栈顶还有那个换行字节，丢弃。
+        self.raw_inst(newline_end, '`');
+        self.emit_pop();
+
+        // 正常容量结束或换行结束：写回长度并留下句柄。
+        self.raw_inst(cap_end, '`');
         self.emit_write_header_slot(HEAP_HANDLE, 0, HEAP_COUNTER);
         self.emit_load_scratch(HEAP_HANDLE);
     }

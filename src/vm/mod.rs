@@ -384,15 +384,18 @@ impl Vm {
                 let (_, ref_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
                 let val = match ref_val {
                     Value::Ref(id) | Value::MutRef(id) => {
-                        let pos = frame
-                            .data
-                            .find_id(id)
-                            .ok_or(VmError::DanglingReference {
+                        if let Some(pos) = frame.data.find_id(id) {
+                            let idx = frame.data.len() - 1 - pos;
+                            frame.data.values[idx].clone()
+                        } else if let Some((frame_idx, idx)) = self.find_ref_target(id) {
+                            // 引用目标是调用者帧中的变量（例如 `f(&mut x)`）。
+                            self.call_stack[frame_idx].data.values[idx].clone()
+                        } else {
+                            return Err(VmError::DanglingReference {
                                 id: id.0,
                                 name: "deref target".to_string(),
-                            })?;
-                        let idx = frame.data.len() - 1 - pos;
-                        frame.data.values[idx].clone()
+                            });
+                        }
                     }
                     Value::Boxed(inner) => *inner,
                     _ => {
@@ -493,16 +496,17 @@ impl Vm {
                         });
                     }
                 };
-                let idx = frame
-                    .data
-                    .ids
-                    .iter()
-                    .rposition(|id| *id == target_id)
-                    .ok_or(VmError::DanglingReference {
+                if let Some(idx) = frame.data.ids.iter().rposition(|id| *id == target_id) {
+                    frame.data.values[idx] = value;
+                } else if let Some((frame_idx, idx)) = self.find_ref_target(target_id) {
+                    // 写入调用者帧中的变量（例如 `fn set(p: &mut i64)`）。
+                    self.call_stack[frame_idx].data.values[idx] = value;
+                } else {
+                    return Err(VmError::DanglingReference {
                         id: target_id.0,
                         name: "<deref>".to_string(),
-                    })?;
-                frame.data.values[idx] = value;
+                    });
+                }
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -1284,6 +1288,20 @@ impl Vm {
         }
 
         Ok(())
+    }
+
+    /// 在调用者帧中查找引用目标 `id`，返回 `(call_stack 下标, 栈槽下标)`。
+    ///
+    /// 引用按 ElementId 指向变量槽；把 `&mut x` 作为参数传给函数后，目标
+    /// 仍在调用者帧里，因此解引用/写入需要跨帧查找。借用检查保证引用不会
+    /// 逃逸出目标变量的生命周期。
+    fn find_ref_target(&self, id: ElementId) -> Option<(usize, usize)> {
+        for (frame_idx, frame) in self.call_stack.iter().enumerate().rev() {
+            if let Some(pos) = frame.data.find_id(id) {
+                return Some((frame_idx, frame.data.len() - 1 - pos));
+            }
+        }
+        None
     }
 
     /// 执行 ReadVar：动态查找 + roll+dup+roll(-pos)
