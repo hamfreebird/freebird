@@ -5,7 +5,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Commands
 
 - Build: `cargo build --release` (edition 2024, Rust 1.85+).
-- Test: `cargo test` — current baseline is 196 unit + 20 integration tests, all green.
+- Test: `cargo test` — current baseline is 198 unit + 23 integration tests, all green.
 - Single test: `cargo test <test_name>`; integration only: `cargo test --test integration_test test_fib_program`.
 - CLI: `cargo run -- run <file.fb>`, `cargo run -- check <file.fb>`, `cargo run -- build [--target stardust|llvm] <file.fb>`, `cargo run -- repl`.
 - Run tests from the repo root: integration tests load fixtures via relative paths. `tests/programs/*.fb` are not auto-discovered (`enum_match.fb` is currently unused); add an explicit test for each new fixture.
@@ -32,6 +32,6 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## I/O quirks
 
 - `run_source` returns VM output bytes; the CLI prints them once. Assert against the returned bytes rather than process stdout.
-- Stardust `read_line` decodes UTF-8 bytes into a character block (up to 1024 characters); invalid leading bytes become U+FFFD and EOF is not special-cased. VM `read_line` trims `\n`/`\r`.
+- Stardust `read_line` decodes UTF-8 bytes into a character block (up to 1024 characters); invalid leading bytes become U+FFFD and EOF is not special-cased. `\r` and `\n` both end a line, so CRLF input leaves the `\n` for the next read. VM `read_line` trims `\n`/`\r`.
 - VM and Stardust both resolve `&mut` writes across call frames: `fn set(p: &mut i64) { *p = 42; }` propagates back to the caller's variable.
 - `print(x); print(x)` works now: the builtin call is no longer treated as leaving an extra value on the stack.

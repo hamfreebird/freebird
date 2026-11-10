@@ -727,7 +727,24 @@ impl Parser {
             if self.check(TokenKind::Let) || self.check(TokenKind::Semicolon) {
                 stmts.push(self.parse_stmt()?);
             } else {
-                let expr = self.parse_expr(0)?;
+                // 块状表达式（块/if/match/循环）作为语句时到此结束，
+                // 避免把下一条语句开头的 `*`、`-`、`&` 等误当成
+                // 二元运算符继续解析（例如 `{ ... }\n*p = 4;`）。
+                let block_like = matches!(
+                    self.peek(),
+                    TokenKind::LBrace
+                        | TokenKind::If
+                        | TokenKind::Match
+                        | TokenKind::Loop
+                        | TokenKind::While
+                        | TokenKind::For
+                        | TokenKind::Unsafe
+                );
+                let expr = if block_like {
+                    self.parse_expr_prefix()?
+                } else {
+                    self.parse_expr(0)?
+                };
                 if self.check(TokenKind::RBrace) {
                     if tail.is_none() {
                         tail = Some(Box::new(expr));

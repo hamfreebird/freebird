@@ -544,6 +544,41 @@ mod tests {
     }
 
     #[test]
+    fn test_shadowed_variable_restores_outer_binding() {
+        let src = "
+            fn main() {
+                let mut x = 1;
+                {
+                    let x = 5;
+                    print(x);
+                }
+                let p = &mut x;
+                *p = 9;
+                print(x);
+            }
+        ";
+        let output = run_source(src, RuntimeConfig::test())
+            .expect("shadowed variable should restore outer binding");
+        assert_eq!(output, b"5\n9\n");
+    }
+
+    #[test]
+    fn test_statement_after_block_without_semicolon() {
+        let src = "
+            fn main() {
+                let mut x = 1;
+                let p = &mut x;
+                { print(0); }
+                *p = 4;
+                print(x);
+            }
+        ";
+        let output = run_source(src, RuntimeConfig::test())
+            .expect("statement starting with * after a block should parse");
+        assert_eq!(output, b"0\n4\n");
+    }
+
+    #[test]
     fn test_struct_field_assignment() {
         let src = "
             struct Point { x: i32, y: i32 }

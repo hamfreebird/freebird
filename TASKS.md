@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 196 unit + 20 integration 全绿（2026-11-10）。
+> 当前：`cargo test` = 198 unit + 23 integration 全绿（2026-11-10）。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
 ## P0 — 基础正确性与可验证性
@@ -19,7 +19,7 @@
 | ENUM-2 | MIR / VM | `Match` 生成顺序与标签泄漏有已知问题 | 多分支 match 行为不可靠 | 已完成 |
 | VEC-1 | 前端 / 类型 / VM | `vec![...]` 未解析，数组是裸栈槽 | 宏直接 parse error；数组索引顺序错误 | 已完成 |
 | VEC-2 | 类型 / VM | `Vec` 方法（push/pop/len）、`String`、`Box<T>` 与远程栈未落地 | `v.push(4)`、`Box::new(42)` 等不可用 | 已完成（单槽 Tuple 表示） |
-| CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine UTF-8 解码/NumIn/CharIn；`&mut` 引用桶单元支持跨函数写回；FileRead/FileWrite 与远程栈仍是占位） |
+| CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine UTF-8 解码/NumIn/CharIn；`&mut` 引用堆单元支持跨函数写回；FileRead/FileWrite 与远程栈仍是占位） |
 | CGEN-2 | LLVM 后端 | `--target llvm` 未实现 | 直接退出 “not implemented” | 暂缓 |
 | BORROW-1 | 借用检查 | `BorrowChecker` 未接入流水线 | 借用/移动错误无法在编译期发现 | 已完成 |
 | DROP-1 | MIR / 借用检查 | `collect_drop_vars` 恒空，`DropGen` 未调用 | 远程栈资源不会在作用域退出时释放 | 已完成 |
@@ -36,7 +36,9 @@
 | PARSE-3 | Parser | `parse_expr_imm` 非整数静默返回 0 | `stardust!` 参数错误被吞掉 | 已完成 |
 | PARSE-4 | Parser / HIR | 赋值只支持简单变量 | `*p = ...`、`obj.field = ...`、`arr[i] = ...` 不支持 | 已完成 |
 | PARSE-5 | Lexer | 未知转义 `\q` 静默接受 | 源码错误不报 | 已完成 |
+| PARSE-6 | Parser | 块状表达式后省略分号时，下一条以 `*`/`-`/`&` 开头的语句被当作二元表达式 | `{ ... }\n*p = 4;` 报 `invalid assignment target` | 已完成（块状语句单独解析） |
 | HIR-1 | HIR | 复杂赋值目标错误类型不对 | 诊断信息误导 | 已完成 |
+| BORROW-2 | 借用检查 | 同名变量遮蔽时 `exit_scope` 删除外层绑定，引用绑定也不区分作用域 | 遮蔽后外层变量报 `use of moved value` 或借用误判 | 已完成（`vars` / `ref_targets` 按作用域分层） |
 | IO-4 | IO | `print_str` 无条件追加换行；`file_read`/`file_write` 只是注释 | 字符串/文件 IO 不可用 | 已完成 |
 | DEBUG-1 | CLI | `run --debug` 是 no-op | `RuntimeConfig.debug` 从未读取 | 已完成 |
 | CONFIG-1 | VM | `RuntimeConfig.time_limit` 未执行 | 时间限制配置无效 | 已完成 |

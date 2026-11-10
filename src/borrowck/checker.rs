@@ -70,8 +70,8 @@ struct VarInfo {
 
 /// 借用检查器 — 在 HIR 层面验证所有权和借用规则
 pub struct BorrowChecker {
-    /// 变量名 → 变量信息
-    vars: HashMap<String, VarInfo>,
+    /// 变量名 → 同名绑定栈（最后一个为当前可见绑定）
+    vars: HashMap<String, Vec<VarInfo>>,
     /// 当前作用域深度
     scope_depth: usize,
     /// 作用域帧栈（每帧记录该作用域声明的变量名）
@@ -80,8 +80,9 @@ pub struct BorrowChecker {
     pub errors: Vec<BorrowError>,
     /// 已知的 Move 类型名
     move_types: HashSet<String>,
-    /// 引用变量名 → 被借用变量名
-    ref_targets: HashMap<String, String>,
+    /// 引用变量名 → 各层同名绑定的被借用变量名
+    /// （最后一个元素为当前可见绑定；`None` 表示该层借用已释放）
+    ref_targets: HashMap<String, Vec<Option<String>>>,
     /// 每个作用域中声明的引用变量名
     ref_scopes: Vec<Vec<String>>,
     /// 变量名在函数体中的剩余使用次数（用于近似 NLL 的借用释放）
@@ -119,28 +120,50 @@ impl BorrowChecker {
     pub fn exit_scope(&mut self) -> Vec<String> {
         if let Some(refs) = self.ref_scopes.pop() {
             for name in refs.into_iter().rev() {
-                self.release_ref_binding(&name);
+                self.pop_ref_binding(&name);
             }
         }
         let dropped = self.scope_vars.pop().unwrap_or_default();
         // 释放已移动的变量不报错（它们已经被转移了所有权）
         for name in &dropped {
-            if let Some(info) = self.vars.get(name) {
-                if info.is_move_type && info.borrow_state != BorrowState::Moved {
+            if let Some(stack) = self.vars.get_mut(name) {
+                if let Some(info) = stack.last()
+                    && info.is_move_type
+                    && info.borrow_state != BorrowState::Moved
+                {
                     // Move 类型在此处应该被析构（Drop），但目前静默处理
                 }
-                self.vars.remove(name);
+                stack.pop();
+                if stack.is_empty() {
+                    self.vars.remove(name);
+                }
             }
         }
         self.scope_depth = self.scope_depth.saturating_sub(1);
         dropped
     }
 
+    /// 当前作用域可见的变量信息。
+    fn var(&self, name: &str) -> Option<&VarInfo> {
+        self.vars.get(name).and_then(|stack| stack.last())
+    }
+
+    /// 当前作用域可见变量信息的可变引用。
+    fn var_mut(&mut self, name: &str) -> Option<&mut VarInfo> {
+        self.vars.get_mut(name).and_then(|stack| stack.last_mut())
+    }
+
     /// 获取待析构变量的 Drop 顺序（逆序创建）
     pub fn drop_order(&self) -> Vec<String> {
-        let mut order: Vec<String> = self.vars.iter()
-            .filter(|(_, info)| info.is_move_type && info.borrow_state != BorrowState::Moved)
-            .map(|(name, _)| name.clone())
+        let mut order: Vec<String> = self
+            .vars
+            .iter()
+            .filter_map(|(name, stack)| {
+                stack
+                    .last()
+                    .filter(|info| info.is_move_type && info.borrow_state != BorrowState::Moved)
+                    .map(|_| name.clone())
+            })
             .collect();
         // 逆序：后创建的先析构
         order.reverse();
@@ -155,14 +178,14 @@ impl BorrowChecker {
         is_move_type: bool,
         span: Span,
     ) -> Result<(), BorrowError> {
-        if let Some(existing) = self.vars.get(name)
+        if let Some(existing) = self.var(name)
             && existing.scope_depth == self.scope_depth {
                 return Err(BorrowError::CannotAssignToImmutable {
                     name: format!("duplicate variable `{name}`"),
                     span,
                 });
             }
-        self.vars.insert(name.to_string(), VarInfo {
+        self.vars.entry(name.to_string()).or_default().push(VarInfo {
             mutable,
             is_move_type,
             borrow_state: BorrowState::Unused,
@@ -176,7 +199,7 @@ impl BorrowChecker {
 
     /// 检查变量读取（Copy 类型：直接读取；Move 类型：检查是否已移动）
     pub fn check_read(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.vars.get(name).ok_or_else(|| BorrowError::UseAfterMove {
+        let info = self.var(name).ok_or_else(|| BorrowError::UseAfterMove {
             name: format!("undefined variable `{name}`"),
             span,
         })?;
@@ -196,7 +219,7 @@ impl BorrowChecker {
 
     /// 检查变量写入（赋值）
     pub fn check_write(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.vars.get_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
+        let info = self.var_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
             name: format!("undefined variable `{name}`"),
             span,
         })?;
@@ -227,7 +250,7 @@ impl BorrowChecker {
 
     /// 创建共享引用 &x
     pub fn borrow_shared(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.vars.get_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
+        let info = self.var_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
             name: format!("undefined variable `{name}`"),
             span,
         })?;
@@ -254,7 +277,7 @@ impl BorrowChecker {
 
     /// 创建独占引用 &mut x
     pub fn borrow_mut(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.vars.get_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
+        let info = self.var_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
             name: format!("undefined variable `{name}`"),
             span,
         })?;
@@ -287,7 +310,7 @@ impl BorrowChecker {
 
     /// 释放引用（引用离开作用域时）
     pub fn release_ref(&mut self, name: &str) {
-        if let Some(info) = self.vars.get_mut(name) {
+        if let Some(info) = self.var_mut(name) {
             match info.borrow_state {
                 BorrowState::Shared(n) if n > 1 => {
                     info.borrow_state = BorrowState::Shared(n - 1);
@@ -302,7 +325,7 @@ impl BorrowChecker {
 
     /// 移动变量（赋值或传参时所有权转移）
     pub fn move_var(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.vars.get(name).ok_or_else(|| BorrowError::UseAfterMove {
+        let info = self.var(name).ok_or_else(|| BorrowError::UseAfterMove {
             name: format!("undefined variable `{name}`"),
             span,
         })?;
@@ -323,7 +346,7 @@ impl BorrowChecker {
             _ => Ok(()),
         }?;
 
-        if let Some(info) = self.vars.get_mut(name) {
+        if let Some(info) = self.var_mut(name) {
             info.borrow_state = BorrowState::Moved;
         }
         Ok(())
@@ -331,7 +354,7 @@ impl BorrowChecker {
 
     /// 重新初始化变量（赋值给已移动的变量时允许恢复）。
     pub fn reinit_var(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.vars.get_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
+        let info = self.var_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
             name: format!("undefined variable `{name}`"),
             span,
         })?;
@@ -383,7 +406,10 @@ impl BorrowChecker {
         } else {
             self.borrow_shared(target, span)?;
         }
-        self.ref_targets.insert(name.to_string(), target.to_string());
+        self.ref_targets
+            .entry(name.to_string())
+            .or_default()
+            .push(Some(target.to_string()));
         if let Some(frame) = self.ref_scopes.last_mut() {
             frame.push(name.to_string());
         }
@@ -394,10 +420,26 @@ impl BorrowChecker {
         Ok(())
     }
 
-    /// 释放引用变量对应的借用。
+    /// 释放当前可见引用变量对应的借用（幂等）。
     pub fn release_ref_binding(&mut self, name: &str) {
-        if let Some(target) = self.ref_targets.remove(name) {
+        let target = self
+            .ref_targets
+            .get_mut(name)
+            .and_then(|stack| stack.last_mut())
+            .and_then(|target| target.take());
+        if let Some(target) = target {
             self.release_ref(&target);
+        }
+    }
+
+    /// 离开作用域：释放并弹出该层引用绑定，恢复外层同名绑定。
+    fn pop_ref_binding(&mut self, name: &str) {
+        self.release_ref_binding(name);
+        if let Some(stack) = self.ref_targets.get_mut(name) {
+            stack.pop();
+            if stack.is_empty() {
+                self.ref_targets.remove(name);
+            }
         }
     }
 
@@ -408,12 +450,12 @@ impl BorrowChecker {
 
     /// 判断变量是否为 Move 类型
     pub fn is_move_type(&self, name: &str) -> bool {
-        self.vars.get(name).is_some_and(|v| v.is_move_type)
+        self.var(name).is_some_and(|v| v.is_move_type)
     }
 
     /// 查询变量是否可变
     pub fn is_mutable(&self, name: &str) -> bool {
-        self.vars.get(name).is_some_and(|v| v.mutable)
+        self.var(name).is_some_and(|v| v.mutable)
     }
 
     // ─── HIR 遍历 ───

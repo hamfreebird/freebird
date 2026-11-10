@@ -387,3 +387,53 @@ fn main() {
 "#;
     assert_stardust_matches_vm(source, "reference_struct_replace", b"");
 }
+
+#[test]
+fn test_stardust_backend_shadowing_restores_outer_binding() {
+    let source = r#"
+fn main() {
+    let mut x = 1;
+    {
+        let x = 5;
+        print(x);
+    }
+    let p = &mut x;
+    *p = 9;
+    print(x);
+}
+"#;
+    assert_stardust_matches_vm(source, "shadowing_outer_binding", b"");
+}
+
+#[test]
+fn test_stardust_backend_statement_after_block() {
+    let source = r#"
+fn main() {
+    let mut x = 1;
+    let p = &mut x;
+    { print(0); }
+    *p = 4;
+    print(x);
+}
+"#;
+    assert_stardust_matches_vm(source, "statement_after_block", b"");
+}
+
+#[test]
+fn test_stardust_backend_shadowed_reference_binding() {
+    let source = r#"
+fn main() {
+    let mut x = 1;
+    let mut y = 2;
+    let p = &mut x;
+    {
+        let p = &mut y;
+        *p = 3;
+    }
+    *p = 4;
+    print(x);
+    print(y);
+}
+"#;
+    assert_stardust_matches_vm(source, "shadowed_reference_binding", b"");
+}
