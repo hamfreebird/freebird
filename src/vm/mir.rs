@@ -109,6 +109,10 @@ pub enum MirInst {
         #[serde(skip)]
         ty: TypeId,
     },
+    /// 类型转换（`expr as T`）
+    Cast {
+        target: TypeId,
+    },
 
     // === 比较 ===
     Eq,
@@ -284,6 +288,7 @@ impl std::fmt::Display for MirInst {
                 write!(f, "StrOut(newline={newline})")
             }
             MirInst::ReadLine => write!(f, "ReadLine"),
+            MirInst::Cast { target } => write!(f, "Cast({})", target.name()),
             MirInst::FileRead => write!(f, "FileRead"),
             MirInst::FileWrite => write!(f, "FileWrite"),
             MirInst::DumpStack => write!(f, "DumpStack"),

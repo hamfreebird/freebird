@@ -574,10 +574,7 @@ impl<'a> TypeChecker<'a> {
             }
             HirExpr::For { pattern, iterable, body, .. } => {
                 let iter_ty = self.check_expr(iterable);
-                let elem_ty = match &iter_ty {
-                    HirType::Array(elem) => (**elem).clone(),
-                    _ => HirType::Unknown,
-                };
+                let elem_ty = self.for_element_type(&iter_ty, expr_span(expr));
                 self.push_scope();
                 self.bind_pattern(pattern, &elem_ty);
                 self.check_block(body);
@@ -590,12 +587,32 @@ impl<'a> TypeChecker<'a> {
                 self.check_return(values, *span);
                 HirType::Never
             }
-            HirExpr::Ret(_, _) => HirType::Never,
+            HirExpr::Ret(n, span) => {
+                if let Some(ctx) = self.fn_stack.last() {
+                    if *n < 0 || *n as usize != ctx.return_types.len() {
+                        self.error(TypeCheckError::ReturnArityMismatch {
+                            function: ctx.name.clone(),
+                            expected: ctx.return_types.len(),
+                            found: (*n).max(0) as usize,
+                            span: *span,
+                        });
+                    }
+                }
+                HirType::Never
+            }
             HirExpr::Unsafe(block, _) => self.check_block(block),
             HirExpr::StardustMacro(_, _) => HirType::Unknown,
             HirExpr::As(inner, target, span) => {
-                self.check_expr(inner);
+                let source = self.check_expr(inner);
                 self.validate_type(target, *span);
+                if !is_castable(&source, target) {
+                    self.error(TypeCheckError::TypeMismatch {
+                        expected: target.clone(),
+                        found: source,
+                        span: *span,
+                        context: "`as` cast".to_string(),
+                    });
+                }
                 target.clone()
             }
         }
@@ -997,6 +1014,53 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// `for` 迭代器的元素类型。
+    ///
+    /// 支持数组、`Vec<T>`、`String`（迭代 `char`）以及它们的引用包装；
+    /// 其他类型报告一次错误，后续按 `Unknown` 处理以避免级联误报。
+    fn for_element_type(&mut self, ty: &HirType, span: Span) -> HirType {
+        match ty {
+            HirType::Array(elem) => (**elem).clone(),
+            HirType::Generic(base, args) => match base.name().as_str() {
+                "Vec" => args.first().cloned().unwrap_or(HirType::Unknown),
+                "String" => HirType::Path(vec!["char".to_string()]),
+                _ => {
+                    self.error(TypeCheckError::TypeMismatch {
+                        expected: HirType::Array(Box::new(HirType::Unknown)),
+                        found: ty.clone(),
+                        span,
+                        context: "`for` iterable".to_string(),
+                    });
+                    HirType::Unknown
+                }
+            },
+            HirType::Path(segments) => match segments.join("::").as_str() {
+                "Vec" => HirType::Unknown,
+                "String" => HirType::Path(vec!["char".to_string()]),
+                _ => {
+                    self.error(TypeCheckError::TypeMismatch {
+                        expected: HirType::Array(Box::new(HirType::Unknown)),
+                        found: ty.clone(),
+                        span,
+                        context: "`for` iterable".to_string(),
+                    });
+                    HirType::Unknown
+                }
+            },
+            HirType::Ref(inner, _) => self.for_element_type(inner, span),
+            HirType::Unknown => HirType::Unknown,
+            other => {
+                self.error(TypeCheckError::TypeMismatch {
+                    expected: HirType::Array(Box::new(HirType::Unknown)),
+                    found: other.clone(),
+                    span,
+                    context: "`for` iterable".to_string(),
+                });
+                HirType::Unknown
+            }
+        }
+    }
+
     /// 容器元素类型；非 Vec/String/数组时报错并返回 Unknown。
     fn container_element_type(&mut self, ty: &HirType, span: Span, method: &str) -> HirType {
         match ty {
@@ -1388,6 +1452,15 @@ fn is_numeric(ty: &HirType) -> bool {
     is_integer(ty) || is_float(ty)
 }
 
+/// `as` 只在标量之间转换：数值、char、bool。
+fn is_castable(from: &HirType, to: &HirType) -> bool {
+    if is_unknown(from) || is_unknown(to) {
+        return true;
+    }
+    let scalar = |ty: &HirType| is_numeric(ty) || is_char(ty) || is_bool(ty);
+    scalar(from) && scalar(to)
+}
+
 fn is_primitive_type(name: &str) -> bool {
     matches!(
         name,
@@ -1639,5 +1712,55 @@ mod tests {
     fn test_if_else_numeric_compatible() {
         let errors = check("fn main() { let x = if true { 1 } else { 2 }; }");
         assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn test_for_infers_element_types() {
+        let errors = check(
+            "fn main() { for x in [1, 2, 3] { let y: i32 = x; } for c in \"ab\" { let ch: char = c; } }",
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn test_for_infers_vec_element_type_through_ref() {
+        let errors = check(
+            "fn main() { let v = Vec::new(); for x in &v { let y: i32 = x; } }",
+        );
+        // Vec::new() 的元素类型未知，不应误报；关键是引用包装不会触发 iterable 错误。
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn test_for_rejects_non_iterable() {
+        let errors = check("fn main() { for x in 1 { } }");
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                TypeCheckError::TypeMismatch { context, .. } if context.contains("for")
+            )),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_ret_arity_mismatch() {
+        let errors = check("fn f() -> i32 { ret 2; } fn main() { }");
+        assert!(
+            errors.iter().any(|e| matches!(e, TypeCheckError::ReturnArityMismatch { .. })),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_as_rejects_non_scalar_cast() {
+        let errors = check("fn main() { let x = \"hello\" as i64; }");
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                TypeCheckError::TypeMismatch { context, .. } if context.contains("as")
+            )),
+            "{errors:?}"
+        );
     }
 }

@@ -509,3 +509,248 @@ fn main() {
 "#;
     assert_stardust_matches_vm(source, "shadowed_reference_binding", b"");
 }
+
+#[test]
+fn test_stardust_backend_file_io() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "freebird_file_io_{}_{}.txt",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let path = path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+    let source = format!(
+        r#"
+fn main() {{
+    file_write("{path}", "hello 世界\nline2");
+    let s = file_read("{path}");
+    print(s.len());
+    print_str(s);
+    print_char('\n');
+    print_char(s[2]);
+    print_char('\n');
+}}
+"#
+    );
+    assert_stardust_matches_vm(&source, "file_io", b"");
+    let contents = std::fs::read_to_string(&path).expect("file should exist");
+    assert_eq!(contents, "hello 世界\nline2");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn test_stardust_backend_as_casts() {
+    let source = r#"
+fn main() {
+    print(300 as i8);
+    print(300 as u8);
+    print(-1 as u8);
+    print(65600 as i16);
+    print(65 as i64 as char as i64);
+    print_char(66 as char);
+    print_char('\n');
+    print(true as i64);
+    print(0 as bool as i64);
+    print(5 as bool as i64);
+    print('A' as i64);
+}
+"#;
+    assert_stardust_matches_vm(source, "as_casts", b"");
+}
+
+#[test]
+fn test_stardust_backend_for_loops_and_continue() {
+    let source = r#"
+fn main() {
+    let a = [10, 20, 30];
+    let mut sum = 0;
+    for x in a {
+        sum = sum + x;
+    }
+    print(sum);
+
+    let mut v = Vec::new();
+    v.push(3);
+    v.push(4);
+    v.push(5);
+    let mut product = 1;
+    for x in &v {
+        product = product * x;
+    }
+    print(product);
+
+    for c in "abc" {
+        print_char(c);
+    }
+    print_char('\n');
+
+    let mut total = 0;
+    for i in [1, 2, 3, 4, 5, 6] {
+        if i % 2 == 0 {
+            continue;
+        }
+        if i > 4 {
+            break;
+        }
+        total = total + i;
+    }
+    print(total);
+
+    let mut nested = 0;
+    for i in [1, 2, 3] {
+        for j in [10, 20] {
+            if j == 20 {
+                continue;
+            }
+            nested = nested + i * j;
+        }
+    }
+    print(nested);
+}
+"#;
+    assert_stardust_matches_vm(source, "for_loops", b"");
+}
+
+#[test]
+fn test_stardust_backend_while_continue_and_break() {
+    let source = r#"
+fn main() {
+    let mut i = 0;
+    let mut sum = 0;
+    while i < 8 {
+        i = i + 1;
+        if i % 2 == 0 {
+            let skipped = i;
+            continue;
+        }
+        if i > 5 {
+            break;
+        }
+        sum = sum + i;
+    }
+    print(i);
+    print(sum);
+
+    let mut k = 0;
+    loop {
+        k = k + 1;
+        if k == 3 {
+            break;
+        }
+    }
+    print(k);
+}
+"#;
+    assert_stardust_matches_vm(source, "while_continue_break", b"");
+}
+
+#[test]
+fn test_stardust_backend_ret_instruction() {
+    let source = r#"
+fn diff_prod(a: i64, b: i64) -> (i64, i64) {
+    let d = a - b;
+    let p = a * b;
+    ret 2;
+}
+
+fn main() {
+    let (d, p) = diff_prod(7, 3);
+    print(d);
+    print(p);
+}
+"#;
+    assert_stardust_matches_vm(source, "ret_instruction", b"");
+}
+
+#[test]
+fn test_stardust_backend_break_continue_in_match_arms() {
+    let source = r#"
+fn main() {
+    let mut sum = 0;
+    for x in [1, 2, 3, 4] {
+        match x {
+            2 => continue,
+            4 => { break; },
+            _ => { sum = sum + x; }
+        }
+        sum = sum + 10;
+    }
+    print(sum);
+
+    let mut i = 0;
+    let mut out = 0;
+    loop {
+        i = i + 1;
+        match i {
+            n if n == 2 => { continue; },
+            n if n == 5 => { break; },
+            _ => { out = out + i; }
+        }
+        out = out + 1;
+    }
+    print(i);
+    print(out);
+}
+"#;
+    assert_stardust_matches_vm(source, "match_break_continue", b"");
+}
+
+#[test]
+fn test_stardust_backend_diverging_branches_do_not_pollute_merge() {
+    let source = r#"
+fn classify(x: i64) -> i64 {
+    if x > 10 {
+        return 100;
+    }
+    if x > 5 {
+        return 50;
+    }
+    x
+}
+
+fn main() {
+    print(classify(20));
+    print(classify(7));
+    print(classify(3));
+
+    let mut total = 0;
+    for x in [1, 2, 3, 4, 5, 6] {
+        let mut y = x;
+        if x % 2 == 0 {
+            let z = x * 10;
+            y = y + z;
+            continue;
+        }
+        if x > 3 {
+            let w = x + 1;
+            total = total + w;
+            break;
+        }
+        total = total + y;
+    }
+    print(total);
+
+    let mut i = 0;
+    let mut acc = 0;
+    while i < 10 {
+        i = i + 1;
+        match i {
+            2 => { let a = 1; continue; },
+            4 => { let b = 2; break; },
+            n => {
+                if n % 2 == 0 {
+                    let c = n;
+                    continue;
+                }
+                acc = acc + n;
+            }
+        }
+        acc = acc + 100;
+    }
+    print(i);
+    print(acc);
+}
+"#;
+    assert_stardust_matches_vm(source, "diverging_branch_merge", b"");
+}

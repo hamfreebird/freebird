@@ -16,13 +16,13 @@
 //! `Roll`/`WriteVar`/`Ret` 的临时交换，槽 1 是 bump allocator，槽 2..15
 //! 是生成序列的临时区，堆块从地址 16 开始分配。
 //!
-//! 远程栈与文件 I/O 在 Stardust 解释器中没有对应原语，仍以占位注释保持
-//! 栈效果。
+//! 远程栈在 Stardust 解释器中没有对应原语，仍以占位注释保持栈效果；
+//! 文件 I/O 使用解释器的 `FileRead`/`FileWrite` 指令（`,` 前 2/3 个空格）。
 
 use std::collections::{HashMap, HashSet};
 
 use crate::vm::id::FnId;
-use crate::vm::mir::MirInst;
+use crate::vm::mir::{MirInst, TypeId};
 use crate::vm::value::Value;
 
 /// 堆槽 0：`Roll`/`WriteVar`/`Ret` 的临时交换地址（沿用既有约定）。
@@ -425,6 +425,22 @@ impl StardustGen {
                 self.stack.push(Slot { binding: None, constant, call_element: None });
             }
 
+            MirInst::Cast { target } => {
+                let slot = self.stack.pop().unwrap_or_else(Slot::unknown);
+                self.gen_cast(*target);
+                // 宽整型/char 保持原常量；窄化或 bool 转换可能改变值，
+                // 保守地丢弃常量跟踪，避免后续折叠使用错误的数值。
+                let constant = match target {
+                    TypeId::I64
+                    | TypeId::Isize
+                    | TypeId::U64
+                    | TypeId::Usize
+                    | TypeId::Char => slot.constant,
+                    _ => None,
+                };
+                self.stack.push(Slot { binding: None, constant, call_element: None });
+            }
+
             // ─── 比较 ───
             MirInst::Eq => self.gen_binary_cmp(0, CmpOp::Eq),
             MirInst::Ne => self.gen_binary_cmp(1, CmpOp::Ne),
@@ -705,14 +721,14 @@ impl StardustGen {
                 self.stack.push(Slot::unknown());
             }
             MirInst::FileRead => {
-                self.emit_comment("FileRead unsupported: pop path, push placeholder contents");
-                self.pop_n_emit(1);
-                self.emit_push_int(0);
-                self.stack.push(Slot::unknown());
+                self.gen_file_read();
+                self.stack.pop(); // path
+                self.stack.push(Slot::unknown()); // contents
             }
             MirInst::FileWrite => {
-                self.emit_comment("FileWrite unsupported: pop [path, data]");
-                self.pop_n_emit(2);
+                self.gen_file_write();
+                self.stack.pop(); // data
+                self.stack.pop(); // path
             }
 
             // ─── 调试与元数据 ───
@@ -1040,12 +1056,71 @@ impl StardustGen {
         self.raw_inst(1, '*');
     }
 
+    fn emit_lt(&mut self) {
+        self.raw_inst(2, '=');
+    }
+
     fn emit_gt(&mut self) {
         self.raw_inst(3, '=');
     }
 
     fn emit_ge(&mut self) {
         self.raw_inst(5, '=');
+    }
+
+    /// 生成 `as T` 的运行时截断。Stardust 数值统一为 i64，
+    /// 因此仅窄整型和 bool 需要显式处理；char/宽整型保持位模式不变。
+    fn gen_cast(&mut self, target: TypeId) {
+        match target {
+            TypeId::I8 => self.emit_truncate_signed(8),
+            TypeId::I16 => self.emit_truncate_signed(16),
+            TypeId::I32 => self.emit_truncate_signed(32),
+            TypeId::U8 => self.emit_truncate_unsigned(256),
+            TypeId::U16 => self.emit_truncate_unsigned(65536),
+            TypeId::U32 => self.emit_truncate_unsigned(1_i64 << 32),
+            TypeId::Bool => {
+                self.emit_push_int(0);
+                self.raw_inst(1, '='); // Ne
+            }
+            TypeId::I64
+            | TypeId::Isize
+            | TypeId::U64
+            | TypeId::Usize
+            | TypeId::Char
+            | TypeId::F32
+            | TypeId::F64
+            | TypeId::Unit
+            | TypeId::Ref
+            | TypeId::MutRef
+            | TypeId::ElementId
+            | TypeId::StackHandle
+            | TypeId::FnPtr
+            | TypeId::Unknown => {}
+        }
+    }
+
+    /// `[v] -> [v mod m]`，并把负数规范到 `[0, m)`。
+    fn emit_truncate_unsigned(&mut self, modulus: i64) {
+        self.emit_push_int(modulus);
+        self.raw_inst(4, '*'); // Mod
+        self.emit_push_int(modulus);
+        self.emit_add();
+        self.emit_push_int(modulus);
+        self.raw_inst(4, '*'); // Mod
+    }
+
+    /// `[v] -> [v as iN]`：先按无符号截断，再对超出符号位的部分减 2^N。
+    fn emit_truncate_signed(&mut self, bits: u32) {
+        let modulus = 1_i64 << bits;
+        self.emit_truncate_unsigned(modulus);
+        let done = self.fresh_helper_label();
+        self.emit_dup();
+        self.emit_push_int(modulus / 2);
+        self.emit_lt();
+        self.raw_inst(done, '\'');
+        self.emit_push_int(modulus);
+        self.emit_sub();
+        self.raw_inst(done, '`');
     }
 
     /// 弹出栈顶并写入 `heap[slot]`。
@@ -1485,6 +1560,97 @@ impl StardustGen {
             self.emit_push_int(10);
             self.raw_inst(0, ',');
         }
+    }
+
+    /// `[path_handle]` → 文件内容堆块句柄。
+    fn gen_file_read(&mut self) {
+        self.emit_store_scratch(HEAP_HANDLE);
+        self.gen_push_block_chars(HEAP_HANDLE);
+        self.raw_inst(2, ','); // FileRead: [path chars..., len] -> [contents chars..., len]
+        self.gen_build_array_from_stack();
+    }
+
+    /// `[path_handle, data_handle]` → 写入文件（消费两个句柄）。
+    fn gen_file_write(&mut self) {
+        self.emit_store_scratch(HEAP_VALUE); // data
+        self.emit_store_scratch(HEAP_HANDLE); // path
+        self.gen_push_block_chars(HEAP_HANDLE);
+        self.gen_push_block_chars(HEAP_VALUE);
+        self.raw_inst(3, ','); // FileWrite
+    }
+
+    /// 把 `heap[handle_slot]` 指向的字符串块按顺序压栈，最后压入字符数。
+    ///
+    /// 运行时栈效果：`[] -> [chars..., len]`。只使用 `HEAP_SIZE` / `HEAP_COUNTER`
+    /// 两个临时槽，`handle_slot` 本身不会被覆盖。
+    fn gen_push_block_chars(&mut self, handle_slot: usize) {
+        // len → HEAP_SIZE
+        self.emit_load_scratch(handle_slot);
+        self.raw_inst(1, '-'); // Load len
+        self.emit_store_scratch(HEAP_SIZE);
+
+        let loop_label = self.fresh_helper_label();
+        let end_label = self.fresh_helper_label();
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.raw_inst(loop_label, '`');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_ge();
+        self.raw_inst(end_label, '\'');
+        // 压入 heap[handle + BLOCK_HEADER + i]
+        self.emit_load_scratch(handle_slot);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.raw_inst(1, '-'); // Load
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.raw_inst(loop_label, '~');
+        self.raw_inst(end_label, '`');
+        self.emit_load_scratch(HEAP_SIZE);
+    }
+
+    /// `[chars..., len]` → `[handle]`，按运行时长度构造字符串堆块。
+    fn gen_build_array_from_stack(&mut self) {
+        // 长度先存 HEAP_INDEX；emit_alloc_from_stack 会覆盖 HEAP_SIZE。
+        self.emit_store_scratch(HEAP_INDEX); // len
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_alloc_from_stack();
+        self.emit_store_scratch(HEAP_HANDLE);
+        self.emit_write_header_slot(HEAP_HANDLE, 0, HEAP_INDEX);
+        self.emit_write_header_slot(HEAP_HANDLE, 1, HEAP_INDEX);
+
+        // 栈顶是最后一个字符：从尾部向前填块，逐次弹出。
+        let loop_label = self.fresh_helper_label();
+        let end_label = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.raw_inst(loop_label, '`');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(0);
+        self.emit_lt();
+        self.raw_inst(end_label, '\'');
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.raw_inst(0, '-'); // Store: 弹出地址，再弹出栈顶字符
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.raw_inst(loop_label, '~');
+        self.raw_inst(end_label, '`');
+        self.emit_load_scratch(HEAP_HANDLE);
     }
 
     /// `ReadLine`：用 CharIn 逐字节读取一行，并按 UTF-8 解码成字符序列。

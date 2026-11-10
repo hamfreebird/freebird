@@ -46,7 +46,7 @@ freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 
 - VM 已支持数值/字符/布尔、变量与作用域、控制流、函数调用/递归、数组、结构体、枚举匹配、`Vec`、`Box`、字符串、元组解构以及 `read_*`/`print_*`/文件 I/O。
 - 运行前会执行名称解析、基础类型检查和借用/移动检查；`check` 目前不报告借用错误。
-- Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆上。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。仍有限制：`file_read`/`file_write` 与远程栈只是占位；`read_line` 按 UTF-8 解码（堆块按需扩容，非法首字节替换为 U+FFFD，CRLF 行尾与 VM 一样去掉 `\r`，不检测 EOF）。
+- Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆上。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 字符序列在栈上传递。仍有限制：远程栈只是占位；`read_line` 按 UTF-8 解码（堆块按需扩容，非法首字节替换为 U+FFFD，CRLF 行尾与 VM 一样去掉 `\r`，不检测 EOF）。
 - LLVM 后端尚未实现。
 
 ### 交互式 REPL
@@ -141,7 +141,38 @@ fn sum_to(n: i32) -> i32 {
     }
     return total;
 }
+
+fn sum_even(items: [i32; 6]) -> i32 {
+    let mut total = 0;
+    for x in items {
+        if x % 2 != 0 {
+            continue;
+        }
+        total = total + x;
+    }
+    return total;
+}
 ```
+
+`for` 可迭代数组、`Vec<T>` 和 `String`（元素为 `char`），也接受 `&Vec<T>`/`&String`。
+
+### 类型转换与低级返回
+
+```freebird
+fn split(a: i64, b: i64) -> (i64, i64) {
+    let d = a - b;
+    let p = a * b;
+    ret 2;                       // 保留栈顶两个值作为返回值
+}
+
+fn main() {
+    let (d, _p) = split(7, 3);
+    print(300 as u8);            // 44
+    print_char(65 as char);      // A
+}
+```
+
+`as` 只允许数值、`char` 和 `bool` 之间的标量转换；`ret n` 的 `n` 必须是整数字面量，且需与函数声明的返回值个数一致。
 
 ### 递归
 

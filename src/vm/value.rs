@@ -96,6 +96,11 @@ impl Value {
             Value::I8(v) | Value::I16(v) | Value::I32(v) | Value::I64(v) | Value::Isize(v) => {
                 Some(*v as f64)
             }
+            Value::U8(v) | Value::U16(v) | Value::U32(v) | Value::U64(v) | Value::Usize(v) => {
+                Some(*v as f64)
+            }
+            Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+            Value::Char(c) => Some(*c as f64),
             _ => None,
         }
     }

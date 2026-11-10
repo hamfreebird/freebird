@@ -148,6 +148,21 @@ impl StackTracker {
     }
 }
 
+/// 循环上下文：记录 break/continue 目标及需要恢复的栈/作用域深度。
+#[derive(Debug, Clone)]
+struct LoopContext {
+    break_target: usize,
+    continue_target: usize,
+    /// break/continue 时应恢复到的栈状态（不含循环体局部变量）。
+    body_base: StackTracker,
+    /// 跳出循环体内层作用域后应保持的作用域深度。
+    scope_depth: usize,
+    /// 循环体内是否出现过 `break`（决定 loop 表达式之后是否可达）。
+    saw_break: bool,
+    /// 循环体内是否出现过 `continue`（决定 for 的递增标签是否可达）。
+    saw_continue: bool,
+}
+
 /// MIR 生成器 — 将 HIR 翻译为 MIR 指令序列
 pub struct MirGen {
     mir: Vec<MirInst>,
@@ -157,8 +172,14 @@ pub struct MirGen {
     name_to_id: HashMap<String, FnId>,
     /// 类型注册表（用于复合类型布局）
     type_table: TypeTable,
-    /// 活跃的 loop end label 栈（用于 break 跳转）
-    loop_ends: Vec<usize>,
+    /// 活跃的循环上下文栈（用于 break/continue 跳转和栈回退）
+    loop_contexts: Vec<LoopContext>,
+    /// 当前作用域深度（与运行时 EnterScope/ExitScope 保持一致）
+    scope_depth: usize,
+    /// 隐藏循环变量名计数器。
+    next_hidden: usize,
+    /// 当前路径是否可达（用于避免在 break/continue/return 之后生成汇合跳转）。
+    reachable: bool,
     /// 当前函数中活跃的变量名（用于去重）
     #[allow(dead_code)]
     active_vars: Vec<HashMap<String, usize>>,
@@ -172,7 +193,10 @@ impl MirGen {
             labels: LabelManager::new(),
             name_to_id: HashMap::new(),
             type_table: TypeTable::new(),
-            loop_ends: Vec::new(),
+            loop_contexts: Vec::new(),
+            scope_depth: 0,
+            next_hidden: 0,
+            reachable: true,
             active_vars: Vec::new(),
         }
     }
@@ -243,9 +267,13 @@ impl MirGen {
         self.mir = Vec::new();
         self.stack = StackTracker::new();
         self.labels = LabelManager::new();
+        self.loop_contexts.clear();
+        self.scope_depth = 0;
+        self.next_hidden = 0;
+        self.reachable = true;
 
         // 进入函数作用域
-        self.mir.push(MirInst::EnterScope);
+        self.enter_scope();
 
         // 参数由 VM 在帧创建时压入（CallElement + params）。
         // 栈布局: [CE=slot0, p1, p2, ..., pn] (底部→顶部)
@@ -280,10 +308,83 @@ impl MirGen {
         (std::mem::take(&mut self.mir), f.sig.clone())
     }
 
+    // ─── 作用域与循环辅助 ───
+
+    fn enter_scope(&mut self) {
+        self.scope_depth += 1;
+        self.mir.push(MirInst::EnterScope);
+    }
+
+    fn exit_scope(&mut self) {
+        self.mir.push(MirInst::ExitScope);
+        self.scope_depth = self.scope_depth.saturating_sub(1);
+    }
+
+    fn fresh_hidden_name(&mut self, kind: &str) -> String {
+        let id = self.next_hidden;
+        self.next_hidden += 1;
+        format!("$for_{kind}_{id}")
+    }
+
+    fn push_loop(
+        &mut self,
+        break_target: usize,
+        continue_target: usize,
+        body_base: StackTracker,
+    ) {
+        self.loop_contexts.push(LoopContext {
+            break_target,
+            continue_target,
+            body_base,
+            scope_depth: self.scope_depth,
+            saw_break: false,
+            saw_continue: false,
+        });
+    }
+
+    fn pop_loop(&mut self) -> Option<LoopContext> {
+        self.loop_contexts.pop()
+    }
+
+    /// 从当前位置回退到最内层循环的入口状态。
+    ///
+    /// 同时为每个被跳出的运行时作用域生成 `ExitScope`，避免变量绑定泄漏。
+    fn unwind_loop(&mut self) -> Option<LoopContext> {
+        let ctx = self.loop_contexts.last()?.clone();
+        let target = ctx.body_base.len();
+
+        while self.stack.len() > target {
+            self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+            self.stack.pop();
+        }
+        self.stack = ctx.body_base.clone();
+
+        while self.scope_depth > ctx.scope_depth {
+            self.mir.push(MirInst::ExitScope);
+            self.scope_depth -= 1;
+        }
+
+        Some(ctx)
+    }
+
+    /// 移除一个命名变量的栈槽（变量可能不在栈顶）。
+    fn remove_var_slot(&mut self, name: &str) {
+        if let Some(depth) = self.stack.find_var(name) {
+            if depth > 0 {
+                self.mir.push(MirInst::Roll { n: depth as i32 });
+                self.stack.roll(depth as i32);
+            }
+            self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+            self.stack.pop();
+        }
+    }
+
     // ─── 块 ───
 
     fn gen_block(&mut self, block: &HirBlock, fn_sig: &FnSignature) {
-        self.mir.push(MirInst::EnterScope);
+        let entry_depth = self.scope_depth;
+        self.enter_scope();
+        let inside_depth = entry_depth + 1;
         let scope_start = self.mir.len();
 
         for stmt in &block.stmts {
@@ -294,31 +395,38 @@ impl MirGen {
             self.gen_expr(tail, fn_sig);
         }
 
-        // 收集本作用域中声明的变量，生成 Drop 指令。
-        // DropVar 仅在变量实际持有 StackHandle 时释放远程栈，对其他值无副作用。
-        let drop_vars: Vec<String> = self.collect_drop_vars(block);
-        for name in drop_vars.iter().rev() {
-            self.mir.push(MirInst::Comment(format!("drop {name}")));
-            self.mir.push(MirInst::DropVar { name: name.clone() });
-        }
+        // 本块以 break/continue/return 结束时，尾部的清理代码不可达；
+        // 此时作用域已由 unwind_loop 提前退出，不再生成清理指令。
+        if self.reachable {
+            // 收集本作用域中声明的变量，生成 Drop 指令。
+            // DropVar 仅在变量实际持有 StackHandle 时释放远程栈，对其他值无副作用。
+            let drop_vars: Vec<String> = self.collect_drop_vars(block);
+            for name in drop_vars.iter().rev() {
+                self.mir.push(MirInst::Comment(format!("drop {name}")));
+                self.mir.push(MirInst::DropVar { name: name.clone() });
+            }
 
-        // 把本作用域的变量槽从值栈上移除。
-        // 变量在运行时不会被读取变量表自动弹出；若保留到作用域外，
-        // 分支内部声明的变量会让不同控制流路径的栈深度不一致
-        // （后端按固定深度读变量时会出错），循环体每次迭代也会泄漏槽位。
-        // 先 DropVar 释放资源，再按深度从深到浅移除槽位，保留栈顶的尾部表达式结果。
-        for name in drop_vars.iter().rev() {
-            if let Some(depth) = self.stack.find_var(name) {
-                if depth > 0 {
-                    self.mir.push(MirInst::Roll { n: depth as i32 });
-                    self.stack.roll(depth as i32);
+            // 把本作用域的变量槽从值栈上移除。
+            // 变量在运行时不会被读取变量表自动弹出；若保留到作用域外，
+            // 分支内部声明的变量会让不同控制流路径的栈深度不一致
+            // （后端按固定深度读变量时会出错），循环体每次迭代也会泄漏槽位。
+            // 先 DropVar 释放资源，再按深度从深到浅移除槽位，保留栈顶的尾部表达式结果。
+            for name in drop_vars.iter().rev() {
+                if let Some(depth) = self.stack.find_var(name) {
+                    if depth > 0 {
+                        self.mir.push(MirInst::Roll { n: depth as i32 });
+                        self.stack.roll(depth as i32);
+                    }
+                    self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                    self.stack.pop();
                 }
-                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
-                self.stack.pop();
+            }
+
+            if self.scope_depth >= inside_depth {
+                self.exit_scope();
             }
         }
-
-        self.mir.push(MirInst::ExitScope);
+        self.scope_depth = entry_depth;
         let _ = scope_start;
     }
 
@@ -336,12 +444,17 @@ impl MirGen {
     // ─── 语句 ───
 
     fn gen_stmt(&mut self, stmt: &HirStmt, fn_sig: &FnSignature) {
+        if !self.reachable {
+            return;
+        }
         match stmt {
             HirStmt::Let { pattern, init, .. } => {
                 // 求值 RHS（如果有）
                 if let Some(init_expr) = init {
                     self.gen_expr(init_expr, fn_sig);
-                    self.bind_pattern(pattern);
+                    if self.reachable {
+                        self.bind_pattern(pattern);
+                    }
                 }
             }
             HirStmt::Expr(expr, _) => {
@@ -349,9 +462,11 @@ impl MirGen {
                 self.gen_expr(expr, fn_sig);
                 // 只丢弃本表达式新增的结果。内建函数（如 print）返回 Unit，
                 // 不会向栈上压值，不能误 Pop 已有变量。
-                while self.stack.len() > before {
-                    self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
-                    self.stack.pop();
+                if self.reachable {
+                    while self.stack.len() > before {
+                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.stack.pop();
+                    }
                 }
             }
             HirStmt::Assign { target, value, .. } => {
@@ -359,6 +474,9 @@ impl MirGen {
                     HirAssignTarget::Var(var) => {
                         // 求值 RHS
                         self.gen_expr(value, fn_sig);
+                        if !self.reachable {
+                            return;
+                        }
                         // RHS 结果在栈顶 → WriteVar 消费 RHS 并写回变量槽
                         self.mir.push(MirInst::WriteVar { name: var.name.clone() });
                         self.stack.pop();
@@ -370,6 +488,9 @@ impl MirGen {
                         // 先求值引用目标，再求值 RHS
                         self.gen_expr(inner, fn_sig);
                         self.gen_expr(value, fn_sig);
+                        if !self.reachable {
+                            return;
+                        }
                         self.mir.push(MirInst::StoreDeref);
                         self.stack.pop(); // value
                         self.stack.pop(); // reference
@@ -383,6 +504,9 @@ impl MirGen {
                         };
                         let index = self.resolve_field_offset(object, field);
                         self.gen_expr(value, fn_sig);
+                        if !self.reachable {
+                            return;
+                        }
                         self.mir.push(MirInst::FieldStore {
                             name: var.name.clone(),
                             index,
@@ -398,6 +522,9 @@ impl MirGen {
                         };
                         self.gen_expr(index, fn_sig);
                         self.gen_expr(value, fn_sig);
+                        if !self.reachable {
+                            return;
+                        }
                         self.mir.push(MirInst::IndexStore { name: var.name.clone() });
                         self.stack.pop(); // value
                         self.stack.pop(); // index
@@ -444,6 +571,9 @@ impl MirGen {
     }
 
     fn gen_expr(&mut self, expr: &HirExpr, fn_sig: &FnSignature) {
+        if !self.reachable {
+            return;
+        }
         match expr {
             HirExpr::Lit(lit, _) => {
                 let value = literal_to_value(lit);
@@ -623,6 +753,9 @@ impl MirGen {
 
                 // 条件 — VM的Jump在条件为真时跳转，故先取反
                 self.gen_expr(cond, fn_sig);
+                if !self.reachable {
+                    return;
+                }
                 self.mir.push(MirInst::Not);  // cond==false → true
                 self.mir.push(MirInst::Jump(else_label));
                 self.stack.pop(); // pop cond
@@ -635,28 +768,50 @@ impl MirGen {
                 let then_label = self.labels.fresh();
                 self.mir.push(MirInst::Mark(then_label));
                 self.stack = branch_base.clone();
+                self.reachable = true;
                 self.gen_block(then_block, fn_sig);
+                let then_reachable = self.reachable;
                 let then_results = self.stack.len().saturating_sub(branch_base.len());
-                self.mir.push(MirInst::UncondJump(end_label));
+                let then_state = self.stack.clone();
+                if then_reachable {
+                    self.mir.push(MirInst::UncondJump(end_label));
+                }
 
-                // else 分支
+                // else 分支（由条件跳转进入，即使 then 发散了也仍然可达）
                 self.mir.push(MirInst::Mark(else_label));
                 self.stack = branch_base.clone();
+                self.reachable = true;
                 if let Some(else_blk) = else_block {
                     self.gen_block(else_blk, fn_sig);
                 }
+                let else_reachable = self.reachable;
                 let else_results = self.stack.len().saturating_sub(branch_base.len());
+                let else_state = self.stack.clone();
 
                 self.mir.push(MirInst::Mark(end_label));
-                // 汇合点：两条路径应留下同样多的结果；取较大值保持追踪器可用。
-                if then_results != else_results {
-                    self.mir.push(MirInst::Comment(format!(
-                        "WARNING: if branches leave different stack heights ({then_results} vs {else_results})"
-                    )));
-                }
-                self.stack = branch_base;
-                for _ in 0..then_results.max(else_results) {
-                    self.stack.push_temp();
+                if then_reachable || else_reachable {
+                    self.reachable = true;
+                    self.stack = if then_reachable {
+                        then_state
+                    } else {
+                        else_state
+                    };
+                    self.stack.truncate(branch_base.len());
+                    // 汇合点：保留可达分支留下的结果槽。
+                    let results = if then_reachable && else_reachable {
+                        then_results.max(else_results)
+                    } else if then_reachable {
+                        then_results
+                    } else {
+                        else_results
+                    };
+                    for _ in 0..results {
+                        self.stack.push_temp();
+                    }
+                } else {
+                    // 两支都不落到汇合点，汇合点之后不可达。
+                    self.reachable = false;
+                    self.stack = branch_base;
                 }
             }
             HirExpr::While(cond, body, _) => {
@@ -665,24 +820,33 @@ impl MirGen {
 
                 self.mir.push(MirInst::Mark(loop_start));
                 self.gen_expr(cond, fn_sig);
+                if !self.reachable {
+                    return;
+                }
                 self.mir.push(MirInst::Not);
                 self.mir.push(MirInst::Jump(loop_end));
                 self.stack.pop();
 
                 let body_base = self.stack.clone();
-                self.loop_ends.push(loop_end);
+                self.push_loop(loop_end, loop_start, body_base.clone());
                 self.gen_block(body, fn_sig);
-                self.loop_ends.pop();
-                // while 表达式的值是 unit：丢弃循环体尾部表达式的结果，
-                // 并把追踪器恢复到循环入口状态（循环体局部变量已在 ExitScope 弹出）。
-                let body_results = self.stack.len().saturating_sub(body_base.len());
-                for _ in 0..body_results {
-                    self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
-                }
-                self.stack = body_base;
+                self.pop_loop();
 
-                self.mir.push(MirInst::UncondJump(loop_start));
+                if self.reachable {
+                    // while 表达式的值是 unit：丢弃循环体尾部表达式的结果，
+                    // 并把追踪器恢复到循环入口状态（循环体局部变量已在 ExitScope 弹出）。
+                    let body_results = self.stack.len().saturating_sub(body_base.len());
+                    for _ in 0..body_results {
+                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                    }
+                    self.stack = body_base.clone();
+                    self.mir.push(MirInst::UncondJump(loop_start));
+                }
+
+                // 条件为假时跳出循环；该路径总存在。
                 self.mir.push(MirInst::Mark(loop_end));
+                self.reachable = true;
+                self.stack = body_base;
             }
             HirExpr::Loop(body, _) => {
                 let loop_start = self.labels.fresh();
@@ -690,12 +854,133 @@ impl MirGen {
 
                 self.mir.push(MirInst::Mark(loop_start));
 
-                self.loop_ends.push(loop_end);
+                let body_base = self.stack.clone();
+                self.push_loop(loop_end, loop_start, body_base.clone());
                 self.gen_block(body, fn_sig);
-                self.loop_ends.pop();
+                let ctx = self.pop_loop();
 
-                self.mir.push(MirInst::UncondJump(loop_start));
+                if self.reachable {
+                    // loop 表达式当前按 unit 处理；丢弃循环体尾部结果，
+                    // 避免每次迭代在栈上累积值。
+                    let body_results = self.stack.len().saturating_sub(body_base.len());
+                    for _ in 0..body_results {
+                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                    }
+                    self.stack = body_base.clone();
+                    self.mir.push(MirInst::UncondJump(loop_start));
+                }
+
                 self.mir.push(MirInst::Mark(loop_end));
+                // 只有 break 能离开 loop；没有 break 时循环之后不可达。
+                self.reachable = ctx.is_some_and(|c| c.saw_break);
+                self.stack = body_base;
+            }
+            HirExpr::For { pattern, iterable, body, .. } => {
+                let loop_start = self.labels.fresh();
+                let loop_end = self.labels.fresh();
+                let continue_label = self.labels.fresh();
+
+                let outer_stack = self.stack.clone();
+                let iter_name = self.fresh_hidden_name("iter");
+                let len_name = self.fresh_hidden_name("len");
+                let idx_name = self.fresh_hidden_name("idx");
+
+                // `for x in &v` 只读取 v；VM/Stardust 的读取本身不移动值。
+                let iterable = match iterable.as_ref() {
+                    HirExpr::Ref(inner, _, _) => inner.as_ref(),
+                    other => other,
+                };
+
+                // 隐藏变量：iterable、长度、下标。
+                self.gen_expr(iterable, fn_sig);
+                self.mir.push(MirInst::BindVar { name: iter_name.clone() });
+                self.stack.bind_top(iter_name.clone());
+
+                self.mir.push(MirInst::ReadVar { name: iter_name.clone() });
+                self.stack.push_temp();
+                self.mir.push(MirInst::ContainerLen);
+                self.stack.pop();
+                self.stack.push_temp();
+                self.mir.push(MirInst::BindVar { name: len_name.clone() });
+                self.stack.bind_top(len_name.clone());
+
+                self.mir.push(MirInst::Push { value: Value::I64(0), ty: TypeId::I64 });
+                self.stack.push_temp();
+                self.mir.push(MirInst::BindVar { name: idx_name.clone() });
+                self.stack.bind_top(idx_name.clone());
+
+                let body_base = self.stack.clone();
+
+                self.mir.push(MirInst::Mark(loop_start));
+                self.mir.push(MirInst::ReadVar { name: idx_name.clone() });
+                self.stack.push_temp();
+                self.mir.push(MirInst::ReadVar { name: len_name.clone() });
+                self.stack.push_temp();
+                self.mir.push(MirInst::Lt);
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
+                self.mir.push(MirInst::Not);
+                self.mir.push(MirInst::Jump(loop_end));
+                self.stack.pop();
+
+                self.push_loop(loop_end, continue_label, body_base.clone());
+
+                self.enter_scope();
+                self.mir.push(MirInst::ReadVar { name: iter_name.clone() });
+                self.stack.push_temp();
+                self.mir.push(MirInst::ReadVar { name: idx_name.clone() });
+                self.stack.push_temp();
+                self.mir.push(MirInst::IndexAccess);
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
+                self.bind_pattern(pattern);
+
+                // 循环体本身再开一层作用域；尾表达式对 for 无意义，丢弃。
+                self.gen_block(body, fn_sig);
+                let ctx = self.pop_loop();
+                let fell_through = self.reachable;
+                if fell_through {
+                    while self.stack.len() > body_base.len() {
+                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.stack.pop();
+                    }
+                    self.stack = body_base.clone();
+                    self.exit_scope();
+                }
+
+                // continue 跳到递增标签；正常落穿与 continue 都能到达这里。
+                self.mir.push(MirInst::Mark(continue_label));
+                self.reachable =
+                    fell_through || ctx.is_some_and(|c| c.saw_continue);
+                self.stack = body_base.clone();
+                if self.reachable {
+                    // idx = idx + 1
+                    self.mir.push(MirInst::ReadVar { name: idx_name.clone() });
+                    self.stack.push_temp();
+                    self.mir.push(MirInst::Push { value: Value::I64(1), ty: TypeId::I64 });
+                    self.stack.push_temp();
+                    self.mir.push(MirInst::Add { ty: TypeId::I64 });
+                    self.stack.pop();
+                    self.stack.pop();
+                    self.stack.push_temp();
+                    self.mir.push(MirInst::WriteVar { name: idx_name.clone() });
+                    self.stack.pop();
+                    self.mir.push(MirInst::UncondJump(loop_start));
+                }
+
+                // 下标越界时退出循环；该路径总存在。
+                self.mir.push(MirInst::Mark(loop_end));
+                self.reachable = true;
+                self.stack = body_base.clone();
+
+                // 清理隐藏变量（从上到下），恢复循环前追踪状态。
+                self.mir.push(MirInst::DropVar { name: iter_name.clone() });
+                self.remove_var_slot(&idx_name);
+                self.remove_var_slot(&len_name);
+                self.remove_var_slot(&iter_name);
+                self.stack = outer_stack;
             }
             HirExpr::Block(block, _) => {
                 self.gen_block(block, fn_sig);
@@ -705,21 +990,63 @@ impl MirGen {
                 for val in values {
                     self.gen_expr(val, fn_sig);
                 }
+                if !self.reachable {
+                    return;
+                }
                 let argc = values.len() as u32;
                 self.mir.push(MirInst::Ret { argc });
                 // 清理栈追踪（ret 会截断栈）
                 let keep = self.stack.len().saturating_sub(argc as usize);
                 self.stack.truncate(keep);
+                self.reachable = false;
+            }
+            HirExpr::Ret(n, _) => {
+                let argc = (*n).max(0) as u32;
+                self.mir.push(MirInst::Ret { argc });
+                let keep = self.stack.len().saturating_sub(argc as usize);
+                self.stack.truncate(keep);
+                self.reachable = false;
+            }
+            HirExpr::As(inner, target, _) => {
+                self.gen_expr(inner, fn_sig);
+                if !self.reachable {
+                    return;
+                }
+                self.mir.push(MirInst::Cast {
+                    target: hir_type_to_type_id(target),
+                });
+                // Cast 弹出并压入一个值，槽数不变。
+                self.stack.pop();
+                self.stack.push_temp();
             }
             HirExpr::Break(value, _) => {
                 if let Some(val) = value {
+                    // 当前 break 值按 unit 循环语义丢弃；循环表达式本身的类型
+                    // 仍是 unit。先求值以保留副作用，再随循环体栈槽一起回退。
                     self.gen_expr(val, fn_sig);
+                    if !self.reachable {
+                        return;
+                    }
                 }
-                // 跳转到最内层循环的 end label
-                if let Some(&loop_end) = self.loop_ends.last() {
-                    self.mir.push(MirInst::UncondJump(loop_end));
+                if let Some(last) = self.loop_contexts.last_mut() {
+                    last.saw_break = true;
+                }
+                if let Some(ctx) = self.unwind_loop() {
+                    self.mir.push(MirInst::UncondJump(ctx.break_target));
+                    self.reachable = false;
                 } else {
                     self.mir.push(MirInst::Comment("break outside loop".to_string()));
+                }
+            }
+            HirExpr::Continue(_) => {
+                if let Some(last) = self.loop_contexts.last_mut() {
+                    last.saw_continue = true;
+                }
+                if let Some(ctx) = self.unwind_loop() {
+                    self.mir.push(MirInst::UncondJump(ctx.continue_target));
+                    self.reachable = false;
+                } else {
+                    self.mir.push(MirInst::Comment("continue outside loop".to_string()));
                 }
             }
             HirExpr::Ref(inner, mutable, _) => {
@@ -831,6 +1158,9 @@ impl MirGen {
             }
             HirExpr::Match(scrutinee, arms, _) => {
                 self.gen_expr(scrutinee, fn_sig);
+                if !self.reachable {
+                    return;
+                }
 
                 enum MatchCheck {
                     Enum(u32),
@@ -915,21 +1245,40 @@ impl MirGen {
                             self.stack.pop();
                         }
                         MatchCheck::Any => {
-                            self.mir.push(MirInst::UncondJump(body_labels[i]));
+                            // 带 guard 的通配/变量模式失败时会跳到下一个检查标签。
+                            // 用恒真条件跳转而非无条件跳转，保持 fall-through 在
+                            // Stardust 单遍代码生成中可达（条件跳转不终止当前路径）。
+                            self.mir.push(MirInst::Push {
+                                value: Value::Bool(true),
+                                ty: TypeId::Bool,
+                            });
+                            self.stack.push_temp();
+                            self.mir.push(MirInst::Jump(body_labels[i]));
+                            self.stack.pop();
                         }
                     }
                 }
+
+                // 分支体从“scrutinee 仍在栈上”的同一状态出发。
+                let body_base = self.stack.clone();
 
                 // 所有模式均未匹配：丢弃 scrutinee。
                 self.mir.push(MirInst::Mark(fail_label));
                 self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
                 self.stack.pop();
+                let fail_state = self.stack.clone();
                 self.mir.push(MirInst::UncondJump(end_label));
+
+                // 分支体发散（break/continue/return）不会污染后续分支。
+                let match_outer_depth = self.scope_depth;
+                let mut merge_state: Option<StackTracker> = None;
 
                 // 分支体。
                 for (i, (arm, _, binding)) in plans.iter().enumerate() {
                     self.mir.push(MirInst::Mark(body_labels[i]));
-                    self.mir.push(MirInst::EnterScope);
+                    self.stack = body_base.clone();
+                    self.reachable = true;
+                    self.enter_scope();
 
                     let mut unwanted = 1; // scrutinee 本身
                     let mut guard_unwanted = 0;
@@ -959,17 +1308,23 @@ impl MirGen {
                         .get(i + 1)
                         .copied()
                         .unwrap_or(fail_label);
-                    self.gen_match_guard_and_body(
+                    if let Some(state) = self.gen_match_guard_and_body(
                         arm,
                         fn_sig,
                         unwanted,
                         guard_unwanted,
                         end_label,
                         next_label,
-                    );
+                    ) {
+                        merge_state = Some(state);
+                    }
+                    self.scope_depth = match_outer_depth;
                 }
 
                 self.mir.push(MirInst::Mark(end_label));
+                // 未匹配路径总会跳到汇合点；优先采用正常分支留下的状态。
+                self.reachable = true;
+                self.stack = merge_state.unwrap_or(fail_state);
             }
             HirExpr::StardustMacro(insts, _) => {
                 // 翻译 stardust! 宏指令为 MIR
@@ -1002,11 +1357,17 @@ impl MirGen {
         guard_unwanted: usize,
         end_label: usize,
         next_label: usize,
-    ) {
+    ) -> Option<StackTracker> {
+        let arm_outer_depth = self.scope_depth.saturating_sub(1);
+        // guard 失败路径从“绑定已完成、guard 尚未求值”的状态继续。
+        let body_start = self.stack.clone();
         let mut guard_skip = None;
         if let Some(guard) = &arm.guard {
             let skip_label = self.labels.fresh();
             self.gen_expr(guard, fn_sig);
+            if !self.reachable {
+                return None;
+            }
             self.mir.push(MirInst::Not);
             self.mir.push(MirInst::Jump(skip_label));
             self.stack.pop();
@@ -1017,17 +1378,31 @@ impl MirGen {
         self.gen_expr(&arm.body, fn_sig);
         let results = self.stack.len().saturating_sub(before_body);
 
-        self.mir.push(MirInst::ExitScope);
-        self.discard_below_results(unwanted, results);
-        self.mir.push(MirInst::UncondJump(end_label));
+        let mut merge = None;
+        if self.reachable {
+            // 分支体可能以 break/continue 提前跳出，此时作用域已经回退。
+            if self.scope_depth > arm_outer_depth {
+                self.exit_scope();
+            }
+            self.discard_below_results(unwanted, results);
+            self.mir.push(MirInst::UncondJump(end_label));
+            merge = Some(self.stack.clone());
+        }
 
         if let Some(skip_label) = guard_skip {
             self.mir.push(MirInst::Mark(skip_label));
-            self.mir.push(MirInst::ExitScope);
+            // guard 失败路径仍在本分支的运行时作用域内；该路径与分支体
+            // 是否发散无关，必须从绑定后的状态重新生成清理。
+            self.reachable = true;
+            self.stack = body_start;
+            self.scope_depth = arm_outer_depth + 1;
+            self.exit_scope();
             // guard 失败时只移除分支绑定的临时值，保留 scrutinee 供后续模式检查。
             self.discard_below_results(guard_unwanted, 0);
             self.mir.push(MirInst::UncondJump(next_label));
         }
+        self.scope_depth = arm_outer_depth;
+        merge
     }
 
     /// 在保留栈顶 `results` 个结果的前提下，移除其下方的 `unwanted` 个槽。
@@ -1355,6 +1730,31 @@ fn literal_to_value(lit: &Literal) -> Value {
             s.chars().map(|c| Value::Char(c as u32)).collect()
         ),
         Literal::Unit => Value::Unit,
+    }
+}
+
+/// 将 HIR 类型映射为 MIR 类型标识（仅标量转换会用到）。
+fn hir_type_to_type_id(ty: &HirType) -> TypeId {
+    match ty {
+        HirType::Path(segments) if segments.len() == 1 => match segments[0].as_str() {
+            "i8" => TypeId::I8,
+            "i16" => TypeId::I16,
+            "i32" => TypeId::I32,
+            "i64" => TypeId::I64,
+            "isize" => TypeId::Isize,
+            "u8" => TypeId::U8,
+            "u16" => TypeId::U16,
+            "u32" => TypeId::U32,
+            "u64" => TypeId::U64,
+            "usize" => TypeId::Usize,
+            "f32" => TypeId::F32,
+            "f64" => TypeId::F64,
+            "bool" => TypeId::Bool,
+            "char" => TypeId::Char,
+            "()" => TypeId::Unit,
+            _ => TypeId::Unknown,
+        },
+        _ => TypeId::Unknown,
     }
 }
 

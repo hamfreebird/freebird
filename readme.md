@@ -6,7 +6,7 @@
 >
 > 本规范是 Freebird 语言实现的权威参考文档。
 >
-> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如 LLVM 后端、Stardust 后端的文件 I/O 与远程栈）。当前可用能力与已知限制以 `USAGE.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
+> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如 LLVM 后端与 Stardust 后端的远程栈）。当前可用能力与已知限制以 `USAGE.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
 
 ---
 
@@ -796,7 +796,7 @@ else { ... }
 
 while cond { ... }
 loop { ... break value; }
-for pattern in iterable { ... }
+for pattern in iterable { ... }  // 数组、Vec、String；支持 continue/break
 
 match expr {
     pattern => expr,
@@ -806,6 +806,7 @@ match expr {
 
 return expr1, expr2, ...;      // 多值返回（safe 语法）
 ret n;                          // 低级返回（safe 当 n 匹配签名）
+expr as Type;                   // 标量类型转换（数值、char、bool）
 ```
 
 ### 11.3 表达式
@@ -843,6 +844,7 @@ EnumName::Variant(value)
 // 控制流表达式
 if cond { a } else { b }
 loop { break value; }
+expr as Type
 ```
 
 ### 11.4 Unsafe 与 Stardust

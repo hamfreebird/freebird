@@ -513,7 +513,15 @@ impl Lowering {
             }
             ast::Expr::For { pattern, iterable, body, span } => {
                 let hir_iterable = self.lower_expr(iterable)?;
+                // 模式变量在循环体整体作用域内可见。
+                let bound_names = self.pattern_var_names(pattern);
+                self.resolver.enter_scope();
+                for name in &bound_names {
+                    let _ = self.resolver.declare_var(name, false, *span);
+                    self.resolver.mark_initialized(name);
+                }
                 let hir_body = self.lower_block(body);
+                self.resolver.exit_scope();
                 Some(HirExpr::For {
                     pattern: pattern.clone(),
                     iterable: Box::new(hir_iterable),

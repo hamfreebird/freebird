@@ -7,11 +7,13 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     errors: Vec<FrontendError>,
+    /// 大于 0 时禁止把 `{` 解析为结构体字面量（用于 if/while/for 的头部表达式）。
+    no_struct_literal: usize,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, errors: Vec::new() }
+        Self { tokens, pos: 0, errors: Vec::new(), no_struct_literal: 0 }
     }
 
     pub fn errors(&self) -> &[FrontendError] {
@@ -356,7 +358,14 @@ impl Parser {
                         continue;
                     }
                 }
-                TokenKind::LBrace if matches!(lhs, Expr::Var(_, _)) => {
+                TokenKind::As => {
+                    // 类型转换是后缀运算符：expr as Type。
+                    let span = self.advance().span;
+                    let ty = self.parse_type()?;
+                    lhs = Expr::As(Box::new(lhs), Box::new(ty), span);
+                    continue;
+                }
+                TokenKind::LBrace if self.no_struct_literal == 0 && matches!(lhs, Expr::Var(_, _)) => {
                     // 结构体构造: Point { x: 1, y: 2 }
                     if let Expr::Var(n, _) = lhs {
                         let fields = self.parse_struct_literal_fields()?;
@@ -384,6 +393,17 @@ impl Parser {
         }
 
         Ok(lhs)
+    }
+
+    /// 解析不允许结构体字面量的表达式（用于 `if`/`while`/`for` 的头部）。
+    ///
+    /// `for x in items { ... }` 中的 `{` 是循环体，而不是 `items { ... }`
+    /// 结构体字面量；同理 `if flag { ... }`。
+    fn parse_expr_no_struct(&mut self, min_prec: u8) -> Result<Expr, FrontendError> {
+        self.no_struct_literal += 1;
+        let result = self.parse_expr(min_prec);
+        self.no_struct_literal -= 1;
+        result
     }
 
     /// 前缀表达式
@@ -519,7 +539,7 @@ impl Parser {
             }
             TokenKind::While => {
                 self.advance();
-                let cond = self.parse_expr(0)?;
+                let cond = self.parse_expr_no_struct(0)?;
                 let body = self.parse_block()?;
                 Ok(Expr::While(Box::new(cond), body, span))
             }
@@ -527,7 +547,7 @@ impl Parser {
                 self.advance();
                 let pattern = self.parse_pattern()?;
                 self.expect(TokenKind::In)?;
-                let iterable = self.parse_expr(0)?;
+                let iterable = self.parse_expr_no_struct(0)?;
                 let body = self.parse_block()?;
                 Ok(Expr::For { pattern, iterable: Box::new(iterable), body, span })
             }
@@ -626,7 +646,7 @@ impl Parser {
 
     fn parse_if_expr(&mut self) -> Result<Expr, FrontendError> {
         let span = self.advance().span;
-        let cond = self.parse_expr(0)?;
+        let cond = self.parse_expr_no_struct(0)?;
         let then_block = self.parse_block()?;
         let else_block = if self.eat(TokenKind::Else) {
             if self.check(TokenKind::If) {

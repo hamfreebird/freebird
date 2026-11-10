@@ -16,7 +16,7 @@ use config::RuntimeConfig;
 use error::VmError;
 use frame::CallFrame;
 use id::{ElementId, FnId, IdAllocator, StackId};
-use mir::MirInst;
+use mir::{MirInst, TypeId};
 use registry::GlobalRegistry;
 use stack::DualStack;
 use value::Value;
@@ -274,6 +274,16 @@ impl Vm {
                     found: val.type_name().to_string(),
                 })?;
                 frame.data.push(new_id, Value::I64(-v));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+
+            MirInst::Cast { target } => {
+                let new_id = self.id_alloc.alloc_element();
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let converted = cast_value(value, *target)?;
+                frame.data.push(new_id, converted);
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -1377,6 +1387,59 @@ impl Vm {
 impl Default for Vm {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 执行 `expr as T` 的运行时转换。
+fn cast_value(value: Value, target: TypeId) -> Result<Value, VmError> {
+    let numeric = |value: &Value| {
+        value.as_i64().ok_or_else(|| VmError::TypeMismatch {
+            expected: "numeric or scalar".to_string(),
+            found: value.type_name().to_string(),
+        })
+    };
+    match target {
+        TypeId::I8 => Ok(Value::I8(numeric(&value)? as i8 as i64)),
+        TypeId::I16 => Ok(Value::I16(numeric(&value)? as i16 as i64)),
+        TypeId::I32 => Ok(Value::I32(numeric(&value)? as i32 as i64)),
+        TypeId::I64 => Ok(Value::I64(numeric(&value)?)),
+        TypeId::Isize => Ok(Value::Isize(numeric(&value)?)),
+        TypeId::U8 => Ok(Value::U8(numeric(&value)? as u8 as i64)),
+        TypeId::U16 => Ok(Value::U16(numeric(&value)? as u16 as i64)),
+        TypeId::U32 => Ok(Value::U32(numeric(&value)? as u32 as i64)),
+        TypeId::U64 => Ok(Value::U64(numeric(&value)? as u64 as i64)),
+        TypeId::Usize => Ok(Value::Usize(numeric(&value)? as usize as i64)),
+        TypeId::F32 => {
+            let f = value.as_f64().ok_or_else(|| VmError::TypeMismatch {
+                expected: "numeric".to_string(),
+                found: value.type_name().to_string(),
+            })?;
+            Ok(Value::F32(f as f32))
+        }
+        TypeId::F64 => {
+            let f = value.as_f64().ok_or_else(|| VmError::TypeMismatch {
+                expected: "numeric".to_string(),
+                found: value.type_name().to_string(),
+            })?;
+            Ok(Value::F64(f))
+        }
+        TypeId::Bool => {
+            let b = numeric(&value)? != 0;
+            Ok(Value::Bool(b))
+        }
+        TypeId::Char => {
+            let n = numeric(&value)?;
+            let ch = u32::try_from(n)
+                .ok()
+                .and_then(char::from_u32)
+                .ok_or_else(|| VmError::TypeMismatch {
+                    expected: "valid Unicode scalar value".to_string(),
+                    found: n.to_string(),
+                })?;
+            Ok(Value::Char(ch as u32))
+        }
+        TypeId::Unit | TypeId::Ref | TypeId::MutRef | TypeId::ElementId
+        | TypeId::StackHandle | TypeId::FnPtr | TypeId::Unknown => Ok(value),
     }
 }
 
