@@ -1,7 +1,8 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 199 unit + 26 integration 全绿（2026-11-10）。
+> 当前：`cargo test` = 204 unit + 33 integration 全绿（2026-11-21）。
+> 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)；本表保留已完成项的历史记录。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
 ## P0 — 基础正确性与可验证性
