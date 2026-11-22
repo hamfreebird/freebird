@@ -44,6 +44,12 @@ const HEAP_COUNTER: usize = 7;
 const HEAP_PENDING: usize = 8;
 /// `read_line` 当前多字节序列的字节数。
 const HEAP_BYTE_COUNT: usize = 9;
+/// 空闲块链表头（0 表示空）。
+const HEAP_FREE_LIST: usize = 10;
+/// 分配器的空闲链表游标。
+const HEAP_ALLOC_CURSOR: usize = 11;
+/// `Vec` 扩容时保存新容量（避免被分配器覆盖 `HEAP_SIZE`）。
+const HEAP_CAP: usize = 12;
 /// 第一个可分配的堆块地址。
 const HEAP_BASE: i64 = 16;
 /// 堆块头部长度：`[len, cap, elems...]`。
@@ -81,11 +87,21 @@ struct Slot {
     constant: Option<ConstValue>,
     /// 该槽是函数调用元素时记录参数个数。
     call_element: Option<u32>,
+    /// 读取变量产生的临时槽：来源绑定 ID（用于 DropVar 的别名/逃逸检查）。
+    source_binding: Option<usize>,
+    /// 该槽是否可能持有可回收的 Move 堆块（Vec/Box）。
+    heap_owned: bool,
 }
 
 impl Slot {
     fn unknown() -> Self {
-        Self { binding: None, constant: None, call_element: None }
+        Self {
+            binding: None,
+            constant: None,
+            call_element: None,
+            source_binding: None,
+            heap_owned: false,
+        }
     }
 }
 
@@ -135,6 +151,10 @@ pub struct StardustGen {
     aliases: HashMap<FnId, FnId>,
     /// 当前生成的是否为别名副本。
     alias_body: bool,
+    /// 本函数中已知持有可回收 Move 堆块（Vec/Box）的绑定 ID。
+    heap_bindings: HashSet<usize>,
+    /// 当前函数的返回值个数（用于 DropVar 的逃逸检查）。
+    current_returns: u32,
 }
 
 impl StardustGen {
@@ -154,6 +174,8 @@ impl StardustGen {
             next_helper_label: 0,
             aliases: HashMap::new(),
             alias_body: false,
+            heap_bindings: HashSet::new(),
+            current_returns: 0,
         }
     }
 
@@ -208,9 +230,12 @@ impl StardustGen {
         // 全局 bump allocator 初始化：heap[1] = 16。堆是解释器全局状态，
         // 只需在程序入口调用前初始化一次；递归/多次调用共享同一分配器。
         if entry.is_some() {
-            self.emit_comment("initialise global heap allocator: heap[1] = 16");
+            self.emit_comment("initialise global heap allocator: heap[1] = 16, heap[10] = 0");
             self.emit_push_int(HEAP_BASE);
             self.emit_push_int(HEAP_ALLOC_PTR as i64);
+            self.raw_inst(0, '-'); // Store
+            self.emit_push_int(0);
+            self.emit_push_int(HEAP_FREE_LIST as i64);
             self.raw_inst(0, '-'); // Store
         }
 
@@ -263,6 +288,8 @@ impl StardustGen {
         self.current_fn = Some(fn_id);
         self.alias_body = alias_body;
         self.next_binding = 0;
+        self.heap_bindings.clear();
+        self.current_returns = info.returns;
         self.indirect_names.clear();
         self.indirect_bindings.clear();
         self.branch_states.clear();
@@ -354,7 +381,10 @@ impl StardustGen {
                         }
                     }
                 }
-                self.stack.push(Slot { binding: None, constant, call_element });
+                let mut slot = Slot::unknown();
+                slot.constant = constant;
+                slot.call_element = call_element;
+                self.stack.push(slot);
             }
             MirInst::Pop { .. } => {
                 if self.stack.pop().is_some() {
@@ -366,11 +396,12 @@ impl StardustGen {
             MirInst::Dup { .. } => {
                 if let Some(top) = self.stack.last().cloned() {
                     self.raw_inst(1, '+');
-                    self.stack.push(Slot {
-                        binding: None,
-                        constant: top.constant,
-                        call_element: top.call_element,
-                    });
+                    let mut slot = Slot::unknown();
+                    slot.constant = top.constant;
+                    slot.call_element = top.call_element;
+                    slot.source_binding = top.source_binding;
+                    slot.heap_owned = top.heap_owned;
+                    self.stack.push(slot);
                 } else {
                     self.emit_comment("WARNING: Dup with empty codegen stack skipped");
                 }
@@ -404,7 +435,9 @@ impl StardustGen {
                 if n >= 0 && (n as usize) < self.stack.len() {
                     let idx = self.stack.len() - 1 - n as usize;
                     let constant = self.stack[idx].constant.clone();
-                    self.stack.push(Slot { binding: None, constant, call_element: None });
+                    let mut slot = Slot::unknown();
+                    slot.constant = constant;
+                    self.stack.push(slot);
                 } else {
                     self.stack.push(Slot::unknown());
                 }
@@ -426,7 +459,10 @@ impl StardustGen {
                     Some(ConstValue::Int(v)) => v.checked_neg().map(ConstValue::Int),
                     _ => None,
                 });
-                self.stack.push(Slot { binding: None, constant, call_element: None });
+                self.stack.push(Slot {
+                    constant,
+                    ..Slot::unknown()
+                });
             }
 
             MirInst::Cast { target } => {
@@ -442,7 +478,10 @@ impl StardustGen {
                     | TypeId::Char => slot.constant,
                     _ => None,
                 };
-                self.stack.push(Slot { binding: None, constant, call_element: None });
+                self.stack.push(Slot {
+                    constant,
+                    ..Slot::unknown()
+                });
             }
 
             // ─── 比较 ───
@@ -463,7 +502,10 @@ impl StardustGen {
                     Some(ConstValue::Int(v)) => Some(ConstValue::Int(if v == 0 { 1 } else { 0 })),
                     _ => None,
                 });
-                self.stack.push(Slot { binding: None, constant, call_element: None });
+                self.stack.push(Slot {
+                    constant,
+                    ..Slot::unknown()
+                });
             }
             MirInst::Xor => self.gen_binary_logic(3, LogicOp::Xor),
 
@@ -502,8 +544,26 @@ impl StardustGen {
                     let id = self.next_binding;
                     self.next_binding += 1;
                     let indirect = self.indirect_names.contains(name);
+                    let source = self.stack.last().and_then(|slot| slot.source_binding);
+                    let top_heap = self.stack.last().is_some_and(|slot| slot.heap_owned);
+                    let mut heap_owned = false;
+                    if !indirect {
+                        // 所有权转移：来源绑定持有可回收堆块时，转给新绑定。
+                        if let Some(src) = source
+                            && self.heap_bindings.contains(&src)
+                        {
+                            self.heap_bindings.remove(&src);
+                            self.heap_bindings.insert(id);
+                            heap_owned = true;
+                        } else if top_heap {
+                            self.heap_bindings.insert(id);
+                            heap_owned = true;
+                        }
+                    }
                     if let Some(top) = self.stack.last_mut() {
                         top.binding = Some(id);
+                        top.source_binding = None;
+                        top.heap_owned = heap_owned;
                         if indirect {
                             // 被取址的变量不能保留编译期常量。
                             top.constant = None;
@@ -589,7 +649,9 @@ impl StardustGen {
             MirInst::MakeBox => {
                 self.gen_make_box();
                 self.stack.pop();
-                self.stack.push(Slot::unknown());
+                let mut slot = Slot::unknown();
+                slot.heap_owned = true;
+                self.stack.push(slot);
             }
             MirInst::ContainerLen => {
                 let constant = self
@@ -613,8 +675,29 @@ impl StardustGen {
                 self.gen_vec_pop(name);
                 self.stack.push(Slot::unknown());
             }
-            MirInst::DropVar { .. } => {
-                // 堆块不做回收；变量槽位由 ExitScope 前的 Pop 指令移除。
+            MirInst::DropVar { name } => {
+                // 只回收确定持有 Move 堆块、且没有被返回/别名引用的绑定。
+                let Some(binding) = self.find_binding(name) else {
+                    return;
+                };
+                if !self.heap_bindings.contains(&binding)
+                    || self.indirect_bindings.contains(&binding)
+                    || self
+                        .stack
+                        .iter()
+                        .any(|slot| slot.source_binding == Some(binding))
+                {
+                    return;
+                }
+                let Some(index) = self.find_slot_index(binding) else {
+                    return;
+                };
+                let depth = self.stack.len() - 1 - index;
+                self.emit_push_int(depth as i64);
+                self.raw_inst(2, '<'); // Pick
+                self.emit_store_scratch(HEAP_HANDLE);
+                self.emit_release_block(HEAP_HANDLE);
+                self.heap_bindings.remove(&binding);
             }
             MirInst::MakeEnum { variant: _, data_slots } => {
                 self.gen_build_array(*data_slots as usize + 1);
@@ -648,7 +731,7 @@ impl StardustGen {
             }
             MirInst::NumIn => {
                 self.raw_inst(1, '.');
-                self.stack.push(Slot { binding: None, constant: None, call_element: None });
+                self.stack.push(Slot::unknown());
             }
             MirInst::CharOut => {
                 self.stack.pop();
@@ -747,7 +830,12 @@ impl StardustGen {
             // 变量槽保存的是单元句柄，读出值需要解引用。
             self.gen_deref();
         }
-        self.stack.push(Slot { binding: None, constant, call_element: None });
+        let heap_owned = !indirect && self.heap_bindings.contains(&binding);
+        let mut slot = Slot::unknown();
+        slot.constant = constant;
+        slot.source_binding = if indirect { None } else { Some(binding) };
+        slot.heap_owned = heap_owned;
+        self.stack.push(slot);
     }
 
     fn gen_write_var(&mut self, name: &str) {
@@ -825,6 +913,16 @@ impl StardustGen {
         }
         let info = info.unwrap();
 
+        // 实参若来自 Move 堆绑定，所有权转移给被调函数；调用者不再释放。
+        let start = self.stack.len().saturating_sub(info.params as usize);
+        let sources: Vec<usize> = self.stack[start..]
+            .iter()
+            .filter_map(|slot| slot.source_binding)
+            .collect();
+        for src in sources {
+            self.heap_bindings.remove(&src);
+        }
+
         // 主副本内的自递归调用改调别名副本；别名副本内的调用照常指向原函数。
         // 两者互为镜像，语义等价且不触发旧解释器的同名调用解析缺陷。
         let target = if !self.alias_body && self.current_fn == Some(fn_id) {
@@ -846,6 +944,8 @@ impl StardustGen {
         }
         self.pop_n_model(needed);
         for _ in 0..info.returns {
+            // 返回值可能是 Copy 类型（结构体/数组），保守不标记为可回收；
+            // Vec 返回值在调用者 push/pop 时再标记。
             self.stack.push(Slot::unknown());
         }
     }
@@ -926,7 +1026,10 @@ impl StardustGen {
             }
             _ => None,
         };
-        self.stack.push(Slot { binding: None, constant, call_element: None });
+        self.stack.push(Slot {
+            constant,
+            ..Slot::unknown()
+        });
     }
 
     fn gen_binary_cmp(&mut self, spaces: usize, op: CmpOp) {
@@ -947,7 +1050,10 @@ impl StardustGen {
             }
             _ => None,
         };
-        self.stack.push(Slot { binding: None, constant, call_element: None });
+        self.stack.push(Slot {
+            constant,
+            ..Slot::unknown()
+        });
     }
 
     fn gen_binary_logic(&mut self, spaces: usize, op: LogicOp) {
@@ -965,7 +1071,10 @@ impl StardustGen {
             }
             _ => None,
         };
-        self.stack.push(Slot { binding: None, constant, call_element: None });
+        self.stack.push(Slot {
+            constant,
+            ..Slot::unknown()
+        });
     }
 
     // ─── 栈效果辅助 ───
@@ -1128,14 +1237,138 @@ impl StardustGen {
         // [b]
     }
 
-    /// `[.., size]` → `[.., handle]`。分配 `size` 个堆单元并推进 bump 指针。
+    /// `[.., size]` → `[.., handle]`。优先从空闲链表复用块，否则推进 bump 指针。
+    ///
+    /// 空闲块布局为 `[len = -1, block_size, next, ...]`，`block_size` 含两个
+    /// 头部槽；因此空闲块至少 3 个槽。普通块的 `cap` 仍是元素容量。
     fn emit_alloc_from_stack(&mut self) {
         self.emit_store_scratch(HEAP_SIZE);
+
+        // 最小块大小 3（两个头部 + 空闲链表 next）。
+        let size_ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_push_int(3);
+        self.emit_ge();
+        self.raw_inst(size_ok, '\'');
+        self.emit_push_int(3);
+        self.emit_store_scratch(HEAP_SIZE);
+        self.raw_inst(size_ok, '`');
+
+        let loop_label = self.fresh_helper_label();
+        let found = self.fresh_helper_label();
+        let bump = self.fresh_helper_label();
+        let done = self.fresh_helper_label();
+
+        self.emit_load_scratch(HEAP_FREE_LIST);
+        self.emit_store_scratch(HEAP_ALLOC_CURSOR);
+
+        self.raw_inst(loop_label, '`');
+        self.emit_load_scratch(HEAP_ALLOC_CURSOR);
+        self.emit_push_int(0);
+        self.raw_inst(0, '='); // cursor == 0 -> bump
+        self.raw_inst(bump, '\'');
+
+        // heap[cursor + 1] 是空闲块大小（含头部）。
+        self.emit_load_scratch(HEAP_ALLOC_CURSOR);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_ge();
+        self.raw_inst(found, '\'');
+
+        // next = heap[cursor + 2]
+        self.emit_load_scratch(HEAP_ALLOC_CURSOR);
+        self.emit_push_int(2);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_ALLOC_CURSOR);
+        self.raw_inst(loop_label, '~');
+
+        self.raw_inst(found, '`');
+        // 从链表摘除：free_head = heap[cursor + 2]
+        self.emit_load_scratch(HEAP_ALLOC_CURSOR);
+        self.emit_push_int(2);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_FREE_LIST);
+        self.emit_load_scratch(HEAP_ALLOC_CURSOR);
+        self.raw_inst(done, '~');
+
+        self.raw_inst(bump, '`');
         self.emit_load_scratch(HEAP_ALLOC_PTR);
         self.emit_dup();
         self.emit_load_scratch(HEAP_SIZE);
         self.emit_add();
         self.emit_store_scratch(HEAP_ALLOC_PTR);
+
+        self.raw_inst(done, '`');
+    }
+
+    /// 把 `heap[handle_slot]` 指向的块加入空闲链表（保守检查，重复释放安全）。
+    ///
+    /// 只回收块本身，不递归回收嵌套句柄；嵌套容器仍可能泄漏，但不会悬垂。
+    fn emit_release_block(&mut self, handle_slot: usize) {
+        let done = self.fresh_helper_label();
+
+        // handle < HEAP_BASE -> 不是堆块。
+        self.emit_load_scratch(handle_slot);
+        self.emit_push_int(HEAP_BASE);
+        self.emit_lt();
+        self.raw_inst(done, '\'');
+
+        // handle >= alloc_ptr -> 不是已分配块。
+        self.emit_load_scratch(handle_slot);
+        self.emit_load_scratch(HEAP_ALLOC_PTR);
+        self.emit_ge();
+        self.raw_inst(done, '\'');
+
+        // heap[handle] == -1 -> 已经在空闲链表中。
+        self.emit_load_scratch(handle_slot);
+        self.raw_inst(1, '-');
+        self.emit_push_int(-1);
+        self.raw_inst(0, '=');
+        self.raw_inst(done, '\'');
+
+        // block_size = cap + BLOCK_HEADER。
+        self.emit_load_scratch(handle_slot);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_SIZE);
+
+        // 太小、放不下 next 的块不回收。
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_push_int(3);
+        self.emit_lt();
+        self.raw_inst(done, '\'');
+
+        // heap[handle] = -1
+        self.emit_load_scratch(handle_slot);
+        self.emit_push_int(-1);
+        self.emit_swap();
+        self.raw_inst(0, '-');
+        // heap[handle + 1] = block_size
+        self.emit_load_scratch(handle_slot);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_swap();
+        self.raw_inst(0, '-');
+        // heap[handle + 2] = free_head
+        self.emit_load_scratch(handle_slot);
+        self.emit_push_int(2);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_FREE_LIST);
+        self.emit_swap();
+        self.raw_inst(0, '-');
+        // free_head = handle
+        self.emit_load_scratch(handle_slot);
+        self.emit_store_scratch(HEAP_FREE_LIST);
+
+        self.raw_inst(done, '`');
     }
 
     fn emit_alloc_const(&mut self, size: usize) {
@@ -1165,10 +1398,13 @@ impl StardustGen {
 
     /// 把栈顶 `count` 个值合并为堆数组，压入句柄。
     fn gen_build_array(&mut self, count: usize) {
-        self.emit_alloc_const(BLOCK_HEADER as usize + count);
+        // 空容器预留 4 个容量，使 free list 在循环中能复用同一块；
+        // 非空容器保持精确容量，避免改变既有布局。
+        let cap = if count == 0 { 4 } else { count };
+        self.emit_alloc_const(BLOCK_HEADER as usize + cap);
         self.emit_store_scratch(HEAP_HANDLE);
         self.emit_write_header_const(HEAP_HANDLE, 0, count as i64);
-        self.emit_write_header_const(HEAP_HANDLE, 1, count as i64);
+        self.emit_write_header_const(HEAP_HANDLE, 1, cap as i64);
         // 栈顶是最后一个元素；倒序写入下标 count-1 .. 0。
         for i in (0..count).rev() {
             self.emit_load_scratch(HEAP_HANDLE);
@@ -1182,10 +1418,11 @@ impl StardustGen {
     /// 将编译期元组/字符串字面量复制到堆上，压入句柄。
     fn gen_push_tuple_literal(&mut self, elems: &[Value]) {
         let count = elems.len();
-        self.emit_alloc_const(BLOCK_HEADER as usize + count);
+        let cap = if count == 0 { 4 } else { count };
+        self.emit_alloc_const(BLOCK_HEADER as usize + cap);
         self.emit_store_scratch(HEAP_HANDLE);
         self.emit_write_header_const(HEAP_HANDLE, 0, count as i64);
-        self.emit_write_header_const(HEAP_HANDLE, 1, count as i64);
+        self.emit_write_header_const(HEAP_HANDLE, 1, cap as i64);
         for (i, elem) in elems.iter().enumerate() {
             self.emit_load_scratch(HEAP_HANDLE);
             self.emit_push_int(BLOCK_HEADER + i as i64);
@@ -1254,9 +1491,7 @@ impl StardustGen {
         let in_bounds = self.fresh_helper_label();
         self.emit_load_scratch(HEAP_INDEX);
         self.emit_load_scratch(HEAP_HANDLE);
-        self.emit_push_int(1);
-        self.emit_add();
-        self.raw_inst(1, '-'); // Load len
+        self.raw_inst(1, '-'); // Load len（偏移 0）
         self.emit_lt(); // index < len
         self.raw_inst(in_bounds, '\'');
         self.emit_bounds_trap();
@@ -1331,8 +1566,8 @@ impl StardustGen {
 
     /// 复制 `heap[src_slot]` 指向的块到新分配地址，句柄写入 `heap[dst_slot]`。
     ///
-    /// 只做浅拷贝：嵌套聚合值仍是共享句柄，但后续对它们的写入同样遵循
-    /// copy-on-write，因此与 VM 的深拷贝值语义一致。
+    /// 只做浅拷贝：嵌套聚合值仍是共享句柄。Copy 类型（数组/结构体）依赖它
+    /// 实现写时复制，避免别名变量看到修改。
     fn gen_clone_block(&mut self, src_slot: usize, dst_slot: usize) {
         // size = len + BLOCK_HEADER
         self.emit_load_scratch(src_slot);
@@ -1380,8 +1615,16 @@ impl StardustGen {
         self.raw_inst(end_label, '`');
     }
 
-    /// `VecPush`：复制旧块、追加值、重建变量句柄（保持值语义）。
+    /// `VecPush`：优先原地追加；容量不足时按 2 倍扩容并重绑变量。
+    ///
+    /// `Vec` 是 Move 类型（借用检查拒绝别名 push），因此变量独占数据块，
+    /// 原地写入不会影响其他变量。扩容时旧块可以安全回收。
     fn gen_vec_push(&mut self, name: &str) {
+        if let Some(binding) = self.find_binding(name)
+            && !self.indirect_bindings.contains(&binding)
+        {
+            self.heap_bindings.insert(binding);
+        }
         self.gen_read_var(name);
         self.emit_store_scratch(HEAP_HANDLE);
         self.stack.pop(); // 读变量产生的临时句柄槽
@@ -1392,18 +1635,43 @@ impl StardustGen {
         self.emit_store_scratch(HEAP_VALUE); // 弹出原值
         self.stack.pop(); // 原值被消费
 
-        // 新块大小 = len + 3（2 个头部 + len+1 个元素）。
+        // cap = heap[handle + 1]
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_SIZE);
+
+        let in_place = self.fresh_helper_label();
+        let done = self.fresh_helper_label();
+
+        // len < cap -> 原地追加。
         self.emit_load_scratch(HEAP_INDEX);
-        self.emit_push_int(BLOCK_HEADER + 1);
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_lt();
+        self.raw_inst(in_place, '\'');
+
+        // ─── 扩容：new_cap = max(4, cap * 2) ───
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_push_int(2);
+        self.raw_inst(2, '*'); // Mul
+        self.emit_store_scratch(HEAP_CAP);
+        let cap_ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_push_int(4);
+        self.emit_ge();
+        self.raw_inst(cap_ok, '\'');
+        self.emit_push_int(4);
+        self.emit_store_scratch(HEAP_CAP);
+        self.raw_inst(cap_ok, '`');
+
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_push_int(BLOCK_HEADER);
         self.emit_add();
         self.emit_alloc_from_stack();
         self.emit_store_scratch(HEAP_NEW_HANDLE);
-        self.emit_load_scratch(HEAP_INDEX);
-        self.emit_push_int(1);
-        self.emit_add();
-        self.emit_store_scratch(HEAP_SIZE);
-        self.emit_write_header_slot(HEAP_NEW_HANDLE, 0, HEAP_SIZE);
-        self.emit_write_header_slot(HEAP_NEW_HANDLE, 1, HEAP_SIZE);
+        self.emit_write_header_slot(HEAP_NEW_HANDLE, 0, HEAP_INDEX);
+        self.emit_write_header_slot(HEAP_NEW_HANDLE, 1, HEAP_CAP);
 
         // 复制旧元素。
         let loop_label = self.fresh_helper_label();
@@ -1445,25 +1713,57 @@ impl StardustGen {
         self.emit_swap();
         self.raw_inst(0, '-');
 
+        // len + 1 写回新块。
+        self.emit_load_scratch(HEAP_NEW_HANDLE);
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_swap();
+        self.raw_inst(0, '-');
+
         // 用新句柄替换变量槽。
         self.emit_load_scratch(HEAP_NEW_HANDLE);
         self.stack.push(Slot::unknown());
         self.gen_write_var(name);
+
+        // 旧块已不再被这个 Vec 引用（Move 类型保证无别名），回收复用。
+        self.emit_release_block(HEAP_HANDLE);
+        self.raw_inst(done, '~');
+
+        // ─── 原地追加 ───
+        self.raw_inst(in_place, '`');
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_swap();
+        self.raw_inst(0, '-');
+        // len + 1 写回原块。
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_swap();
+        self.raw_inst(0, '-');
+
+        self.raw_inst(done, '`');
     }
 
     /// `VecPop`：移除最后一个元素并压栈；空容器压入 0（Unit 占位）。
     fn gen_vec_pop(&mut self, name: &str) {
+        if let Some(binding) = self.find_binding(name)
+            && !self.indirect_bindings.contains(&binding)
+        {
+            self.heap_bindings.insert(binding);
+        }
         self.gen_read_var(name);
         self.emit_store_scratch(HEAP_HANDLE);
         self.stack.pop();
 
-        // copy-on-write：克隆块并把变量重绑到副本，避免别名变量看到 pop。
-        self.gen_clone_block(HEAP_HANDLE, HEAP_NEW_HANDLE);
-        self.emit_load_scratch(HEAP_NEW_HANDLE);
-        self.stack.push(Slot::unknown());
-        self.gen_write_var(name);
-
-        self.emit_load_scratch(HEAP_NEW_HANDLE);
+        // Vec 是 Move 类型，变量独占块；原地出栈，无需克隆。
+        self.emit_load_scratch(HEAP_HANDLE);
         self.raw_inst(1, '-'); // len
         self.emit_dup();
         self.emit_push_int(0);
@@ -1472,21 +1772,22 @@ impl StardustGen {
         let nonempty_label = self.fresh_helper_label();
         let end_label = self.fresh_helper_label();
         self.raw_inst(nonempty_label, '\'');
-        // 空容器。
+        // 空容器：丢弃 len，压入 0。
         self.emit_pop();
         self.emit_push_int(0);
         self.raw_inst(end_label, '~');
 
         self.raw_inst(nonempty_label, '`');
         self.emit_push_int(1);
-        self.emit_sub(); // len-1
+        self.emit_sub(); // len - 1
         self.emit_store_scratch(HEAP_INDEX);
-        // heap[h] = len-1。
-        self.emit_load_scratch(HEAP_NEW_HANDLE);
+        // heap[handle] = len - 1
+        self.emit_load_scratch(HEAP_HANDLE);
         self.emit_load_scratch(HEAP_INDEX);
         self.emit_swap();
         self.raw_inst(0, '-');
-        self.emit_load_scratch(HEAP_NEW_HANDLE);
+        // 读取 heap[handle + BLOCK_HEADER + len - 1]
+        self.emit_load_scratch(HEAP_HANDLE);
         self.emit_push_int(BLOCK_HEADER);
         self.emit_add();
         self.emit_load_scratch(HEAP_INDEX);
@@ -1519,14 +1820,13 @@ impl StardustGen {
         let in_bounds = self.fresh_helper_label();
         self.emit_load_scratch(HEAP_INDEX);
         self.emit_load_scratch(HEAP_HANDLE);
-        self.emit_push_int(1);
-        self.emit_add();
-        self.raw_inst(1, '-'); // Load len
+        self.raw_inst(1, '-'); // Load len（偏移 0）
         self.emit_lt(); // index < len
         self.raw_inst(in_bounds, '\'');
         self.emit_bounds_trap();
         self.raw_inst(in_bounds, '`');
 
+        // 数组是 Copy 类型，可能被别名共享；重绑到修改后的副本。
         self.gen_clone_block(HEAP_HANDLE, HEAP_NEW_HANDLE);
         self.emit_load_scratch(HEAP_NEW_HANDLE);
         self.emit_push_int(BLOCK_HEADER);
@@ -1537,7 +1837,6 @@ impl StardustGen {
         self.emit_swap();
         self.raw_inst(0, '-');
 
-        // 变量重绑到修改后的副本；其他别名变量仍持有旧块。
         self.emit_load_scratch(HEAP_NEW_HANDLE);
         self.stack.push(Slot::unknown());
         self.gen_write_var(name);
@@ -1551,6 +1850,7 @@ impl StardustGen {
         self.emit_store_scratch(HEAP_HANDLE);
         self.stack.pop();
 
+        // 结构体是 Copy 类型，可能被别名共享；重绑到修改后的副本。
         self.gen_clone_block(HEAP_HANDLE, HEAP_NEW_HANDLE);
         self.emit_load_scratch(HEAP_NEW_HANDLE);
         self.emit_push_int(BLOCK_HEADER + index as i64);
@@ -1559,7 +1859,6 @@ impl StardustGen {
         self.emit_swap();
         self.raw_inst(0, '-');
 
-        // 变量重绑到修改后的副本；其他别名变量仍持有旧块。
         self.emit_load_scratch(HEAP_NEW_HANDLE);
         self.stack.push(Slot::unknown());
         self.gen_write_var(name);
@@ -2416,10 +2715,15 @@ mod tests {
         Pop,
         Add,
         Sub,
+        Mul,
         Div,
+        Mod,
+        Eq,
+        Ne,
         Gt,
         Ge,
         Lt,
+        Le,
         Store,
         Load,
         ShiftL,
@@ -2450,12 +2754,17 @@ mod tests {
                 '*' => match spaces {
                     0 => TestInst::Add,
                     1 => TestInst::Sub,
+                    2 => TestInst::Mul,
                     3 => TestInst::Div,
+                    4 => TestInst::Mod,
                     _ => panic!("unexpected '*' encoding: {line:?}"),
                 },
                 '=' => match spaces {
+                    0 => TestInst::Eq,
+                    1 => TestInst::Ne,
                     2 => TestInst::Lt,
                     3 => TestInst::Gt,
+                    4 => TestInst::Le,
                     5 => TestInst::Ge,
                     _ => panic!("unexpected '=' encoding: {line:?}"),
                 },
@@ -2517,11 +2826,37 @@ mod tests {
                     let a = stack.pop().expect("sub underflow");
                     stack.push(a - b);
                 }
+                TestInst::Mul => {
+                    let b = stack.pop().expect("mul underflow");
+                    let a = stack.pop().expect("mul underflow");
+                    stack.push(a * b);
+                }
                 TestInst::Div => {
                     let b = stack.pop().expect("div underflow");
                     let a = stack.pop().expect("div underflow");
                     assert_ne!(b, 0, "division by zero trap");
                     stack.push(a / b);
+                }
+                TestInst::Mod => {
+                    let b = stack.pop().expect("mod underflow");
+                    let a = stack.pop().expect("mod underflow");
+                    assert_ne!(b, 0, "modulo by zero trap");
+                    stack.push(a % b);
+                }
+                TestInst::Eq => {
+                    let b = stack.pop().expect("eq underflow");
+                    let a = stack.pop().expect("eq underflow");
+                    stack.push((a == b) as i64);
+                }
+                TestInst::Ne => {
+                    let b = stack.pop().expect("ne underflow");
+                    let a = stack.pop().expect("ne underflow");
+                    stack.push((a != b) as i64);
+                }
+                TestInst::Le => {
+                    let b = stack.pop().expect("le underflow");
+                    let a = stack.pop().expect("le underflow");
+                    stack.push((a <= b) as i64);
                 }
                 TestInst::Lt => {
                     let b = stack.pop().expect("lt underflow");
@@ -2690,7 +3025,7 @@ mod tests {
     }
 
     #[test]
-    fn test_vec_pop_copies_block_and_returns_element() {
+    fn test_vec_pop_mutates_block_in_place() {
         let mut g = new_gen();
         build_block(&mut g, &[1, 2, 3]);
         bind_model(&mut g, "v");
@@ -2698,14 +3033,13 @@ mod tests {
         let (stack, heap) = execute(&g.output);
 
         assert_eq!(stack.len(), 2, "variable slot + popped value");
-        let new_handle = stack[0];
+        let handle = stack[0];
         let popped = stack[1];
         assert_eq!(popped, 3);
-        assert_ne!(new_handle, HEAP_BASE);
-        assert_eq!(heap[&new_handle], 2, "new len");
-        assert_eq!(heap[&(new_handle + 2)], 1);
-        assert_eq!(heap[&(new_handle + 3)], 2);
-        assert_eq!(heap[&HEAP_BASE], 3, "old block keeps its length");
+        assert_eq!(handle, HEAP_BASE, "pop should not relocate the block");
+        assert_eq!(heap[&handle], 2, "length decremented");
+        assert_eq!(heap[&(handle + 2)], 1);
+        assert_eq!(heap[&(handle + 3)], 2);
     }
 
     #[test]

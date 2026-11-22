@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-22。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **201 unit + 79 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 16，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **201 unit + 84 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/differential_test.rs` 2）。
 
 ## 1. 语言与运行时
 
@@ -17,7 +17,7 @@
 | `ret n`（整数立即数、元数匹配） | §6 | ✅ | ✅ | ❌ | 集成 + `m0_test` |
 | 数组、`Vec`、`String`、`Box` | §8、§9 | ✅ | ✅ | ❌ | 集成 + 差分（全局堆块，ADR 0001） |
 | 容器索引越界检查 | §8 | ✅ 运行期报错 | ✅ 运行期陷阱（M1-5） | ❌ | `differential_test` |
-| 堆块回收 / 复用 | §8.5 | ✅ 随值释放 | 🟡 只增不减（M1-3 待引用计数，ADR 0002） | ❌ | — |
+| 堆块回收 / 复用 | §8.5 | ✅ 随值释放 | 🟡 free list + Vec/Box DropVar 回收；数组/结构体 COW 与嵌套块保守不释放 | ❌ | `m1_test` |
 | 结构体、字段访问/赋值 | §8 | ✅ | ✅ | ❌ | 集成 |
 | 枚举、变体构造、`EnumTag` | §8 | ✅ | ✅ | ❌ | 集成 |
 | `&` / `&mut`、解引用、写回 | §4 | ✅ | ✅ | ❌ | 集成 |
@@ -69,8 +69,9 @@
 - VM 与 Stardust 在新增模式匹配、`let` 解构、`ret n`、unit 循环用例上输出逐字节一致。
 - LLVM 仍为占位；相关能力在矩阵中统一标 ❌，调用时明确报错。
 
-## 5. M1 运行时一致性（进行中：7/8）
+## 5. M1 运行时一致性（已完成：8/8，保守回收）
 
 - **已完成**：差分测试框架与 CI `differential` job；`read_line` 的 UTF-8/CRLF/非法字节解码与 VM 逐字节一致；远程栈收敛为“逻辑远程栈 + 全局堆块”（ADR 0001）；索引越界检查；I/O 与 VM 资源限制测试；Stardust 占位清理。
-- **遗留 M1-3**：Stardust 堆块仍只增不减。值语义 + copy-on-write 让多个变量共享块，安全回收需要引用计数或所有权跟踪；方案见 ADR 0002，本轮不实现。
+- **M1-3 堆回收**：free list 复用；`VecPush` 原地追加/2 倍扩容并释放旧块，`VecPop` 原地缩减；`DropVar` 对未被返回/别名的 Vec/Box 绑定释放块。循环内创建/销毁 Vec 的 `HEAP_ALLOC_PTR` 稳定（ADR 0002）。
+- **保守边界**：数组/结构体等 Copy 类型的 COW 旧块、嵌套容器内层块、从未 push/pop 的 Vec/String 不回收（安全泄漏）；完整引用计数留待后续。
 - **已知后端差异**：`read_line` 在 EOF 时 Stardust 解释器的 `CharIn` 直接报 I/O 错误（VM 返回空字符串）；Stardust 越界用除零陷阱退出，错误消息与 VM 不同；`stardust!` 的 `Reverse` 仍不支持（M3-4）。

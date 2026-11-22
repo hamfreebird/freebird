@@ -6,7 +6,7 @@
 mod common;
 
 use common::{assert_same_output, run_stardust, run_vm, Run};
-use freebird::{run_source, RuntimeConfig};
+use freebird::{check_source, run_source, RuntimeConfig};
 
 const READ_LINE_PROGRAM: &str = r#"
 fn main() {
@@ -149,8 +149,7 @@ fn vm_step_limit_is_enforced() {
 }
 
 #[test]
-fn vm_call_depth_limit_is_enforced() {
-    let source = r#"
+fn vm_call_depth_limit_is_enforced() {    let source = r#"
 fn recurse(n: i64) -> i64 {
     if n <= 0 { 0 } else { recurse(n - 1) + 1 }
 }
@@ -163,4 +162,101 @@ fn main() { print(recurse(1000)); }
         error.contains("call stack") || error.contains("depth"),
         "unexpected error: {error}"
     );
+}
+
+fn sd_output(source: &str, name: &str) -> Vec<u8> {
+    match run_stardust(source, name, b"") {
+        Run::Ok(output) => output,
+        Run::Failed(error) => panic!("Stardust failed for {name}: {error}"),
+    }
+}
+
+fn parse_single_int(output: &[u8]) -> i64 {
+    let text = String::from_utf8_lossy(output);
+    text.trim()
+        .parse()
+        .unwrap_or_else(|error| panic!("expected an integer, got {text:?}: {error}"))
+}
+
+#[test]
+fn stardust_loop_vec_blocks_are_reused() {
+    for iterations in [100, 1000] {
+        let source = format!(
+            r#"
+fn main() {{
+    let mut i = 0;
+    while i < {iterations} {{
+        let mut v = Vec::new();
+        v.push(i);
+        v.push(i + 1);
+        i = i + 1;
+    }}
+    let alloc = stardust! {{ Push(1) Load }};
+    print(alloc);
+}}
+"#
+        );
+        let alloc = parse_single_int(&sd_output(
+            &source,
+            &format!("heap_loop_{iterations}"),
+        ));
+        assert!(
+            alloc < 64,
+            "{iterations} iterations grew the heap to {alloc} slots"
+        );
+    }
+}
+
+#[test]
+fn stardust_vec_growth_is_bounded() {
+    let source = r#"
+fn main() {
+    let mut v = Vec::new();
+    let mut i = 0;
+    while i < 1000 {
+        v.push(i);
+        i = i + 1;
+    }
+    let alloc = stardust! { Push(1) Load };
+    print(alloc);
+}
+"#;
+    let alloc = parse_single_int(&sd_output(source, "heap_vec_growth"));
+    assert!(alloc < 10_000, "Vec growth allocated {alloc} slots");
+}
+
+#[test]
+fn vec_alias_push_is_rejected() {
+    let source =
+        "fn main() { let mut a = vec![1, 2, 3]; let b = a; a.push(4); print(b[0]); }";
+    let errors = check_source(source).expect_err("alias push should be rejected");
+    assert!(
+        errors.join("\n").contains("moved value"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}
+
+#[test]
+fn vec_move_then_read_matches() {
+    assert_same_output(
+        "fn main() { let a = vec![1, 2, 3]; let b = a; print(b[0]); }",
+        "heap_vec_move_read",
+        b"",
+    );
+}
+
+#[test]
+fn vec_return_from_function_matches() {
+    let source = r#"
+fn make(n: i64) -> Vec<i64> {
+    let mut v = Vec::new();
+    v.push(n);
+    v
+}
+fn main() {
+    let a = make(7);
+    print(a[0]);
+}
+"#;
+    assert_same_output(source, "heap_vec_return", b"");
 }

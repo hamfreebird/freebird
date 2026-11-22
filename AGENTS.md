@@ -5,7 +5,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Commands
 
 - Build: `cargo build --release` (edition 2024, Rust 1.85+).
-- Test: `cargo test` — current baseline is 201 unit + 79 integration tests, all green (`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 16 + `tests/differential_test.rs` 2).
+- Test: `cargo test` — current baseline is 201 unit + 84 integration tests, all green (`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/differential_test.rs` 2).
 - Single test: `cargo test <test_name>`; integration only: `cargo test --test integration_test test_fib_program`, `cargo test --test m0_test`, `cargo test --test m1_test`, `cargo test --test differential_test`.
 - CLI: `cargo run -- run <file.fb>`, `cargo run -- check <file.fb>`, `cargo run -- build [--target stardust|llvm] <file.fb>`, `cargo run -- repl`.
 - Run tests from the repo root: integration tests load fixtures via relative paths. `tests/programs/*.fb` and `examples/*.fb` are discovered automatically by `tests/differential_test.rs`; add a same-named `.in` file for stdin. Add explicit tests for new behavior, and keep fixtures runnable on both backends.
@@ -31,7 +31,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 - `match` supports struct, enum (including nested payloads), tuple, literal, `or`, reference and `_` patterns. Type checking rejects non-exhaustive matches, unknown variants/fields, `or` alternatives with different bindings, and refutable `let` patterns.
 - `for pattern in iterable` iterates arrays, `Vec<T>`, `String` (yielding `char`), and `&Vec<T>`/`&String`; `continue` and `break` unwind loop-body scopes and stack slots correctly in both VM and Stardust backends. `ret n` requires an integer literal and arity matching the signature; `as` supports scalar numeric/`char`/`bool` conversions.
 - M0 rejects `break value`, value-position `loop`, `#id`, `use`, and `extern` calls at compile time. `extern "stardust"` declarations and `#[stardust(id = N)]` parse and check, but FFI is not implemented.
-- Stardust backend limits: heap blocks are never reclaimed (M1-3, needs refcounting; see `docs/adr/0002-heap-reclamation-deferred.md`); `read_line` matches VM's UTF-8 lossy decoding but cannot detect EOF (the interpreter's `CharIn` reports an I/O error); out-of-bounds indexing triggers a division-by-zero trap because the interpreter has no custom error instruction; runtime-limit attributes only affect the VM; `stardust!` `Reverse` is unsupported (M3-4).
+- Stardust backend limits: heap blocks use a free list; `VecPush`/`VecPop` are in-place and `DropVar` reclaims unescaped Vec/Box bindings, but Copy-type COW old blocks and nested container blocks are conservatively not reclaimed (see `docs/adr/0002-heap-reclamation-deferred.md`); `read_line` matches VM's UTF-8 lossy decoding but cannot detect EOF (the interpreter's `CharIn` reports an I/O error); out-of-bounds indexing triggers a division-by-zero trap because the interpreter has no custom error instruction; runtime-limit attributes only affect the VM; `stardust!` `Reverse` is unsupported (M3-4).
 
 ## I/O quirks
 

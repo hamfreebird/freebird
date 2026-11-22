@@ -27,14 +27,14 @@
 |---|---|---|
 | M1-1 | VM/Stardust 差分测试 | 新增 `tests/differential_test.rs`，自动遍历 `tests/programs/*.fb` 与 `examples/*.fb`；CI 新增 `differential` job |
 | M1-2 | `read_line` 语义 | VM 真实 stdin 改为按字节读取 + lossy 解码；Stardust 增加 pending 字节、续字节校验、overlong/surrogate/越界码点校验；`tests/m1_test.rs` 覆盖 10 类输入 |
-| M1-3 | Stardust 堆回收 | 未完成：COW 共享块需要引用计数，见 `docs/adr/0002-heap-reclamation-deferred.md` |
+| M1-3 | Stardust 堆回收 | free list 复用；`VecPush` 原地追加/2 倍扩容并释放旧块，`VecPop` 原地缩减；`DropVar` 回收未被返回/别名的 Vec/Box 绑定；循环内创建/销毁 Vec 的 `HEAP_ALLOC_PTR` 稳定。数组/结构体 COW 与嵌套块保守不释放（ADR 0002） |
 | M1-4 | 远程栈模型 | 采用“逻辑远程栈 + 全局堆块”，删除不可达远程栈 MIR 指令，新增 `HeapStore`/`HeapLoad`；ADR 0001 |
 | M1-5 | 运行时错误 | 索引读写增加非负/上界检查，越界用除零陷阱非零退出；差分覆盖除零、越界、负索引、空数组、文件缺失 |
 | M1-6 | I/O 语义 | 补 print/char/string、read_int/read_char、文件写读回环测试；USAGE 写明 UTF-8 文本边界 |
 | M1-7 | 资源限制 | VM 的 step/call-depth 测试；USAGE 明确 Stardust 无等价限制 |
 | M1-8 | 占位清理 | `src/codegen/stardust.rs` 中 `unsupported`/`TODO`/`placeholder` 已清零；`Reverse` 在矩阵中标红 |
 
-> 当前测试基线：`cargo test` = 201 unit + 79 integration（33 + 28 + 16 + 2）。
+> 当前测试基线：`cargo test` = 201 unit + 84 integration（33 + 28 + 21 + 2）。
 
 ## P0 — 基础正确性与可验证性
 
