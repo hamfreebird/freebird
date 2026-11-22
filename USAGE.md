@@ -34,6 +34,8 @@ freebird run --debug hello.fb  # 调试模式
 freebird check hello.fb        # JSON 诊断输出
 ```
 
+`check` 与 `run`/`build` 执行同一套前端检查：`parse` → 名称解析 → 类型检查 → 借用/移动检查。发现问题时退出码为 1；诊断中包含行、列和修复建议。
+
 ### 编译
 
 ```bash
@@ -45,9 +47,13 @@ freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 ## 当前实现状态
 
 - VM 已支持数值/字符/布尔、变量与作用域、控制流、函数调用/递归、数组、结构体、枚举匹配、`Vec`、`Box`、字符串、元组解构以及 `read_*`/`print_*`/文件 I/O。
-- 运行前会执行名称解析、基础类型检查和借用/移动检查；`check` 目前不报告借用错误。
-- Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆上。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 字符序列在栈上传递。仍有限制：远程栈只是占位；`read_line` 按 UTF-8 解码（堆块按需扩容，非法首字节替换为 U+FFFD，CRLF 行尾与 VM 一样去掉 `\r`，不检测 EOF）。
+- 运行前会执行名称解析、类型检查和借用/移动检查；`check` 与 `run` 报告同一组前端错误。
+- `match` 支持结构体、枚举（含嵌套载荷）、元组、字面量、`or`、引用和 `_` 模式，并在类型检查阶段拒绝非穷尽匹配。`let` 支持变量、元组和结构体解构；可失败模式（如枚举变体）必须改用 `match`。
+- `ret n` 的 `n` 必须是整数字面量；`loop` 目前只作为语句使用，`break value`、把 `loop` 当值、循环外的 `break`/`continue` 都会在编译期报错。
+- `#id`、`use` 和 `extern` 函数调用尚未实现：声明可以解析，但使用处会报 `unsupported feature`，不会静默返回栈上残留值。
+- Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆上。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 字符序列在栈上传递。仍有限制：远程栈只是占位；`read_line` 按 UTF-8 解码（堆块按需扩容，非法首字节替换为 U+FFFD，CRLF 行尾与 VM 一样去掉 `\r`，不检测 EOF）；`#[max_*]`/`#[time_limit]` 目前只影响 VM 执行。
 - LLVM 后端尚未实现。
+- 完整的能力矩阵见 `STATUS.md`。
 
 ### 交互式 REPL
 
@@ -119,6 +125,7 @@ fn main() {
 ### 枚举与模式匹配
 
 ```freebird
+struct Point { x: i64, y: i64 }
 enum Option { None, Some(i32) }
 
 fn map_opt(opt: Option) -> i32 {
@@ -127,7 +134,17 @@ fn map_opt(opt: Option) -> i32 {
         Option::Some(v) => v,
     }
 }
+
+fn describe(p: Point) -> i64 {
+    let Point { x, y } = p;   // 结构体解构
+    match x {
+        0 => y,
+        _ => x,
+    }
+}
 ```
+
+匹配必须是穷尽的：枚举要覆盖全部变体，其他类型需要 `_` 或变量兜底。`or` 模式的各分支必须绑定相同变量；带 guard 的分支不计入穷尽性。`let` 只接受不可失败模式，枚举变体请使用 `match`。
 
 ### 可变变量与循环
 
@@ -210,15 +227,24 @@ fn main() {
 }
 ```
 
-## 运行时配置
+## 运行时配置与属性
 
-通过 `#[key=value]` 注解覆盖运行时配置：
+通过 `#[key=value]` 或 `#[key(value)]` 注解覆盖运行时配置。目前从 `main` 函数上的属性读取，作用于 VM：
+
+```freebird
+#[max_steps=100000]
+#[time_limit=2]
+fn main() { /* ... */ }
+```
 
 | 配置 | 默认值 | 说明 |
 |------|--------|------|
 | max_stack | 1,048,576 | 单帧最大栈深度 |
 | max_call_depth | 256 | 最大调用深度 |
-| max_steps | 10,000,000 | 最大执行步数 |
+| max_steps | 10,000,000 | 最大执行步数（0 = 无限制） |
+| time_limit | 无限制 | 执行时间限制（秒） |
+
+`#[stardust(id = N)]` 用于标注 `extern "stardust"` 函数的数字 ID；属性值必须是预期类型。未知属性或非法值会在类型检查阶段报错。Stardust 后端目前只接受这些属性，不生成运行时限制代码。
 
 ## 项目结构
 
@@ -240,6 +266,9 @@ freebird/
 ├── vscode/              # VSCode 扩展
 ├── readme.md            # 语言规范
 ├── USAGE.md             # 使用指南（本文件）
-├── IMPROVEMENTS.md      # 实现计划
+├── STATUS.md            # 规范章节 × 后端 × 测试的能力矩阵
+├── ROADMAP.md           # 里程碑与验收标准
+├── TASKS.md             # 已完成/待办事项
+├── IMPROVEMENTS.md      # 历史审计快照
 └── Cargo.toml
 ```

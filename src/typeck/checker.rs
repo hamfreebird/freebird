@@ -4,7 +4,7 @@
 //! 条件表达式、二元运算、结构体/枚举构造与字段访问。
 //! 未确定的类型（`Unknown`）不会报错，避免对尚未完整实现的特性产生误报。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::{self, IntSuffix};
 use crate::frontend::token::Span;
@@ -65,6 +65,62 @@ pub enum TypeCheckError {
         found: usize,
         span: Span,
     },
+    /// 循环外使用 `break` / `continue`
+    LoopControlOutsideLoop {
+        keyword: &'static str,
+        span: Span,
+    },
+    /// M0 尚未实现 `break value`；必须显式拒绝，不能按 unit 静默处理。
+    BreakWithValue {
+        span: Span,
+    },
+    /// M0 尚未实现 `loop` 的值语义；在值位置使用必须报错。
+    LoopUsedAsValue {
+        span: Span,
+    },
+    /// `match` 未覆盖所有可能值。
+    NonExhaustiveMatch {
+        type_name: String,
+        span: Span,
+    },
+    /// 没有函数体的普通函数声明。
+    MissingFunctionBody {
+        name: String,
+        span: Span,
+    },
+    /// 调用尚未实现的 extern/FFI 函数。
+    ExternCall {
+        name: String,
+        abi: Option<String>,
+        span: Span,
+    },
+    /// 已解析但尚未实现的语言特性（`use`、`#id` 等）。
+    UnsupportedFeature {
+        feature: String,
+        reference: String,
+        span: Span,
+    },
+    /// 未知属性。
+    UnknownAttribute {
+        name: String,
+        span: Span,
+    },
+    /// 属性参数格式错误。
+    InvalidAttribute {
+        name: String,
+        reason: String,
+        span: Span,
+    },
+    /// `let` 只接受不可失败模式；枚举变体、字面量等应改用 `match`。
+    RefutableLetPattern {
+        span: Span,
+    },
+    /// `or` 模式各分支绑定的变量集合必须一致。
+    OrPatternBindingMismatch {
+        expected: String,
+        found: String,
+        span: Span,
+    },
 }
 
 impl TypeCheckError {
@@ -79,7 +135,18 @@ impl TypeCheckError {
             | TypeCheckError::UnknownVariant { span, .. }
             | TypeCheckError::UnknownStruct { span, .. }
             | TypeCheckError::ArgumentCountMismatch { span, .. }
-            | TypeCheckError::ReturnArityMismatch { span, .. } => *span,
+            | TypeCheckError::ReturnArityMismatch { span, .. }
+            | TypeCheckError::LoopControlOutsideLoop { span, .. }
+            | TypeCheckError::BreakWithValue { span }
+            | TypeCheckError::LoopUsedAsValue { span }
+            | TypeCheckError::NonExhaustiveMatch { span, .. }
+            | TypeCheckError::MissingFunctionBody { span, .. }
+            | TypeCheckError::ExternCall { span, .. }
+            | TypeCheckError::UnsupportedFeature { span, .. }
+            | TypeCheckError::UnknownAttribute { span, .. }
+            | TypeCheckError::InvalidAttribute { span, .. }
+            | TypeCheckError::RefutableLetPattern { span }
+            | TypeCheckError::OrPatternBindingMismatch { span, .. } => *span,
         }
     }
 }
@@ -126,6 +193,53 @@ impl std::fmt::Display for TypeCheckError {
                     "{span}: function `{function}` returns {expected} values, but `return` provides {found}"
                 )
             }
+            TypeCheckError::LoopControlOutsideLoop { keyword, span } => {
+                write!(f, "{span}: `{keyword}` can only be used inside a loop")
+            }
+            TypeCheckError::BreakWithValue { span } => write!(
+                f,
+                "{span}: `break value` is not supported yet; use `break` without a value"
+            ),
+            TypeCheckError::LoopUsedAsValue { span } => write!(
+                f,
+                "{span}: `loop` cannot be used as a value yet; use it as a statement or return from a function"
+            ),
+            TypeCheckError::NonExhaustiveMatch { type_name, span } => write!(
+                f,
+                "{span}: non-exhaustive `match` on `{type_name}`; add a matching arm or `_`"
+            ),
+            TypeCheckError::MissingFunctionBody { name, span } => write!(
+                f,
+                "{span}: function `{name}` has no body; only extern functions may omit it"
+            ),
+            TypeCheckError::ExternCall { name, abi, span } => match abi {
+                Some(abi) => write!(
+                    f,
+                    "{span}: calling extern function `{name}` (ABI {abi:?}) is not supported yet; FFI is unimplemented"
+                ),
+                None => write!(
+                    f,
+                    "{span}: calling function `{name}` without a body is not supported"
+                ),
+            },
+            TypeCheckError::UnsupportedFeature { feature, reference, span } => write!(
+                f,
+                "{span}: unsupported feature: {feature} (see {reference})"
+            ),
+            TypeCheckError::UnknownAttribute { name, span } => {
+                write!(f, "{span}: unknown attribute `#[{name}]`")
+            }
+            TypeCheckError::InvalidAttribute { name, reason, span } => {
+                write!(f, "{span}: invalid attribute `#[{name}]`: {reason}")
+            }
+            TypeCheckError::RefutableLetPattern { span } => write!(
+                f,
+                "{span}: refutable pattern in `let`; use `match` for enum variants and literals"
+            ),
+            TypeCheckError::OrPatternBindingMismatch { expected, found, span } => write!(
+                f,
+                "{span}: `or` pattern alternatives bind different variables (first binds {{{expected}}}, another binds {{{found}}})"
+            ),
         }
     }
 }
@@ -140,9 +254,15 @@ struct FnContext {
 /// 基础类型检查器
 pub struct TypeChecker<'a> {
     functions: HashMap<String, FnSignature>,
+    /// extern 函数名 → ABI（用于在调用点给出明确诊断）。
+    extern_functions: HashMap<String, String>,
     type_table: &'a TypeTable,
     scopes: Vec<HashMap<String, HirType>>,
     fn_stack: Vec<FnContext>,
+    /// 当前循环嵌套深度；`break`/`continue` 只在大于 0 时合法。
+    loop_depth: usize,
+    /// 大于 0 时允许 `loop` 出现在语句位置（其值被丢弃）。
+    allow_unit_loop: usize,
     errors: Vec<TypeCheckError>,
 }
 
@@ -153,11 +273,23 @@ impl<'a> TypeChecker<'a> {
             .iter()
             .map(|sig| (sig.name.clone(), sig.clone()))
             .collect();
+        let mut extern_functions = HashMap::new();
+        for decl in &program.decls {
+            if let HirDecl::Extern(ext) = decl {
+                for item in &ext.items {
+                    let crate::hir::types::HirExternItem::Fn(f) = item;
+                    extern_functions.insert(f.name.clone(), ext.abi.clone());
+                }
+            }
+        }
         Self {
             functions,
+            extern_functions,
             type_table,
             scopes: Vec::new(),
             fn_stack: Vec::new(),
+            loop_depth: 0,
+            allow_unit_loop: 0,
             errors: Vec::new(),
         }
     }
@@ -166,19 +298,81 @@ impl<'a> TypeChecker<'a> {
     pub fn check_program(mut self, program: &HirProgram) -> Vec<TypeCheckError> {
         for decl in &program.decls {
             match decl {
-                HirDecl::Fn(f) => self.check_fn(f),
+                HirDecl::Fn(f) => {
+                    self.validate_attributes(&f.attrs);
+                    if f.body.is_none() {
+                        self.error(TypeCheckError::MissingFunctionBody {
+                            name: f.name.clone(),
+                            span: f.span,
+                        });
+                    }
+                    self.check_fn(f);
+                }
                 HirDecl::Extern(ext) => {
                     for item in &ext.items {
                         let crate::hir::types::HirExternItem::Fn(f) = item;
+                        self.validate_attributes(&f.attrs);
                         if f.body.is_some() {
                             self.check_fn(f);
                         }
                     }
                 }
-                _ => {}
+                HirDecl::Struct(s) => self.validate_attributes(&s.attrs),
+                HirDecl::Enum(e) => self.validate_attributes(&e.attrs),
+                HirDecl::Use(_, span) => self.error(TypeCheckError::UnsupportedFeature {
+                    feature: "`use` declarations".to_string(),
+                    reference: "readme.md §10 (modules are planned; no module loader yet)".to_string(),
+                    span: *span,
+                }),
             }
         }
         self.errors
+    }
+
+    /// 校验属性的语法与已知名称；未识别属性必须报错，不能静默丢弃。
+    fn validate_attributes(&mut self, attrs: &[ast::Attribute]) {
+        for attr in attrs {
+            match attr.name.as_str() {
+                "stardust" => {
+                    if attr.args.is_empty() {
+                        continue;
+                    }
+                    let Some(value) = attr.args.iter().find_map(|arg| match arg {
+                        ast::AttributeArg::KeyValue(key, value) if key == "id" => Some(value),
+                        _ => None,
+                    }) else {
+                        self.error(TypeCheckError::InvalidAttribute {
+                            name: attr.name.clone(),
+                            reason: "expected `id = <integer>`".to_string(),
+                            span: attr.span,
+                        });
+                        continue;
+                    };
+                    if value.parse::<u64>().is_err() {
+                        self.error(TypeCheckError::InvalidAttribute {
+                            name: attr.name.clone(),
+                            reason: format!("`id` must be an integer, found `{value}`"),
+                            span: attr.span,
+                        });
+                    }
+                }
+                "max_stack" | "max_call_depth" | "max_steps" | "time_limit" => {
+                    let value = attribute_value(attr);
+                    match value.and_then(|v| v.parse::<u64>().ok()) {
+                        Some(_) => {}
+                        None => self.error(TypeCheckError::InvalidAttribute {
+                            name: attr.name.clone(),
+                            reason: "expected a non-negative integer value".to_string(),
+                            span: attr.span,
+                        }),
+                    }
+                }
+                _ => self.error(TypeCheckError::UnknownAttribute {
+                    name: attr.name.clone(),
+                    span: attr.span,
+                }),
+            }
+        }
     }
 
     fn check_fn(&mut self, f: &HirFnDecl) {
@@ -195,7 +389,8 @@ impl<'a> TypeChecker<'a> {
             return_types: f.sig.return_types.clone(),
         });
 
-        self.check_block(body);
+        // 返回 () 的函数体尾部表达式会被丢弃，因此允许在尾部写 unit 循环。
+        self.check_block_with_loop_tail(body, f.sig.return_types.is_empty());
 
         self.fn_stack.pop();
         self.scopes.pop();
@@ -233,12 +428,30 @@ impl<'a> TypeChecker<'a> {
     // ─── 语句 ───
 
     fn check_block(&mut self, block: &HirBlock) -> HirType {
+        self.check_block_with_loop_tail(block, false)
+    }
+
+    /// 检查块；`allow_loop_tail` 用于返回 () 的函数体尾部。
+    fn check_block_with_loop_tail(
+        &mut self,
+        block: &HirBlock,
+        allow_loop_tail: bool,
+    ) -> HirType {
         self.push_scope();
         for stmt in &block.stmts {
             self.check_stmt(stmt);
         }
         let ty = match &block.tail {
-            Some(expr) => self.check_expr(expr),
+            Some(expr) => {
+                if allow_loop_tail {
+                    self.allow_unit_loop += 1;
+                    let ty = self.check_expr(expr);
+                    self.allow_unit_loop -= 1;
+                    ty
+                } else {
+                    self.check_expr(expr)
+                }
+            }
             None => HirType::Unit,
         };
         self.pop_scope();
@@ -248,6 +461,10 @@ impl<'a> TypeChecker<'a> {
     fn check_stmt(&mut self, stmt: &HirStmt) {
         match stmt {
             HirStmt::Let { pattern, ty, init, span, .. } => {
+                if !pattern_is_irrefutable(pattern) {
+                    self.error(TypeCheckError::RefutableLetPattern { span: *span });
+                }
+                self.validate_pattern_bindings(pattern);
                 let init_ty = init.as_ref().map(|e| self.check_expr(e));
 
                 let declared_ty = match ty {
@@ -275,7 +492,10 @@ impl<'a> TypeChecker<'a> {
                 self.bind_pattern(pattern, &binding_ty);
             }
             HirStmt::Expr(expr, _) => {
+                // 语句位置允许 unit 循环（循环产生的值被丢弃）。
+                self.allow_unit_loop += 1;
                 self.check_expr(expr);
+                self.allow_unit_loop -= 1;
             }
             HirStmt::Assign { target, value, span } => {
                 let value_ty = self.check_expr(value);
@@ -385,7 +605,15 @@ impl<'a> TypeChecker<'a> {
                     self.lookup(&var.name).cloned().unwrap_or(HirType::Unknown)
                 }
             }
-            HirExpr::IdRef(_, _) => HirType::Unknown,
+            HirExpr::IdRef(_, span) => {
+                self.error(TypeCheckError::UnsupportedFeature {
+                    feature: "`#id` / ElementId expressions".to_string(),
+                    reference: "readme.md §4.3 (ElementId is not implemented in the VM value model)"
+                        .to_string(),
+                    span: *span,
+                });
+                HirType::Unknown
+            }
             HirExpr::Deref(inner, span) => match self.check_expr(inner) {
                 HirType::Ref(inner, _) => *inner,
                 HirType::Generic(base, args) if base.name() == "Box" => {
@@ -539,6 +767,7 @@ impl<'a> TypeChecker<'a> {
                 let scrutinee_ty = self.check_expr(scrutinee);
                 let mut result_ty: Option<HirType> = None;
                 for arm in arms {
+                    self.validate_pattern_bindings(&arm.pattern);
                     self.push_scope();
                     self.bind_match_pattern(&arm.pattern, &scrutinee_ty);
                     if let Some(guard) = &arm.guard {
@@ -563,26 +792,65 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                 }
+                if !self.match_is_exhaustive(&scrutinee_ty, arms) {
+                    self.error(TypeCheckError::NonExhaustiveMatch {
+                        type_name: scrutinee_ty.name(),
+                        span: *span,
+                    });
+                }
                 result_ty.unwrap_or(HirType::Never)
             }
-            HirExpr::Loop(_, _) => HirType::Unknown,
+            HirExpr::Loop(body, span) => {
+                if self.allow_unit_loop == 0 {
+                    self.error(TypeCheckError::LoopUsedAsValue { span: *span });
+                }
+                self.loop_depth += 1;
+                self.check_block(body);
+                self.loop_depth -= 1;
+                HirType::Unit
+            }
             HirExpr::While(cond, body, _) => {
                 let cond_ty = self.check_expr(cond);
                 self.require_bool(&cond_ty, cond_span(cond, expr_span(expr)));
+                self.loop_depth += 1;
                 self.check_block(body);
+                self.loop_depth -= 1;
                 HirType::Unit
             }
-            HirExpr::For { pattern, iterable, body, .. } => {
+            HirExpr::For { pattern, iterable, body, span } => {
                 let iter_ty = self.check_expr(iterable);
-                let elem_ty = self.for_element_type(&iter_ty, expr_span(expr));
+                let elem_ty = self.for_element_type(&iter_ty, *span);
                 self.push_scope();
                 self.bind_pattern(pattern, &elem_ty);
+                self.loop_depth += 1;
                 self.check_block(body);
+                self.loop_depth -= 1;
                 self.pop_scope();
                 HirType::Unit
             }
             HirExpr::Block(block, _) => self.check_block(block),
-            HirExpr::Break(_, _) | HirExpr::Continue(_) => HirType::Never,
+            HirExpr::Break(value, span) => {
+                if let Some(value) = value {
+                    self.error(TypeCheckError::BreakWithValue { span: *span });
+                    self.check_expr(value);
+                }
+                if self.loop_depth == 0 {
+                    self.error(TypeCheckError::LoopControlOutsideLoop {
+                        keyword: "break",
+                        span: *span,
+                    });
+                }
+                HirType::Never
+            }
+            HirExpr::Continue(span) => {
+                if self.loop_depth == 0 {
+                    self.error(TypeCheckError::LoopControlOutsideLoop {
+                        keyword: "continue",
+                        span: *span,
+                    });
+                }
+                HirType::Never
+            }
             HirExpr::Return(values, span) => {
                 self.check_return(values, *span);
                 HirType::Never
@@ -756,6 +1024,16 @@ impl<'a> TypeChecker<'a> {
             }
             return HirType::Unknown;
         };
+
+        if let Some(abi) = self.extern_functions.get(&sig.name).cloned() {
+            // extern 函数尚未与 Stardust FFI 接通；调用必须失败，不能返回
+            // 栈上残留的参数值。
+            self.error(TypeCheckError::ExternCall {
+                name: sig.name.clone(),
+                abi: Some(abi),
+                span,
+            });
+        }
 
         // 栈传参不检查实参个数；空参数调用按普通零参调用处理。
         if !stack_pass {
@@ -1268,6 +1546,50 @@ impl<'a> TypeChecker<'a> {
         enum_ty
     }
 
+    /// 校验 `or` 模式每个分支绑定相同的变量集合。
+    ///
+    /// MIR 只为整个 `or` 模式生成一次绑定路径，若分支绑定不同变量，
+    /// 运行期会读到错误字段；必须在类型检查阶段拒绝。
+    fn validate_pattern_bindings(&mut self, pattern: &ast::Pattern) {
+        if let ast::Pattern::Or(patterns, span) = pattern {
+            let mut expected: Vec<String> = Vec::new();
+            if let Some(first) = patterns.first() {
+                expected = pattern_binding_names(first);
+            }
+            for alternative in patterns.iter().skip(1) {
+                let found = pattern_binding_names(alternative);
+                if found != expected {
+                    self.error(TypeCheckError::OrPatternBindingMismatch {
+                        expected: expected.join(", "),
+                        found: found.join(", "),
+                        span: *span,
+                    });
+                }
+            }
+        }
+        match pattern {
+            ast::Pattern::Tuple(elems, _, _) | ast::Pattern::Or(elems, _) => {
+                for elem in elems {
+                    self.validate_pattern_bindings(elem);
+                }
+            }
+            ast::Pattern::Struct { fields, .. } => {
+                for (_, sub) in fields {
+                    if let Some(sub) = sub {
+                        self.validate_pattern_bindings(sub);
+                    }
+                }
+            }
+            ast::Pattern::Enum { inner, .. } => {
+                if let Some(inner) = inner {
+                    self.validate_pattern_bindings(inner);
+                }
+            }
+            ast::Pattern::Ref(inner, _, _) => self.validate_pattern_bindings(inner),
+            _ => {}
+        }
+    }
+
     fn bind_match_pattern(&mut self, pattern: &ast::Pattern, scrutinee_ty: &HirType) {
         match pattern {
             ast::Pattern::Var(name, _) => self.declare(name, scrutinee_ty.clone()),
@@ -1281,36 +1603,64 @@ impl<'a> TypeChecker<'a> {
                     self.bind_pattern(pat, &ty);
                 }
             }
-            ast::Pattern::Enum { name, variant, inner, .. } => {
+            ast::Pattern::Enum { name, variant, inner, span } => {
                 let enum_name = name.join("::");
-                let payload_ty = self
+                let variant_def = self
                     .type_table
                     .lookup_enum(&enum_name)
-                    .and_then(|def| def.variants.iter().find(|v| &v.name == variant))
-                    .and_then(|v| v.data_type.as_ref())
-                    .map(|t| {
-                        HirType::Path(t.split("::").map(str::to_string).collect())
-                    })
-                    .unwrap_or(HirType::Unknown);
+                    .and_then(|def| def.variants.iter().find(|v| &v.name == variant));
+                let payload_ty = match variant_def {
+                    Some(v) => v
+                        .data_type
+                        .as_ref()
+                        .map(|t| {
+                            HirType::Path(t.split("::").map(str::to_string).collect())
+                        })
+                        .unwrap_or(HirType::Unknown),
+                    None => {
+                        self.error(TypeCheckError::UnknownVariant {
+                            enum_name: enum_name.clone(),
+                            variant: variant.clone(),
+                            span: *span,
+                        });
+                        HirType::Unknown
+                    }
+                };
                 if let Some(inner) = inner {
                     self.bind_pattern(inner, &payload_ty);
                 }
             }
-            ast::Pattern::Struct { name, fields, .. } => {
+            ast::Pattern::Struct { name, fields, span, .. } => {
                 let struct_name = name.join("::");
+                let struct_def = self.type_table.lookup_struct(&struct_name).cloned();
+                if struct_def.is_none() {
+                    self.error(TypeCheckError::UnknownStruct {
+                        name: struct_name.clone(),
+                        span: *span,
+                    });
+                }
                 for (field_name, field_pattern) in fields {
-                    let field_ty = self
-                        .type_table
-                        .lookup_struct(&struct_name)
-                        .and_then(|def| def.fields.iter().find(|f| &f.name == field_name))
+                    let field = struct_def
+                        .as_ref()
+                        .and_then(|def| def.fields.iter().find(|f| &f.name == field_name));
+                    if struct_def.is_some() && field.is_none() {
+                        self.error(TypeCheckError::UnknownField {
+                            type_name: struct_name.clone(),
+                            field: field_name.clone(),
+                            span: *span,
+                        });
+                    }
+                    let field_ty = field
                         .map(|f| {
                             HirType::Path(
                                 f.type_name.split("::").map(str::to_string).collect(),
                             )
                         })
                         .unwrap_or(HirType::Unknown);
-                    if let Some(pat) = field_pattern {
-                        self.bind_pattern(pat, &field_ty);
+                    match field_pattern {
+                        // `Point { x, y }` 是 `Point { x: x, y: y }` 的简写。
+                        Some(pat) => self.bind_pattern(pat, &field_ty),
+                        None => self.declare(field_name, field_ty),
                     }
                 }
             }
@@ -1362,6 +1712,156 @@ impl<'a> TypeChecker<'a> {
             HirType::Never | HirType::Wildcard | HirType::Unit | HirType::Unknown => {}
         }
     }
+}
+
+impl TypeChecker<'_> {
+    /// 判断 `match` 是否覆盖被匹配类型的所有值。
+    ///
+    /// - 枚举：所有变体（含 `or` 模式）都被无 guard 的分支覆盖；
+    /// - bool：`true` 与 `false` 都被覆盖；
+    /// - 其他类型：必须有 `_` 或变量模式兜底。
+    ///
+    /// 类型未知时保守地视为穷尽，避免级联误报。
+    fn match_is_exhaustive(&self, ty: &HirType, arms: &[crate::hir::types::HirMatchArm]) -> bool {
+        if is_unknown(ty) || matches!(ty, HirType::Never | HirType::Wildcard) {
+            return true;
+        }
+
+        if arms.iter().any(|arm| {
+            arm.guard.is_none() && pattern_is_irrefutable(&arm.pattern)
+        }) {
+            return true;
+        }
+
+        match ty {
+            HirType::Path(segments) => {
+                let name = segments.join("::");
+                let short = segments.last().map(String::as_str).unwrap_or(name.as_str());
+                if let Some(def) = self
+                    .type_table
+                    .lookup_enum(&name)
+                    .or_else(|| self.type_table.lookup_enum(short))
+                {
+                    let mut covered = HashSet::new();
+                    for arm in arms {
+                        if arm.guard.is_none() {
+                            collect_covered_variants(&arm.pattern, &mut covered);
+                        }
+                    }
+                    return def.variants.iter().all(|v| covered.contains(&v.name));
+                }
+                if name == "bool" {
+                    let mut true_covered = false;
+                    let mut false_covered = false;
+                    for arm in arms {
+                        if arm.guard.is_some() {
+                            continue;
+                        }
+                        collect_covered_bools(
+                            &arm.pattern,
+                            &mut true_covered,
+                            &mut false_covered,
+                        );
+                    }
+                    return true_covered && false_covered;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+}
+
+/// 模式是否无条件匹配（不检查字面量/枚举标签）。
+///
+/// 结构体与元组解构本身不限制值，只要其子模式都不可失败，就覆盖整个类型；
+/// 这正是 `match p { Point { x, y } => ... }` 能作为穷尽分支的原因。
+fn pattern_is_irrefutable(pattern: &ast::Pattern) -> bool {
+    match pattern {
+        ast::Pattern::Var(_, _) | ast::Pattern::Wildcard(_) => true,
+        ast::Pattern::Tuple(elems, _, _) => elems.iter().all(pattern_is_irrefutable),
+        ast::Pattern::Struct { fields, .. } => fields
+            .iter()
+            .all(|(_, sub)| sub.as_ref().is_none_or(pattern_is_irrefutable)),
+        ast::Pattern::Ref(inner, _, _) => pattern_is_irrefutable(inner),
+        ast::Pattern::Or(patterns, _) => patterns.iter().any(pattern_is_irrefutable),
+        ast::Pattern::Lit(_, _) | ast::Pattern::Enum { .. } => false,
+    }
+}
+
+fn collect_covered_variants(pattern: &ast::Pattern, out: &mut HashSet<String>) {
+    match pattern {
+        ast::Pattern::Enum { variant, .. } => {
+            out.insert(variant.clone());
+        }
+        ast::Pattern::Or(patterns, _) => {
+            for pattern in patterns {
+                collect_covered_variants(pattern, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 模式绑定的变量名（排序后用于比较 `or` 各分支）。
+fn pattern_binding_names(pattern: &ast::Pattern) -> Vec<String> {
+    fn collect(pattern: &ast::Pattern, names: &mut Vec<String>) {
+        match pattern {
+            ast::Pattern::Var(name, _) => names.push(name.clone()),
+            ast::Pattern::Tuple(elems, _, _) | ast::Pattern::Or(elems, _) => {
+                for elem in elems {
+                    collect(elem, names);
+                }
+            }
+            ast::Pattern::Struct { fields, .. } => {
+                for (field, sub) in fields {
+                    match sub {
+                        Some(sub) => collect(sub, names),
+                        None => names.push(field.clone()),
+                    }
+                }
+            }
+            ast::Pattern::Enum { inner, .. } => {
+                if let Some(inner) = inner {
+                    collect(inner, names);
+                }
+            }
+            ast::Pattern::Ref(inner, _, _) => collect(inner, names),
+            ast::Pattern::Lit(_, _) | ast::Pattern::Wildcard(_) => {}
+        }
+    }
+
+    let mut names = Vec::new();
+    collect(pattern, &mut names);
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn collect_covered_bools(pattern: &ast::Pattern, true_covered: &mut bool, false_covered: &mut bool) {
+    match pattern {
+        ast::Pattern::Lit(ast::Literal::Bool(value), _) => {
+            if *value {
+                *true_covered = true;
+            } else {
+                *false_covered = true;
+            }
+        }
+        ast::Pattern::Or(patterns, _) => {
+            for pattern in patterns {
+                collect_covered_bools(pattern, true_covered, false_covered);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn attribute_value(attr: &ast::Attribute) -> Option<&str> {
+    attr.args.iter().find_map(|arg| match arg {
+        ast::AttributeArg::KeyValue(key, value) if key == &attr.name => Some(value.as_str()),
+        ast::AttributeArg::Value(value) => Some(value.as_str()),
+        _ => None,
+    })
 }
 
 fn builtin_signature(def: &crate::io::BuiltinDef) -> FnSignature {

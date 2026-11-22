@@ -137,6 +137,42 @@ pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
             TypeCheckError::ReturnArityMismatch { .. } => {
                 Some("return the same number of values as declared".to_string())
             }
+            TypeCheckError::LoopControlOutsideLoop { keyword, .. } => {
+                Some(format!("move `{keyword}` inside a loop body"))
+            }
+            TypeCheckError::BreakWithValue { .. } => {
+                Some("use `break` without a value until loop-value semantics are implemented"
+                    .to_string())
+            }
+            TypeCheckError::LoopUsedAsValue { .. } => {
+                Some("use the loop as a statement, or use `return` to leave the function"
+                    .to_string())
+            }
+            TypeCheckError::NonExhaustiveMatch { .. } => {
+                Some("add the missing variants or a `_` arm".to_string())
+            }
+            TypeCheckError::MissingFunctionBody { .. } => {
+                Some("add `{ ... }`, or declare the function inside an `extern` block".to_string())
+            }
+            TypeCheckError::ExternCall { .. } => {
+                Some("FFI calls are not implemented yet; provide a Freebird implementation"
+                    .to_string())
+            }
+            TypeCheckError::UnsupportedFeature { .. } => {
+                Some("remove the construct; it is reserved for a later milestone".to_string())
+            }
+            TypeCheckError::UnknownAttribute { .. } => {
+                Some("remove the attribute or use a documented attribute".to_string())
+            }
+            TypeCheckError::InvalidAttribute { .. } => {
+                Some("use the attribute syntax documented in readme.md".to_string())
+            }
+            TypeCheckError::RefutableLetPattern { .. } => {
+                Some("replace the `let` with a `match` that covers all cases".to_string())
+            }
+            TypeCheckError::OrPatternBindingMismatch { .. } => {
+                Some("bind the same variable names in every `or` alternative".to_string())
+            }
         };
         Diagnostic {
             level: DiagnosticLevel::Error,

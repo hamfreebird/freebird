@@ -163,6 +163,22 @@ struct LoopContext {
     saw_continue: bool,
 }
 
+/// 模式取值路径：从被匹配值出发逐层取出子值。
+#[derive(Debug, Clone, Copy)]
+enum PatternPathStep {
+    /// 结构体字段 / 元组元素 / 枚举载荷（载荷位于 index 1）
+    Field(usize),
+    /// 引用模式：先解引用
+    Deref,
+}
+
+/// 模式绑定：变量名 + 从被匹配值到该变量的路径。
+#[derive(Debug, Clone)]
+struct PatternBinding {
+    name: String,
+    path: Vec<PatternPathStep>,
+}
+
 /// MIR 生成器 — 将 HIR 翻译为 MIR 指令序列
 pub struct MirGen {
     mir: Vec<MirInst>,
@@ -449,11 +465,34 @@ impl MirGen {
         }
         match stmt {
             HirStmt::Let { pattern, init, .. } => {
-                // 求值 RHS（如果有）
-                if let Some(init_expr) = init {
-                    self.gen_expr(init_expr, fn_sig);
-                    if self.reachable {
-                        self.bind_pattern(pattern);
+                let Some(init_expr) = init else { return };
+                match pattern {
+                    // `let _ = expr;` 只求值并丢弃结果。
+                    ast::Pattern::Wildcard(_) => {
+                        let before = self.stack.len();
+                        self.gen_expr(init_expr, fn_sig);
+                        if self.reachable {
+                            while self.stack.len() > before {
+                                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                                self.stack.pop();
+                            }
+                        }
+                    }
+                    // 变量绑定与多值元组解构保持多槽布局。
+                    ast::Pattern::Var(_, _) | ast::Pattern::Tuple(_, _, _) => {
+                        self.gen_expr(init_expr, fn_sig);
+                        if self.reachable {
+                            self.bind_pattern(pattern);
+                        }
+                    }
+                    // 结构体/引用等单值聚合模式：先固化为隐藏变量，再逐字段
+                    // 取出并绑定，最后移除隐藏槽。
+                    _ => {
+                        self.gen_expr_single(init_expr, fn_sig);
+                        if !self.reachable {
+                            return;
+                        }
+                        self.bind_single_pattern(pattern);
                     }
                 }
             }
@@ -568,6 +607,34 @@ impl MirGen {
             }
             _ => {}
         }
+    }
+
+    /// 绑定单槽聚合模式（结构体、引用等）。
+    ///
+    /// 栈顶是被解构的聚合值；先绑定到隐藏变量，再按路径取子值，
+    /// 最后把隐藏变量槽从栈上移除。
+    fn bind_single_pattern(&mut self, pattern: &ast::Pattern) {
+        let hidden = self.fresh_hidden_name("let");
+        self.mir.push(MirInst::BindVar { name: hidden.clone() });
+        self.stack.bind_top(hidden.clone());
+
+        let bindings = self.collect_pattern_bindings(pattern, &[]);
+        for binding in &bindings {
+            self.gen_pattern_path(&hidden, &binding.path);
+            self.mir.push(MirInst::BindVar {
+                name: binding.name.clone(),
+            });
+            self.stack.bind_top(binding.name.clone());
+        }
+
+        // 隐藏变量位于所有绑定值之下。
+        let below = bindings.len();
+        if below > 0 {
+            self.mir.push(MirInst::Roll { n: below as i32 });
+            self.stack.roll(below as i32);
+        }
+        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+        self.stack.pop();
     }
 
     fn gen_expr(&mut self, expr: &HirExpr, fn_sig: &FnSignature) {
@@ -1157,174 +1224,154 @@ impl MirGen {
                 self.stack.push_temp(); // enum value
             }
             HirExpr::Match(scrutinee, arms, _) => {
-                self.gen_expr(scrutinee, fn_sig);
+                // 被匹配表达式先固化到一个隐藏变量，后续每个模式都从该变量
+                // 重新取值，避免在分支检查/guard/清理过程中反复搬运原值。
+                self.gen_expr_single(scrutinee, fn_sig);
                 if !self.reachable {
                     return;
                 }
 
-                enum MatchCheck {
-                    Enum(u32),
-                    Lit(ast::Literal),
-                    Any,
-                }
+                let scrutinee_var = self.fresh_hidden_name("match");
+                self.enter_scope();
+                self.mir.push(MirInst::BindVar { name: scrutinee_var.clone() });
+                self.stack.bind_top(scrutinee_var.clone());
+                let base = self.stack.clone();
+                let match_scope_depth = self.scope_depth;
 
                 let end_label = self.labels.fresh();
-                let fail_label = self.labels.fresh();
-
-                // 先规划检查顺序；遇到无 guard 的变量/通配模式即可终止后续分支。
-                let mut plans: Vec<(&HirMatchArm, MatchCheck, Option<(String, bool)>)> =
-                    Vec::new();
-                for arm in arms {
-                    let (check, binding, terminal) = match &arm.pattern {
-                        ast::Pattern::Enum { name, variant, inner, .. } => {
-                            let tag = self.variant_tag_for_pattern(name, variant);
-                            let binding = match inner.as_deref() {
-                                Some(ast::Pattern::Var(name, _)) => {
-                                    Some((name.clone(), true))
-                                }
-                                _ => None,
-                            };
-                            (MatchCheck::Enum(tag), binding, false)
-                        }
-                        ast::Pattern::Lit(lit, _) => {
-                            (MatchCheck::Lit(lit.clone()), None, false)
-                        }
-                        ast::Pattern::Var(name, _) => (
-                            MatchCheck::Any,
-                            Some((name.clone(), false)),
-                            arm.guard.is_none(),
-                        ),
-                        ast::Pattern::Wildcard(_) => {
-                            (MatchCheck::Any, None, arm.guard.is_none())
-                        }
-                        _ => (MatchCheck::Any, None, false),
-                    };
-                    plans.push((arm, check, binding));
-                    if terminal {
-                        break;
-                    }
-                }
-
+                let no_match_label = self.labels.fresh();
                 let check_labels: Vec<usize> =
-                    plans.iter().map(|_| self.labels.fresh()).collect();
+                    arms.iter().map(|_| self.labels.fresh()).collect();
                 let body_labels: Vec<usize> =
-                    plans.iter().map(|_| self.labels.fresh()).collect();
+                    arms.iter().map(|_| self.labels.fresh()).collect();
 
-                // 检查块：匹配则跳转到对应分支体，否则继续下一个检查。
-                for (i, (_, check, _)) in plans.iter().enumerate() {
-                    self.mir.push(MirInst::Mark(check_labels[i]));
-                    match check {
-                        MatchCheck::Enum(tag) => {
-                            self.mir.push(MirInst::EnumTag { total_slots: 0 });
-                            self.stack.push_temp();
-                            self.mir.push(MirInst::Push {
-                                value: Value::I32(*tag as i64),
-                                ty: TypeId::I32,
-                            });
-                            self.stack.push_temp();
-                            self.mir.push(MirInst::Eq);
-                            self.stack.pop();
-                            self.stack.pop();
-                            self.stack.push_temp();
-                            self.mir.push(MirInst::Jump(body_labels[i]));
-                            self.stack.pop();
-                        }
-                        MatchCheck::Lit(lit) => {
-                            self.mir.push(MirInst::Dup { ty: TypeId::Unknown });
-                            self.stack.dup();
-                            self.mir.push(MirInst::Push {
-                                value: literal_to_value(lit),
-                                ty: TypeId::Unknown,
-                            });
-                            self.stack.push_temp();
-                            self.mir.push(MirInst::Eq);
-                            self.stack.pop();
-                            self.stack.pop();
-                            self.stack.push_temp();
-                            self.mir.push(MirInst::Jump(body_labels[i]));
-                            self.stack.pop();
-                        }
-                        MatchCheck::Any => {
-                            // 带 guard 的通配/变量模式失败时会跳到下一个检查标签。
-                            // 用恒真条件跳转而非无条件跳转，保持 fall-through 在
-                            // Stardust 单遍代码生成中可达（条件跳转不终止当前路径）。
-                            self.mir.push(MirInst::Push {
-                                value: Value::Bool(true),
-                                ty: TypeId::Bool,
-                            });
-                            self.stack.push_temp();
-                            self.mir.push(MirInst::Jump(body_labels[i]));
-                            self.stack.pop();
-                        }
-                    }
-                }
-
-                // 分支体从“scrutinee 仍在栈上”的同一状态出发。
-                let body_base = self.stack.clone();
-
-                // 所有模式均未匹配：丢弃 scrutinee。
-                self.mir.push(MirInst::Mark(fail_label));
-                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
-                self.stack.pop();
-                let fail_state = self.stack.clone();
-                self.mir.push(MirInst::UncondJump(end_label));
-
-                // 分支体发散（break/continue/return）不会污染后续分支。
-                let match_outer_depth = self.scope_depth;
-                let mut merge_state: Option<StackTracker> = None;
-
-                // 分支体。
-                for (i, (arm, _, binding)) in plans.iter().enumerate() {
-                    self.mir.push(MirInst::Mark(body_labels[i]));
-                    self.stack = body_base.clone();
-                    self.reachable = true;
-                    self.enter_scope();
-
-                    let mut unwanted = 1; // scrutinee 本身
-                    let mut guard_unwanted = 0;
-                    match binding {
-                        Some((name, true)) => {
-                            // 枚举载荷位于 Value::Tuple 的 index 1。FieldAccess
-                            // 会弹出聚合值，因此先 Dup 保留 scrutinee 供清理及
-                            // guard 失败后的后续模式检查。
-                            self.mir.push(MirInst::Dup { ty: TypeId::Unknown });
-                            self.stack.dup();
-                            self.mir.push(MirInst::FieldAccess { index: 1 });
-                            self.stack.pop();
-                            self.stack.push_temp();
-                            self.mir.push(MirInst::BindVar { name: name.clone() });
-                            self.stack.update_var(0, name.clone());
-                            unwanted += 1;
-                            guard_unwanted = 1;
-                        }
-                        Some((name, false)) => {
-                            self.mir.push(MirInst::BindVar { name: name.clone() });
-                            self.stack.update_var(0, name.clone());
-                        }
-                        None => {}
-                    }
-
-                    let next_label = check_labels
+                // ── 模式检查 ──
+                // 每个检查从“只有隐藏被匹配变量”的栈状态出发：
+                // 模式条件为真 → 跳 bod 分支体；为假 → 跳下一个检查。
+                for (i, arm) in arms.iter().enumerate() {
+                    let next_check = check_labels
                         .get(i + 1)
                         .copied()
-                        .unwrap_or(fail_label);
-                    if let Some(state) = self.gen_match_guard_and_body(
-                        arm,
-                        fn_sig,
-                        unwanted,
-                        guard_unwanted,
-                        end_label,
-                        next_label,
-                    ) {
-                        merge_state = Some(state);
-                    }
-                    self.scope_depth = match_outer_depth;
+                        .unwrap_or(no_match_label);
+                    self.mir.push(MirInst::Mark(check_labels[i]));
+                    self.reachable = true;
+                    self.stack = base.clone();
+
+                    self.gen_pattern_condition(&arm.pattern, &scrutinee_var, &[]);
+                    self.mir.push(MirInst::Not);
+                    self.mir.push(MirInst::Jump(next_check));
+                    self.stack.pop();
+
+                    self.mir.push(MirInst::UncondJump(body_labels[i]));
+                    self.reachable = false;
                 }
 
-                self.mir.push(MirInst::Mark(end_label));
-                // 未匹配路径总会跳到汇合点；优先采用正常分支留下的状态。
+                // ── 分支体 ──
+                let mut merge_state: Option<StackTracker> = None;
+                let mut max_results = 0usize;
+                for (i, arm) in arms.iter().enumerate() {
+                    let next_check = check_labels
+                        .get(i + 1)
+                        .copied()
+                        .unwrap_or(no_match_label);
+
+                    self.mir.push(MirInst::Mark(body_labels[i]));
+                    self.reachable = true;
+                    self.stack = base.clone();
+                    self.enter_scope();
+
+                    let bindings = self.collect_pattern_bindings(&arm.pattern, &[]);
+                    for binding in &bindings {
+                        self.gen_pattern_path(&scrutinee_var, &binding.path);
+                        self.mir.push(MirInst::BindVar {
+                            name: binding.name.clone(),
+                        });
+                        self.stack.bind_top(binding.name.clone());
+                    }
+                    let binding_state = self.stack.clone();
+
+                    let mut guard_skip = None;
+                    let mut guard_diverged = false;
+                    if let Some(guard) = &arm.guard {
+                        let skip_label = self.labels.fresh();
+                        self.gen_expr(guard, fn_sig);
+                        if !self.reachable {
+                            guard_diverged = true;
+                        } else {
+                            self.mir.push(MirInst::Not);
+                            self.mir.push(MirInst::Jump(skip_label));
+                            self.stack.pop();
+                            guard_skip = Some(skip_label);
+                        }
+                    }
+
+                    if !guard_diverged {
+                        let before_body = self.stack.len();
+                        self.gen_expr(&arm.body, fn_sig);
+                        if self.reachable {
+                            let results = self.stack.len().saturating_sub(before_body);
+                            max_results = max_results.max(results);
+                            if self.scope_depth > match_scope_depth {
+                                self.discard_below_results(bindings.len(), results);
+                                self.exit_scope();
+                            }
+                            merge_state = Some(self.stack.clone());
+                            self.mir.push(MirInst::UncondJump(end_label));
+                            self.reachable = false;
+                        }
+                    }
+
+                    if let Some(skip_label) = guard_skip {
+                        self.mir.push(MirInst::Mark(skip_label));
+                        self.reachable = true;
+                        self.stack = binding_state;
+                        self.scope_depth = match_scope_depth + 1;
+                        self.discard_below_results(bindings.len(), 0);
+                        self.exit_scope();
+                        self.mir.push(MirInst::UncondJump(next_check));
+                        self.reachable = false;
+                    }
+
+                    // break/continue/return 可能已回退作用域；下一个分支从
+                    // match 作用域重新开始生成。
+                    self.scope_depth = match_scope_depth;
+                }
+
+                // ── 所有模式都未匹配 ──
+                // 类型检查已保证穷尽性；这里仍生成一条兜底路径，保持 Stardust
+                // 后端的栈高度与分支状态一致。该路径在合法程序中不可达。
+                self.mir.push(MirInst::Mark(no_match_label));
                 self.reachable = true;
-                self.stack = merge_state.unwrap_or(fail_state);
+                self.stack = base.clone();
+                for _ in 0..max_results {
+                    self.mir.push(MirInst::Push {
+                        value: Value::I64(0),
+                        ty: TypeId::Unknown,
+                    });
+                    self.stack.push_temp();
+                }
+                self.mir.push(MirInst::UncondJump(end_label));
+
+                // ── 汇合点 ──
+                self.mir.push(MirInst::Mark(end_label));
+                self.reachable = true;
+                let result_state = merge_state.unwrap_or_else(|| {
+                    let mut state = base.clone();
+                    for _ in 0..max_results {
+                        state.push_temp();
+                    }
+                    state
+                });
+                let results = result_state.len().saturating_sub(base.len());
+                self.stack = result_state;
+                // 移除隐藏的被匹配变量，保留分支结果。
+                if results > 0 {
+                    self.mir.push(MirInst::Roll { n: results as i32 });
+                    self.stack.roll(results as i32);
+                }
+                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                self.stack.pop();
+                self.exit_scope();
             }
             HirExpr::StardustMacro(insts, _) => {
                 // 翻译 stardust! 宏指令为 MIR
@@ -1346,64 +1393,275 @@ impl MirGen {
         }
     }
 
-    // ─── 复合类型辅助方法 ───
+    // ─── 模式匹配辅助方法 ───
 
-    /// 生成 match 分支体：可选 guard、分支结果清理，并跳转到 merge 点。
-    fn gen_match_guard_and_body(
-        &mut self,
-        arm: &HirMatchArm,
-        fn_sig: &FnSignature,
-        unwanted: usize,
-        guard_unwanted: usize,
-        end_label: usize,
-        next_label: usize,
-    ) -> Option<StackTracker> {
-        let arm_outer_depth = self.scope_depth.saturating_sub(1);
-        // guard 失败路径从“绑定已完成、guard 尚未求值”的状态继续。
-        let body_start = self.stack.clone();
-        let mut guard_skip = None;
-        if let Some(guard) = &arm.guard {
-            let skip_label = self.labels.fresh();
-            self.gen_expr(guard, fn_sig);
-            if !self.reachable {
-                return None;
+    /// 求值表达式并确保结果占且仅占一个栈槽。
+    ///
+    /// 元组字面量在普通表达式里保持多槽布局（用于多值返回/解构），
+    /// 但作为 `match` 的被匹配值时必须合并成单个元组值，才能用统一的
+    /// FieldAccess 路径提取子值。
+    fn gen_expr_single(&mut self, expr: &HirExpr, fn_sig: &FnSignature) {
+        if let HirExpr::Tuple(elems, _) = expr {
+            for elem in elems {
+                self.gen_expr_single(elem, fn_sig);
             }
-            self.mir.push(MirInst::Not);
-            self.mir.push(MirInst::Jump(skip_label));
-            self.stack.pop();
-            guard_skip = Some(skip_label);
-        }
-
-        let before_body = self.stack.len();
-        self.gen_expr(&arm.body, fn_sig);
-        let results = self.stack.len().saturating_sub(before_body);
-
-        let mut merge = None;
-        if self.reachable {
-            // 分支体可能以 break/continue 提前跳出，此时作用域已经回退。
-            if self.scope_depth > arm_outer_depth {
-                self.exit_scope();
+            self.mir.push(MirInst::MakeArray {
+                count: elems.len() as u32,
+            });
+            for _ in elems {
+                self.stack.pop();
             }
-            self.discard_below_results(unwanted, results);
-            self.mir.push(MirInst::UncondJump(end_label));
-            merge = Some(self.stack.clone());
+            self.stack.push_temp();
+        } else {
+            self.gen_expr(expr, fn_sig);
         }
-
-        if let Some(skip_label) = guard_skip {
-            self.mir.push(MirInst::Mark(skip_label));
-            // guard 失败路径仍在本分支的运行时作用域内；该路径与分支体
-            // 是否发散无关，必须从绑定后的状态重新生成清理。
-            self.reachable = true;
-            self.stack = body_start;
-            self.scope_depth = arm_outer_depth + 1;
-            self.exit_scope();
-            // guard 失败时只移除分支绑定的临时值，保留 scrutinee 供后续模式检查。
-            self.discard_below_results(guard_unwanted, 0);
-            self.mir.push(MirInst::UncondJump(next_label));
-        }
-        self.scope_depth = arm_outer_depth;
-        merge
     }
+
+    /// 从隐藏的被匹配变量出发，按路径逐层取值，结果留在栈顶。
+    fn gen_pattern_path(&mut self, scrutinee_var: &str, path: &[PatternPathStep]) {
+        self.mir.push(MirInst::ReadVar {
+            name: scrutinee_var.to_string(),
+        });
+        self.stack.push_temp();
+        for step in path {
+            match step {
+                PatternPathStep::Field(index) => {
+                    self.mir.push(MirInst::FieldAccess { index: *index });
+                    self.stack.pop();
+                    self.stack.push_temp();
+                }
+                PatternPathStep::Deref => {
+                    self.mir.push(MirInst::Deref);
+                    self.stack.pop();
+                    self.stack.push_temp();
+                }
+            }
+        }
+    }
+
+    /// 生成模式条件：消费一个按路径取出的值，压入 bool。
+    fn gen_pattern_condition(
+        &mut self,
+        pattern: &ast::Pattern,
+        scrutinee_var: &str,
+        path: &[PatternPathStep],
+    ) {
+        match pattern {
+            ast::Pattern::Var(_, _) | ast::Pattern::Wildcard(_) => {
+                self.mir.push(MirInst::Push {
+                    value: Value::Bool(true),
+                    ty: TypeId::Bool,
+                });
+                self.stack.push_temp();
+            }
+            ast::Pattern::Lit(lit, _) => {
+                self.gen_pattern_path(scrutinee_var, path);
+                self.mir.push(MirInst::Push {
+                    value: literal_to_value(lit),
+                    ty: TypeId::Unknown,
+                });
+                self.stack.push_temp();
+                self.mir.push(MirInst::Eq);
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
+            }
+            ast::Pattern::Tuple(elems, _, _) => {
+                for (index, elem) in elems.iter().enumerate() {
+                    let mut sub_path = path.to_vec();
+                    sub_path.push(PatternPathStep::Field(index));
+                    self.gen_pattern_condition(elem, scrutinee_var, &sub_path);
+                }
+                self.combine_pattern_conditions(elems.len(), MirInst::And);
+            }
+            ast::Pattern::Struct { name, fields, .. } => {
+                for (order, (field, field_pattern)) in fields.iter().enumerate() {
+                    let index = self.pattern_struct_field_index(name, field, order);
+                    let mut sub_path = path.to_vec();
+                    sub_path.push(PatternPathStep::Field(index));
+                    match field_pattern {
+                        Some(pat) => {
+                            self.gen_pattern_condition(pat, scrutinee_var, &sub_path)
+                        }
+                        None => {
+                            // 字段简写只做绑定，不附加检查。
+                            let _ = sub_path;
+                            self.mir.push(MirInst::Push {
+                                value: Value::Bool(true),
+                                ty: TypeId::Bool,
+                            });
+                            self.stack.push_temp();
+                        }
+                    }
+                }
+                self.combine_pattern_conditions(fields.len(), MirInst::And);
+            }
+            ast::Pattern::Enum { name, variant, inner, .. } => {
+                let tag = self.variant_tag_for_pattern(name, variant);
+                self.gen_pattern_tag_condition(scrutinee_var, path, tag);
+                if let Some(inner) = inner {
+                    let mut sub_path = path.to_vec();
+                    sub_path.push(PatternPathStep::Field(1));
+                    self.gen_pattern_condition(inner, scrutinee_var, &sub_path);
+                    self.mir.push(MirInst::And);
+                    self.stack.pop();
+                    self.stack.pop();
+                    self.stack.push_temp();
+                }
+            }
+            ast::Pattern::Ref(inner, _, _) => {
+                let mut sub_path = path.to_vec();
+                sub_path.push(PatternPathStep::Deref);
+                self.gen_pattern_condition(inner, scrutinee_var, &sub_path);
+            }
+            ast::Pattern::Or(patterns, _) => {
+                for pattern in patterns {
+                    self.gen_pattern_condition(pattern, scrutinee_var, path);
+                }
+                self.combine_pattern_conditions(patterns.len(), MirInst::Or);
+            }
+        }
+    }
+
+    /// 多个条件已依次压在栈上；把它们合并成一个 bool。
+    fn combine_pattern_conditions(&mut self, count: usize, op: MirInst) {
+        if count == 0 {
+            self.mir.push(MirInst::Push {
+                value: Value::Bool(true),
+                ty: TypeId::Bool,
+            });
+            self.stack.push_temp();
+            return;
+        }
+        for _ in 1..count {
+            self.mir.push(op.clone());
+            self.stack.pop();
+            self.stack.pop();
+            self.stack.push_temp();
+        }
+    }
+
+    /// 枚举标签检查：保留聚合值并读取标签，然后用 Swap+Pop 丢弃聚合值。
+    fn gen_pattern_tag_condition(
+        &mut self,
+        scrutinee_var: &str,
+        path: &[PatternPathStep],
+        tag: u32,
+    ) {
+        self.gen_pattern_path(scrutinee_var, path);
+        self.mir.push(MirInst::EnumTag { total_slots: 0 });
+        self.stack.push_temp();
+        self.mir.push(MirInst::Swap);
+        self.stack.swap();
+        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+        self.stack.pop();
+        self.mir.push(MirInst::Push {
+            value: Value::I32(tag as i64),
+            ty: TypeId::I32,
+        });
+        self.stack.push_temp();
+        self.mir.push(MirInst::Eq);
+        self.stack.pop();
+        self.stack.pop();
+        self.stack.push_temp();
+    }
+
+    /// 收集模式中的变量绑定及其取值路径。
+    fn collect_pattern_bindings(
+        &self,
+        pattern: &ast::Pattern,
+        path: &[PatternPathStep],
+    ) -> Vec<PatternBinding> {
+        let mut bindings = Vec::new();
+        self.collect_pattern_bindings_into(pattern, path, &mut bindings);
+        bindings
+    }
+
+    fn collect_pattern_bindings_into(
+        &self,
+        pattern: &ast::Pattern,
+        path: &[PatternPathStep],
+        bindings: &mut Vec<PatternBinding>,
+    ) {
+        match pattern {
+            ast::Pattern::Var(name, _) => bindings.push(PatternBinding {
+                name: name.clone(),
+                path: path.to_vec(),
+            }),
+            ast::Pattern::Lit(_, _) | ast::Pattern::Wildcard(_) => {}
+            ast::Pattern::Tuple(elems, _, _) => {
+                for (index, elem) in elems.iter().enumerate() {
+                    let mut sub_path = path.to_vec();
+                    sub_path.push(PatternPathStep::Field(index));
+                    self.collect_pattern_bindings_into(elem, &sub_path, bindings);
+                }
+            }
+            ast::Pattern::Struct { name, fields, .. } => {
+                for (order, (field, field_pattern)) in fields.iter().enumerate() {
+                    let index = self.pattern_struct_field_index(name, field, order);
+                    let mut sub_path = path.to_vec();
+                    sub_path.push(PatternPathStep::Field(index));
+                    match field_pattern {
+                        Some(pat) => {
+                            self.collect_pattern_bindings_into(pat, &sub_path, bindings)
+                        }
+                        None => bindings.push(PatternBinding {
+                            name: field.clone(),
+                            path: sub_path,
+                        }),
+                    }
+                }
+            }
+            ast::Pattern::Enum { inner, .. } => {
+                if let Some(inner) = inner {
+                    let mut sub_path = path.to_vec();
+                    sub_path.push(PatternPathStep::Field(1));
+                    self.collect_pattern_bindings_into(inner, &sub_path, bindings);
+                }
+            }
+            ast::Pattern::Ref(inner, _, _) => {
+                let mut sub_path = path.to_vec();
+                sub_path.push(PatternPathStep::Deref);
+                self.collect_pattern_bindings_into(inner, &sub_path, bindings);
+            }
+            ast::Pattern::Or(patterns, _) => {
+                // 类型检查要求各分支绑定同名变量；MIR 使用第一个分支的路径。
+                if let Some(first) = patterns.first() {
+                    self.collect_pattern_bindings_into(first, path, bindings);
+                }
+            }
+        }
+    }
+
+    /// 结构体模式字段在聚合值中的索引。
+    fn pattern_struct_field_index(&self, name: &[String], field: &str, order: usize) -> usize {
+        let full = name.join("::");
+        let short = name.last().map(String::as_str).unwrap_or(full.as_str());
+        if let Some(def) = self
+            .type_table
+            .lookup_struct(&full)
+            .or_else(|| self.type_table.lookup_struct(short))
+            && let Some(field_def) = def.fields.iter().find(|f| f.name == field)
+        {
+            return field_def.index;
+        }
+        self.resolve_field_offset_by_name(field).unwrap_or(order)
+    }
+
+    fn resolve_field_offset_by_name(&self, field: &str) -> Option<usize> {
+        for (_, type_def) in self.type_table.iter() {
+            if let crate::typeck::type_table::TypeDef::Struct(s) = type_def {
+                for f in &s.fields {
+                    if f.name == field {
+                        return Some(f.index);
+                    }
+                }
+            }
+        }
+        field.parse::<usize>().ok()
+    }
+
+    // ─── 复合类型辅助方法 ───
 
     /// 在保留栈顶 `results` 个结果的前提下，移除其下方的 `unwanted` 个槽。
     fn discard_below_results(&mut self, unwanted: usize, results: usize) {
@@ -1427,44 +1685,6 @@ impl MirGen {
             .variant_tag(&full, variant)
             .or_else(|| self.type_table.variant_tag(last, variant))
             .unwrap_or(0)
-    }
-
-    /// 从表达式推断枚举名（尝试所有已注册枚举）
-    fn infer_enum_name(&self, expr: &HirExpr) -> String {
-        match expr {
-            HirExpr::EnumLit { name, .. } => name.join("::"),
-            HirExpr::Var(_) => {
-                // 遍历所有枚举，返回第一个（作为最佳猜测）
-                // 未来需要类型标注来精确判断
-                for (name, def) in self.type_table.iter() {
-                    if matches!(def, crate::typeck::type_table::TypeDef::Enum(_)) {
-                        return name.clone();
-                    }
-                }
-                "?".to_string()
-            }
-            _ => "?".to_string(),
-        }
-    }
-
-    /// 从表达式推断枚举总槽数
-    fn infer_enum_slots(&self, expr: &HirExpr) -> u32 {
-        match expr {
-            HirExpr::EnumLit { name, .. } => {
-                self.type_table.lookup_enum(&name.join("::"))
-                    .map(|e| e.total_slots)
-                    .unwrap_or(2)
-            }
-            _ => {
-                // 尝试从已注册枚举获取槽数
-                for (_, def) in self.type_table.iter() {
-                    if let crate::typeck::type_table::TypeDef::Enum(e) = def {
-                        return e.total_slots;
-                    }
-                }
-                2
-            }
-        }
     }
 
     fn resolve_field_offset(&self, _expr: &HirExpr, field: &str) -> usize {
@@ -1692,9 +1912,11 @@ fn collect_pattern_names(pattern: &ast::Pattern, names: &mut Vec<String>) {
             }
         }
         ast::Pattern::Struct { fields, .. } => {
-            for (_, sub) in fields {
-                if let Some(sub) = sub {
-                    collect_pattern_names(sub, names);
+            for (field, sub) in fields {
+                match sub {
+                    Some(sub) => collect_pattern_names(sub, names),
+                    // 字段简写 `Point { x, y }` 绑定同名字段。
+                    None => names.push(field.clone()),
                 }
             }
         }

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process;
 
 use freebird::{build_stardust, run_source, RuntimeConfig};
+use freebird::borrowck::check_borrow;
 use freebird::diagnostics;
 use freebird::frontend::parse;
 use freebird::hir::lower;
@@ -88,22 +89,30 @@ fn main() {
             // JSON 诊断输出
             let (ast, parse_errors) = parse(&source);
             let (hir, resolve_errors) = lower(&ast);
-            let type_errors = if parse_errors.is_empty() && resolve_errors.is_empty() {
+            let mut type_errors = Vec::new();
+            let mut borrow_errors = Vec::new();
+            if parse_errors.is_empty() && resolve_errors.is_empty() {
                 let type_table = TypeTable::from_ast_decls(&ast.decls);
-                check_program(&hir, &type_table)
-            } else {
-                Vec::new()
-            };
+                type_errors = check_program(&hir, &type_table);
+                // 与 run/build 保持一致：类型检查通过后继续做借用/移动检查。
+                if type_errors.is_empty() {
+                    borrow_errors = check_borrow(&hir);
+                }
+            }
             let json = diagnostics::generate_diagnostic_json(
                 &source,
                 &parse_errors,
                 &resolve_errors,
                 &type_errors,
-                &[],
+                &borrow_errors,
             );
             println!("{json}");
 
-            if !parse_errors.is_empty() || !resolve_errors.is_empty() || !type_errors.is_empty() {
+            if !parse_errors.is_empty()
+                || !resolve_errors.is_empty()
+                || !type_errors.is_empty()
+                || !borrow_errors.is_empty()
+            {
                 process::exit(1);
             }
         }

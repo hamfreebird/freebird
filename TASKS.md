@@ -1,9 +1,25 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 204 unit + 33 integration 全绿（2026-11-21）。
-> 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)；本表保留已完成项的历史记录。
+> 当前：`cargo test` = 204 unit + 61 integration 全绿（2026-11-22；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28）。
+> 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)，能力矩阵见 [`STATUS.md`](STATUS.md)；本表保留已完成项的历史记录。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
+
+## M0 — 语义收敛（已完成，2026-11-22）
+
+| ID | 项目 | 结果 |
+|---|---|---|
+| M0-1 | `ret` 只接受整数立即数 | 其他表达式在解析阶段报 `InvalidRetOperand`；`ret n` 元数仍由类型检查校验 |
+| M0-2 | 循环外 `break`/`continue` | 类型检查报 `LoopControlOutsideLoop` |
+| M0-3 | `loop`/`break value` | M0 明确拒绝 `break value`、值位置的 `loop`；unit 循环保持可用；M2-6 再实现值语义 |
+| M0-4 | `match` 完整被匹配表达式 | 使用 `parse_expr_no_struct`，括号内恢复结构体字面量 |
+| M0-5 | 模式绑定与穷尽性 | 结构体/枚举嵌套/元组/字面量/`or`/引用模式；字段简写；未知变体/字段；非穷尽与 `or` 绑定不一致均报错；`let` 结构体解构 |
+| M0-6 | 空体函数与 extern | 普通空体报错；extern 调用报 `ExternCall`，不再返回残留参数 |
+| M0-7 | 属性解析 | `#[key=value]`、`#[key(value)]`、`#[stardust(id = N)]`；未知/非法属性报错；`main` 上的运行时限制在 VM 生效 |
+| M0-8 | `#id` / `use` | 明确报 `unsupported feature`，附规范章节 |
+| M0-9 | CLI `check` | 与 `run`/`build` 共用 parse → resolve → type → borrow；`m0_test` 覆盖 CLI 借用诊断 |
+| M0-10 | 编译失败测试 | 新增 `tests/m0_test.rs`，28 个测试，其中 18 个负向诊断 |
+| M0-11 | 特性矩阵 | 新增 `STATUS.md`；同步 `USAGE.md`、`AGENTS.md`、`ROADMAP.md` |
 
 ## P0 — 基础正确性与可验证性
 

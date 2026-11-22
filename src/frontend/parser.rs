@@ -37,13 +37,29 @@ impl Parser {
     }
 
     fn parse_decl(&mut self) -> Result<Decl, FrontendError> {
-        let _attrs = self.parse_attributes();
+        let attrs = self.parse_attributes()?;
 
         match self.peek() {
-            TokenKind::Fn => self.parse_fn().map(Decl::Fn),
-            TokenKind::Struct => self.parse_struct().map(Decl::Struct),
-            TokenKind::Enum => self.parse_enum().map(Decl::Enum),
-            TokenKind::Extern => self.parse_extern_block(),
+            TokenKind::Fn => self.parse_fn(attrs).map(Decl::Fn),
+            TokenKind::Struct => self.parse_struct(attrs).map(Decl::Struct),
+            TokenKind::Enum => self.parse_enum(attrs).map(Decl::Enum),
+            TokenKind::Extern => {
+                if !attrs.is_empty() {
+                    let span = attrs[0].span;
+                    return Err(FrontendError::new(
+                        FrontendErrorKind::UnexpectedToken {
+                            expected: "attributes on extern blocks are not supported; place them on each function"
+                                .to_string(),
+                            found: Token {
+                                kind: TokenKind::Hash,
+                                span,
+                            },
+                        },
+                        span,
+                    ));
+                }
+                self.parse_extern_block()
+            }
             TokenKind::Use => self.parse_use_decl(),
             _ => {
                 let token = self.advance();
@@ -60,7 +76,7 @@ impl Parser {
 
     // ─── 函数声明 ───
 
-    fn parse_fn(&mut self) -> Result<FnDecl, FrontendError> {
+    fn parse_fn(&mut self, attrs: Vec<Attribute>) -> Result<FnDecl, FrontendError> {
         let fn_span = self.expect(TokenKind::Fn)?.span;
         let name = self.expect_ident("function name")?;
 
@@ -95,7 +111,7 @@ impl Parser {
             params,
             return_type,
             body,
-            attrs: vec![],
+            attrs,
             span: fn_span,
         })
     }
@@ -120,7 +136,7 @@ impl Parser {
 
     // ─── 结构体声明 ───
 
-    fn parse_struct(&mut self) -> Result<StructDecl, FrontendError> {
+    fn parse_struct(&mut self, attrs: Vec<Attribute>) -> Result<StructDecl, FrontendError> {
         let struct_span = self.expect(TokenKind::Struct)?.span;
         let name = self.expect_ident("struct name")?;
         self.expect(TokenKind::LBrace)?;
@@ -128,7 +144,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
         let _ = self.eat(TokenKind::Semicolon);
 
-        Ok(StructDecl { name, fields, span: struct_span })
+        Ok(StructDecl { name, fields, attrs, span: struct_span })
     }
 
     fn parse_struct_fields(&mut self) -> Result<Vec<StructField>, FrontendError> {
@@ -151,7 +167,7 @@ impl Parser {
 
     // ─── 枚举声明 ───
 
-    fn parse_enum(&mut self) -> Result<EnumDecl, FrontendError> {
+    fn parse_enum(&mut self, attrs: Vec<Attribute>) -> Result<EnumDecl, FrontendError> {
         let enum_span = self.expect(TokenKind::Enum)?.span;
         let name = self.expect_ident("enum name")?;
         self.expect(TokenKind::LBrace)?;
@@ -159,7 +175,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
         let _ = self.eat(TokenKind::Semicolon);
 
-        Ok(EnumDecl { name, variants, span: enum_span })
+        Ok(EnumDecl { name, variants, attrs, span: enum_span })
     }
 
     fn parse_enum_variants(&mut self) -> Result<Vec<EnumVariant>, FrontendError> {
@@ -207,9 +223,9 @@ impl Parser {
 
         let mut items = Vec::new();
         while !self.check(TokenKind::RBrace) && !self.is_eof() {
-            let _attrs = self.parse_attributes();
+            let attrs = self.parse_attributes()?;
             if self.check(TokenKind::Fn) {
-                let fn_decl = self.parse_fn()?;
+                let fn_decl = self.parse_fn(attrs)?;
                 items.push(ExternItem::Fn(fn_decl));
             } else {
                 let token = self.advance();
@@ -499,7 +515,13 @@ impl Parser {
                 if self.eat(TokenKind::RParen) {
                     return Ok(Expr::Lit(Literal::Unit, span));
                 }
-                let expr = self.parse_expr(0)?;
+                // 括号内部恢复结构体字面量解析；这样 `if (S { x: 1 }).x { ... }`
+                // 和 `match (S { x: 1 }) { ... }` 都能正常工作。
+                let saved_no_struct = self.no_struct_literal;
+                self.no_struct_literal = 0;
+                let expr_result = self.parse_expr(0);
+                self.no_struct_literal = saved_no_struct;
+                let expr = expr_result?;
                 if self.eat(TokenKind::Comma) {
                     let mut elems = vec![expr];
                     loop {
@@ -567,10 +589,21 @@ impl Parser {
             TokenKind::Ret => {
                 self.advance();
                 let n = self.parse_expr(0)?;
-                if let Expr::Lit(Literal::Int(v, _), _) = &n {
-                    Ok(Expr::Ret(*v as i32, span))
-                } else {
-                    Ok(Expr::Ret(0, span))
+                match &n {
+                    Expr::Lit(Literal::Int(v, _), _) => Ok(Expr::Ret(*v as i32, span)),
+                    Expr::Unary(UnOp::Neg, inner, _) => match inner.as_ref() {
+                        Expr::Lit(Literal::Int(v, _), _) => Ok(Expr::Ret(-(*v as i32), span)),
+                        _ => Err(FrontendError::new(
+                            FrontendErrorKind::InvalidRetOperand { found: "expression".to_string() },
+                            expr_span_of(&n),
+                        )),
+                    },
+                    _ => Err(FrontendError::new(
+                        FrontendErrorKind::InvalidRetOperand {
+                            found: describe_expr(&n),
+                        },
+                        expr_span_of(&n),
+                    )),
                 }
             }
             TokenKind::Break => {
@@ -667,8 +700,9 @@ impl Parser {
 
     fn parse_match_expr(&mut self) -> Result<Expr, FrontendError> {
         let span = self.advance().span;
-        // 使用 parse_expr_prefix 避免 suffix 循环将 { 误解为 struct literal
-        let scrutinee = self.parse_expr_prefix()?;
+        // 被匹配表达式使用完整表达式解析，但禁止顶层 `{` 被当作结构体字面量；
+        // 括号内部会恢复结构体字面量（见 `(` 前缀分支）。
+        let scrutinee = self.parse_expr_no_struct(0)?;
         self.expect(TokenKind::LBrace)?;
         let arms = self.parse_match_arms()?;
         self.expect(TokenKind::RBrace)?;
@@ -798,6 +832,19 @@ impl Parser {
     // ─── 模式 ───
 
     fn parse_pattern(&mut self) -> Result<Pattern, FrontendError> {
+        let first = self.parse_pattern_atom()?;
+        if !self.check(TokenKind::Or) {
+            return Ok(first);
+        }
+        let span = self.peek_span();
+        let mut patterns = vec![first];
+        while self.eat(TokenKind::Or) {
+            patterns.push(self.parse_pattern_atom()?);
+        }
+        Ok(Pattern::Or(patterns, span))
+    }
+
+    fn parse_pattern_atom(&mut self) -> Result<Pattern, FrontendError> {
         match self.peek() {
             TokenKind::Ident(name) => {
                 let name = name.clone();
@@ -1159,28 +1206,34 @@ impl Parser {
 
     // ─── 属性 ───
 
-    fn parse_attributes(&mut self) -> Vec<Attribute> {
+    fn parse_attributes(&mut self) -> Result<Vec<Attribute>, FrontendError> {
         let mut attrs = Vec::new();
         while self.check(TokenKind::Hash) {
             let saved = self.pos;
             self.advance();
             if self.eat(TokenKind::LBracket) {
-                if let Ok(attr) = self.parse_attribute() {
-                    attrs.push(attr);
-                }
-                let _ = self.eat(TokenKind::RBracket);
+                let attr = self.parse_attribute()?;
+                self.expect(TokenKind::RBracket)?;
+                attrs.push(attr);
             } else {
                 self.pos = saved;
                 break;
             }
         }
-        attrs
+        Ok(attrs)
     }
 
     fn parse_attribute(&mut self) -> Result<Attribute, FrontendError> {
-        let name = self.expect_ident("attribute name")?;
+        let name = self.expect_attribute_name()?;
         let span = self.current_span();
         let mut args = Vec::new();
+
+        // 文档形式 `#[key=value]`：属性名本身作为键。
+        if self.eat(TokenKind::Eq) {
+            let value = self.parse_attribute_value()?;
+            args.push(AttributeArg::KeyValue(name.clone(), value));
+            return Ok(Attribute { name, args, span });
+        }
 
         if self.eat(TokenKind::LParen) {
             loop {
@@ -1189,7 +1242,7 @@ impl Parser {
                 }
                 let key = self.expect_ident("attribute arg")?;
                 if self.eat(TokenKind::Eq) {
-                    let value = self.expect_ident("attribute value")?;
+                    let value = self.parse_attribute_value()?;
                     args.push(AttributeArg::KeyValue(key, value));
                 } else {
                     args.push(AttributeArg::Value(key));
@@ -1202,6 +1255,93 @@ impl Parser {
         }
 
         Ok(Attribute { name, args, span })
+    }
+
+    /// 解析属性值：标识符、整数、浮点数、布尔、字符串或字符。
+    ///
+    /// 目前统一保存为字符串，由类型检查阶段按属性名解释。
+    fn parse_attribute_value(&mut self) -> Result<String, FrontendError> {
+        let span = self.peek_span();
+        let value = match self.peek() {
+            TokenKind::Ident(value) => {
+                self.advance();
+                value
+            }
+            TokenKind::IntLiteral(value, suffix) => {
+                self.advance();
+                let suffix = match suffix {
+                    TokenIntSuffix::None => "",
+                    TokenIntSuffix::I8 => "i8",
+                    TokenIntSuffix::I16 => "i16",
+                    TokenIntSuffix::I32 => "i32",
+                    TokenIntSuffix::I64 => "i64",
+                    TokenIntSuffix::Isize => "isize",
+                    TokenIntSuffix::U8 => "u8",
+                    TokenIntSuffix::U16 => "u16",
+                    TokenIntSuffix::U32 => "u32",
+                    TokenIntSuffix::U64 => "u64",
+                    TokenIntSuffix::Usize => "usize",
+                };
+                format!("{value}{suffix}")
+            }
+            TokenKind::FloatLiteral(value) => {
+                self.advance();
+                value.to_string()
+            }
+            TokenKind::BoolLiteral(_) | TokenKind::True | TokenKind::False => {
+                let value = match self.peek() {
+                    TokenKind::BoolLiteral(value) => value,
+                    TokenKind::True => true,
+                    _ => false,
+                };
+                self.advance();
+                value.to_string()
+            }
+            TokenKind::StringLiteral(value) => {
+                self.advance();
+                value
+            }
+            TokenKind::CharLiteral(value) => {
+                self.advance();
+                char::from_u32(value)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| value.to_string())
+            }
+            TokenKind::Minus => {
+                self.advance();
+                match self.peek() {
+                    TokenKind::IntLiteral(value, _) => {
+                        self.advance();
+                        format!("-{value}")
+                    }
+                    TokenKind::FloatLiteral(value) => {
+                        self.advance();
+                        format!("-{value}")
+                    }
+                    _ => {
+                        let found = self.peek_token().clone();
+                        return Err(FrontendError::new(
+                            FrontendErrorKind::UnexpectedToken {
+                                expected: "number after `-` in attribute value".to_string(),
+                                found,
+                            },
+                            span,
+                        ));
+                    }
+                }
+            }
+            _ => {
+                let found = self.peek_token().clone();
+                return Err(FrontendError::new(
+                    FrontendErrorKind::UnexpectedToken {
+                        expected: "attribute value".to_string(),
+                        found,
+                    },
+                    span,
+                ));
+            }
+        };
+        Ok(value)
     }
 
     // ─── 辅助方法 ───
@@ -1260,6 +1400,22 @@ impl Parser {
             Ok(self.advance())
         } else {
             Err(self.unexpected_token(&format!("{kind}")))
+        }
+    }
+
+    /// 属性名允许使用关键字形式的名称，例如 `#[stardust(id = 1)]`。
+    fn expect_attribute_name(&mut self) -> Result<String, FrontendError> {
+        match self.peek() {
+            TokenKind::Ident(name) => {
+                let name = name.clone();
+                self.advance();
+                Ok(name)
+            }
+            TokenKind::Stardust => {
+                self.advance();
+                Ok("stardust".to_string())
+            }
+            _ => Err(self.unexpected_token("attribute name")),
         }
     }
 
@@ -1349,6 +1505,50 @@ fn convert_suffix(s: &TokenIntSuffix) -> IntSuffix {
         TokenIntSuffix::U32 => IntSuffix::U32,
         TokenIntSuffix::U64 => IntSuffix::U64,
         TokenIntSuffix::Usize => IntSuffix::Usize,
+    }
+}
+
+/// `ret` 诊断中使用的表达式来源描述。
+fn describe_expr(expr: &Expr) -> String {
+    match expr {
+        Expr::Var(name, _) => name.clone(),
+        Expr::Lit(_, _) => "literal".to_string(),
+        Expr::Call { .. } => "function call".to_string(),
+        Expr::Binary(_, _, _, _) => "binary expression".to_string(),
+        _ => "expression".to_string(),
+    }
+}
+
+fn expr_span_of(expr: &Expr) -> Span {
+    match expr {
+        Expr::Lit(_, span)
+        | Expr::Var(_, span)
+        | Expr::IdRef(_, span)
+        | Expr::Deref(_, span)
+        | Expr::Ref(_, _, span)
+        | Expr::Binary(_, _, _, span)
+        | Expr::Unary(_, _, span)
+        | Expr::Call { span, .. }
+        | Expr::FieldAccess(_, _, span)
+        | Expr::Index(_, _, span)
+        | Expr::Tuple(_, span)
+        | Expr::Array(_, span)
+        | Expr::Repeat(_, _, span)
+        | Expr::StructLit { span, .. }
+        | Expr::EnumLit { span, .. }
+        | Expr::If(_, _, _, span)
+        | Expr::Match(_, _, span)
+        | Expr::Loop(_, span)
+        | Expr::While(_, _, span)
+        | Expr::For { span, .. }
+        | Expr::Block(_, span)
+        | Expr::Break(_, span)
+        | Expr::Continue(span)
+        | Expr::Return(_, span)
+        | Expr::Ret(_, span)
+        | Expr::Unsafe(_, span)
+        | Expr::StardustMacro(_, span)
+        | Expr::As(_, _, span) => *span,
     }
 }
 

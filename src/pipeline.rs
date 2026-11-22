@@ -15,6 +15,7 @@ use crate::vm::Vm;
 
 /// 编译执行流水线：源码 → AST → HIR → MIR → VM 执行
 pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String> {
+    let mut config = config;
     // 1. 词法+语法解析
     let (ast, ast_errors) = parse(source);
     if !ast_errors.is_empty() {
@@ -45,6 +46,9 @@ pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String
         let msg: Vec<String> = borrow_errors.iter().map(|e| e.to_string()).collect();
         return Err(format!("Borrow errors:\n{}", msg.join("\n")));
     }
+
+    // 2.7 `main` 上的运行时配置属性覆盖调用方配置。
+    apply_runtime_attributes(&hir, &mut config);
 
     // 3. MIR 生成
     let mut generator = MirGen::new().with_type_table(type_table);
@@ -80,6 +84,37 @@ pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String
         .map_err(|e| format!("VM error: {e}"))?;
 
     Ok(vm.output)
+}
+
+/// 从 `main` 函数的属性读取运行时限制并覆盖配置。
+///
+/// 值已在类型检查阶段校验为非负整数；这里只做防御性解析。
+fn apply_runtime_attributes(program: &crate::hir::types::HirProgram, config: &mut RuntimeConfig) {
+    use crate::frontend::ast::AttributeArg;
+
+    let main = program.decls.iter().find_map(|decl| match decl {
+        crate::hir::types::HirDecl::Fn(f) if f.name == "main" => Some(f),
+        _ => None,
+    });
+    let Some(main) = main else { return };
+
+    for attr in &main.attrs {
+        let value = attr.args.iter().find_map(|arg| match arg {
+            AttributeArg::KeyValue(key, value) if key == &attr.name => Some(value.as_str()),
+            AttributeArg::Value(value) => Some(value.as_str()),
+            _ => None,
+        });
+        let Some(value) = value.and_then(|value| value.parse::<u64>().ok()) else {
+            continue;
+        };
+        match attr.name.as_str() {
+            "max_stack" => config.max_stack = value as usize,
+            "max_call_depth" => config.max_call_depth = value as usize,
+            "max_steps" => config.max_steps = value,
+            "time_limit" => config.time_limit = Some(value),
+            _ => {}
+        }
+    }
 }
 
 /// 检查源码（词法+语法+名称解析+基础类型检查，不执行）

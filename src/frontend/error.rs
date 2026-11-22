@@ -33,6 +33,13 @@ pub enum FrontendErrorKind {
     },
     UnknownAttribute(String),
     MissingAttributeArg(String),
+    InvalidAttributeValue {
+        attribute: String,
+        found: String,
+    },
+    InvalidRetOperand {
+        found: String,
+    },
 
     // 语义错误（前端检测）
     MixedCallArgs(Span),
@@ -76,6 +83,13 @@ impl fmt::Display for FrontendErrorKind {
             FrontendErrorKind::MissingAttributeArg(name) => {
                 write!(f, "missing argument for attribute #[{name}]")
             }
+            FrontendErrorKind::InvalidAttributeValue { attribute, found } => {
+                write!(f, "invalid value `{found}` for attribute #[{attribute}]")
+            }
+            FrontendErrorKind::InvalidRetOperand { found } => write!(
+                f,
+                "`ret` expects an integer literal, found `{found}`; use `return` for general expressions"
+            ),
             FrontendErrorKind::MixedCallArgs(span) => {
                 write!(f, "{span}: cannot mix named and positional arguments")
             }

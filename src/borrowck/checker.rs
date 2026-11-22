@@ -805,8 +805,11 @@ fn pattern_var_names(pattern: &ast::Pattern) -> Vec<String> {
         }
         ast::Pattern::Struct { fields, .. } => fields
             .iter()
-            .filter_map(|(_, p)| p.as_ref())
-            .flat_map(pattern_var_names)
+            .flat_map(|(field, p)| match p {
+                Some(p) => pattern_var_names(p),
+                // 字段简写 `Point { x, y }` 绑定同名字段。
+                None => vec![field.clone()],
+            })
             .collect(),
         ast::Pattern::Enum { inner, .. } => inner
             .as_ref()

@@ -311,6 +311,7 @@ pub struct FnParam {
 pub struct StructDecl {
     pub name: String,
     pub fields: Vec<StructField>,
+    pub attrs: Vec<Attribute>,
     pub span: Span,
 }
 
@@ -326,6 +327,7 @@ pub struct StructField {
 pub struct EnumDecl {
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    pub attrs: Vec<Attribute>,
     pub span: Span,
 }
 

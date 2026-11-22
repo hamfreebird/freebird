@@ -565,7 +565,14 @@ impl Lowering {
     fn pattern_var_names(&self, pattern: &ast::Pattern) -> Vec<String> {
         let mut names = Vec::new();
         Self::collect_pattern_var_names(pattern, &mut names);
-        names
+        // or 模式各分支可能绑定同名变量；声明一次即可。
+        let mut unique = Vec::new();
+        for name in names {
+            if !unique.contains(&name) {
+                unique.push(name);
+            }
+        }
+        unique
     }
 
     fn collect_pattern_var_names(pattern: &ast::Pattern, names: &mut Vec<String>) {
@@ -577,9 +584,11 @@ impl Lowering {
                 }
             }
             ast::Pattern::Struct { fields, .. } => {
-                for (_, field_pattern) in fields {
-                    if let Some(pat) = field_pattern {
-                        Self::collect_pattern_var_names(pat, names);
+                for (field_name, field_pattern) in fields {
+                    match field_pattern {
+                        Some(pat) => Self::collect_pattern_var_names(pat, names),
+                        // `Point { x, y }` 简写会绑定同名字段。
+                        None => names.push(field_name.clone()),
                     }
                 }
             }
