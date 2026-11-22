@@ -14,3 +14,11 @@ jobs:
         run: cargo build --release
       - name: Test
         run: cargo test
+
+  differential:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: VM/Stardust differential tests
+        run: cargo test --test differential_test

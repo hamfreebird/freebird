@@ -33,9 +33,6 @@ pub struct CallFrame {
     /// Marks 表：Mark编号 → 指令索引（用于跳转）
     pub marks: HashMap<usize, usize>,
 
-    /// 当前 active 的远程栈 ID（用于 Vec/String 操作目标切换）
-    pub active_remote: Option<StackId>,
-
     /// 函数名（调试用）
     pub fn_name: Option<String>,
 }
@@ -53,7 +50,6 @@ impl CallFrame {
             ret_pc: 0,
             return_arity: 0,
             marks,
-            active_remote: None,
             fn_name: Some("main".to_string()),
         }
     }
@@ -79,7 +75,6 @@ impl CallFrame {
             ret_pc,
             return_arity,
             marks,
-            active_remote: None,
             fn_name,
         }
     }

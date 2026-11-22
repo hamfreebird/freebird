@@ -162,16 +162,9 @@ pub enum MirInst {
     MakeEnum { variant: usize, data_slots: u32 },
     EnumTag { total_slots: u32 }, // 读取枚举标签（total_slots = 1 + max_data_slots）
 
-    // === 远程栈操作 ===
-    AllocRemote,                 // 分配远程栈（pop capacity, push StackHandle）
-    FreeRemote,                  // 释放远程栈（pop StackId）
-    RemotePush,                  // 向远程栈 push
-    RemotePop,                   // 从远程栈 pop
-    RemoteLoad { index: u32 },   // 读取远程栈元素
-    RemoteStore { index: u32 },  // 写入远程栈元素
-    RemoteLen,                   // 读取远程栈 length
-    SwitchToRemote,              // 将当前栈上下文切换到指定远程栈
-    SwitchToLocal,               // 恢复本地栈上下文
+    // === 堆操作（stardust! 的 store/load）===
+    HeapStore,                   // 堆写：pop addr, pop value, heap[addr] = value
+    HeapLoad,                    // 堆读：pop addr, push heap[addr]
 
     // === I/O ===
     NumOut,
@@ -271,15 +264,8 @@ impl std::fmt::Display for MirInst {
                 data_slots,
             } => write!(f, "MakeEnum(variant={variant}, data_slots={data_slots})"),
             MirInst::EnumTag { total_slots } => write!(f, "EnumTag(total_slots={total_slots})"),
-            MirInst::AllocRemote => write!(f, "AllocRemote"),
-            MirInst::FreeRemote => write!(f, "FreeRemote"),
-            MirInst::RemotePush => write!(f, "RemotePush"),
-            MirInst::RemotePop => write!(f, "RemotePop"),
-            MirInst::RemoteLoad { index } => write!(f, "RemoteLoad({index})"),
-            MirInst::RemoteStore { index } => write!(f, "RemoteStore({index})"),
-            MirInst::RemoteLen => write!(f, "RemoteLen"),
-            MirInst::SwitchToRemote => write!(f, "SwitchToRemote"),
-            MirInst::SwitchToLocal => write!(f, "SwitchToLocal"),
+            MirInst::HeapStore => write!(f, "HeapStore"),
+            MirInst::HeapLoad => write!(f, "HeapLoad"),
             MirInst::NumOut => write!(f, "NumOut"),
             MirInst::NumIn => write!(f, "NumIn"),
             MirInst::CharOut => write!(f, "CharOut"),

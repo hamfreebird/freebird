@@ -36,8 +36,6 @@ pub enum VmError {
     ReturnArityMismatch { expected: u32, actual: u32 },
     /// 除零错误
     DivisionByZero,
-    /// 远程栈未找到
-    RemoteStackNotFound { sid: u64 },
     /// 数组/栈索引越界
     IndexOutOfBounds { index: i64, len: usize },
     /// 断言失败（调试用）
@@ -97,9 +95,6 @@ impl fmt::Display for VmError {
             }
             VmError::DivisionByZero => {
                 write!(f, "division by zero")
-            }
-            VmError::RemoteStackNotFound { sid } => {
-                write!(f, "remote stack not found: StackId({sid})")
             }
             VmError::IndexOutOfBounds { index, len } => {
                 write!(f, "index out of bounds: {index} (available depth {len})")

@@ -5,10 +5,10 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Commands
 
 - Build: `cargo build --release` (edition 2024, Rust 1.85+).
-- Test: `cargo test` — current baseline is 204 unit + 61 integration tests, all green (`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28).
-- Single test: `cargo test <test_name>`; integration only: `cargo test --test integration_test test_fib_program`, `cargo test --test m0_test`.
+- Test: `cargo test` — current baseline is 201 unit + 79 integration tests, all green (`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 16 + `tests/differential_test.rs` 2).
+- Single test: `cargo test <test_name>`; integration only: `cargo test --test integration_test test_fib_program`, `cargo test --test m0_test`, `cargo test --test m1_test`, `cargo test --test differential_test`.
 - CLI: `cargo run -- run <file.fb>`, `cargo run -- check <file.fb>`, `cargo run -- build [--target stardust|llvm] <file.fb>`, `cargo run -- repl`.
-- Run tests from the repo root: integration tests load fixtures via relative paths. `tests/programs/*.fb` are not auto-discovered (`enum_match.fb` is currently unused); add an explicit test for each new fixture.
+- Run tests from the repo root: integration tests load fixtures via relative paths. `tests/programs/*.fb` and `examples/*.fb` are discovered automatically by `tests/differential_test.rs`; add a same-named `.in` file for stdin. Add explicit tests for new behavior, and keep fixtures runnable on both backends.
 
 ## Toolchain gotchas
 
@@ -22,7 +22,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 - `run_source` applies `#[max_stack]`/`#[max_call_depth]`/`#[max_steps]`/`#[time_limit]` from `main` to its `RuntimeConfig`. Attribute syntax/name/value validation lives in `TypeChecker::validate_attributes`.
 - The `MirInst` enum lives in `src/vm/mir.rs`, not `src/mir/`; MIR generation is `src/mir/generator.rs`; the interpreter is `src/vm/mod.rs`. The VM is a dual stack (ElementId + value); read the dual-stack and `roll`/variable semantics in `readme.md` §3–4 before changing stack or variable operations.
 - `typeck` and `borrowck` are wired into `run_source` and `build_stardust`. Do not bypass them when adding new pipeline entry points.
-- `build --target stardust` runs and covers numeric/char values, variables, control flow (`for`/`while`/`loop`, `break`/`continue`), calls, recursion, I/O, `ret n`, scalar `as` casts, and heap-backed arrays/structs/enums/strings/Box/Vec. `file_read`/`file_write` use the bundled interpreter's `FileRead`/`FileWrite` instructions (`,` with 2/3 leading spaces), passing strings as `[chars..., len]`. Remote stacks remain placeholder comments; `&mut` references are backed by heap cells, so writes through `*p = v` propagate back to the original variable (including when the reference is passed to another function). `--target llvm` exits with "not implemented".
+- `build --target stardust` runs and covers numeric/char values, variables, control flow (`for`/`while`/`loop`, `break`/`continue`), calls, recursion, I/O, `ret n`, scalar `as` casts, and heap-backed arrays/structs/enums/strings/Box/Vec. `file_read`/`file_write` use the bundled interpreter's `FileRead`/`FileWrite` instructions (`,` with 2/3 leading spaces), passing strings as `[chars..., len]`. `Vec`/`String`/`Box` use global heap blocks (`[len, cap, elems...]`), documented in `docs/adr/0001-logical-remote-stack.md`; `&mut` references are backed by heap cells, so writes through `*p = v` propagate back to the original variable (including when the reference is passed to another function). `--target llvm` exits with "not implemented".
 
 ## Language surface
 
@@ -31,11 +31,11 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 - `match` supports struct, enum (including nested payloads), tuple, literal, `or`, reference and `_` patterns. Type checking rejects non-exhaustive matches, unknown variants/fields, `or` alternatives with different bindings, and refutable `let` patterns.
 - `for pattern in iterable` iterates arrays, `Vec<T>`, `String` (yielding `char`), and `&Vec<T>`/`&String`; `continue` and `break` unwind loop-body scopes and stack slots correctly in both VM and Stardust backends. `ret n` requires an integer literal and arity matching the signature; `as` supports scalar numeric/`char`/`bool` conversions.
 - M0 rejects `break value`, value-position `loop`, `#id`, `use`, and `extern` calls at compile time. `extern "stardust"` declarations and `#[stardust(id = N)]` parse and check, but FFI is not implemented.
-- Stardust backend limits: remote stacks are placeholders; `read_line` decodes UTF-8 into a growable block and does not special-case EOF; runtime-limit attributes only affect the VM.
+- Stardust backend limits: heap blocks are never reclaimed (M1-3, needs refcounting; see `docs/adr/0002-heap-reclamation-deferred.md`); `read_line` matches VM's UTF-8 lossy decoding but cannot detect EOF (the interpreter's `CharIn` reports an I/O error); out-of-bounds indexing triggers a division-by-zero trap because the interpreter has no custom error instruction; runtime-limit attributes only affect the VM; `stardust!` `Reverse` is unsupported (M3-4).
 
 ## I/O quirks
 
 - `run_source` returns VM output bytes; the CLI prints them once. Assert against the returned bytes rather than process stdout.
-- Stardust `read_line` decodes UTF-8 bytes into a growable character block (starts at 16 characters, doubles as needed); invalid leading bytes become U+FFFD and EOF is not special-cased. A line ends at `\n`, and trailing `\r` characters are trimmed, so CRLF input matches VM (`read_line` trims `\n`/`\r`).
+- Stardust `read_line` decodes UTF-8 into a growable character block (starts at 16 characters, doubles as needed); invalid leading/continuation bytes and overlong/surrogate/out-of-range code points become U+FFFD byte-for-byte like `String::from_utf8_lossy`. A line ends at `\n`, and trailing `\r` characters are trimmed, so CRLF input matches VM (`read_line` trims `\n`/`\r`). EOF differs: VM returns an empty string, while the interpreter's `CharIn` aborts with an I/O error.
 - VM and Stardust both resolve `&mut` writes across call frames: `fn set(p: &mut i64) { *p = 42; }` propagates back to the caller's variable.
 - `print(x); print(x)` works now: the builtin call is no longer treated as leaving an extra value on the stack.

@@ -1846,11 +1846,11 @@ impl MirGen {
                 self.stack.pop(); self.stack.pop(); self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Store => {
-                self.mir.push(MirInst::RemoteStore { index: 0 });
+                self.mir.push(MirInst::HeapStore);
                 self.stack.pop(); self.stack.pop();
             }
             crate::frontend::ast::StardustInst::Load => {
-                self.mir.push(MirInst::RemoteLoad { index: 0 });
+                self.mir.push(MirInst::HeapLoad);
                 self.stack.pop(); self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::ShiftL => {
@@ -1867,7 +1867,9 @@ impl MirGen {
                 self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Reverse => {
-                self.mir.push(MirInst::Comment("stardust Reverse (not implemented)".to_string()));
+                self.mir.push(MirInst::Comment(
+                    "stardust Reverse is not supported by the Stardust backend (M3-4)".to_string(),
+                ));
             }
             crate::frontend::ast::StardustInst::Rotate => {
                 self.mir.push(MirInst::Roll { n: 2 });

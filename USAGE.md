@@ -51,9 +51,14 @@ freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 - `match` 支持结构体、枚举（含嵌套载荷）、元组、字面量、`or`、引用和 `_` 模式，并在类型检查阶段拒绝非穷尽匹配。`let` 支持变量、元组和结构体解构；可失败模式（如枚举变体）必须改用 `match`。
 - `ret n` 的 `n` 必须是整数字面量；`loop` 目前只作为语句使用，`break value`、把 `loop` 当值、循环外的 `break`/`continue` 都会在编译期报错。
 - `#id`、`use` 和 `extern` 函数调用尚未实现：声明可以解析，但使用处会报 `unsupported feature`，不会静默返回栈上残留值。
-- Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆上。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 字符序列在栈上传递。仍有限制：远程栈只是占位；`read_line` 按 UTF-8 解码（堆块按需扩容，非法首字节替换为 U+FFFD，CRLF 行尾与 VM 一样去掉 `\r`，不检测 EOF）；`#[max_*]`/`#[time_limit]` 目前只影响 VM 执行。
+- Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆块上（逻辑远程栈，见 `docs/adr/0001-logical-remote-stack.md`）。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 文本处理，非 UTF-8/二进制内容不在支持范围内。
+- `read_line` 与 VM 的 `String::from_utf8_lossy` 对齐：CRLF、UTF-8、非法首字节/续字节、overlong/surrogate/越界码点都逐字节一致。**已知差异**：输入 EOF 时 Stardust 解释器的 `CharIn` 直接报 I/O 错误（VM 返回空字符串），生成代码无法捕获。
+- 索引读写在 Stardust 后端执行 `index >= 0 && index < len` 检查；越界时用除零陷阱让解释器非零退出，错误消息与 VM 的 `index out of bounds` 不同。
+- Stardust 全局堆块目前**只增不减**：`DropVar` 不释放块。值语义 + copy-on-write 让多个变量共享块，安全回收需要引用计数或所有权跟踪（见 `docs/adr/0002-heap-reclamation-deferred.md`）。
+- `stardust!` 的 `store`/`load` 映射为真实堆操作；`Reverse` 仍未支持（M3-4）。
+- `#[max_stack]`/`#[max_call_depth]`/`#[max_steps]`/`#[time_limit]` 只影响 VM；生成的 Stardust 代码没有等价资源限制，由外部解释器负责。
 - LLVM 后端尚未实现。
-- 完整的能力矩阵见 `STATUS.md`。
+- 完整的能力矩阵见 `STATUS.md`；VM/Stardust 差分测试见 `tests/differential_test.rs` 与 `tests/m1_test.rs`。
 
 ### 交互式 REPL
 

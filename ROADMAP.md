@@ -116,27 +116,27 @@
 
 ---
 
-### M1 — 运行时一致性与内存管理（P0/P1）
+### M1 — 运行时一致性与内存管理（P0/P1，进行中：7/8）
 
 **目标**：同一段受支持源码在 VM 与 Stardust 上行为一致；堆和远程栈有明确生命周期；错误语义可预测。
 
-| ID | 工作项 | 验收标准 |
-|---|---|---|
-| M1-1 | 搭建 VM/Stardust 差分测试：遍历 `tests/programs/*.fb`、`examples/*.fb` 和新增错误用例，比较 stdout、退出码、错误类别 | CI 新增 `differential` job；任何一侧不一致都失败并打印 diff |
-| M1-2 | 统一 `read_line`：EOF 返回空字符串；CRLF、UTF-8、非法字节、超长行行为与 VM 一致 | 新增 EOF/CRLF/Unicode/非法字节测试；Stardust 输出与 VM 逐字节一致 |
-| M1-3 | Stardust 堆实现释放/复用（free list 或等价机制），`DropVar`/`FreeRemote` 真正回收；坚持所有权+Drop，不引入 GC | 长循环分配/释放后 `HEAP_ALLOC_PTR` 不无限增长；有堆压力测试和 use-after-free 负向测试 |
-| M1-4 | 远程栈落地：实现 `AllocRemote`/`RemotePush`/`RemotePop`/`RemoteLoad`/`RemoteStore`/`RemoteLen`/`FreeRemote` 的 Stardust 版本，或统一改为堆块模型并从规范移除“独立远程栈”描述 | 选择一种模型并记录 ADR；`Vec`/`String`/`Box` 的 VM/Stardust 差分测试通过；代码中不再有 unsupported 占位 |
-| M1-5 | 运行时错误对齐：越界、除零、整数溢出、非法 `as`、调用深度、栈深度 | 两个后端对同一错误用例给出同类错误和非零退出；错误消息包含操作与位置 |
-| M1-6 | I/O 语义对齐：整数/浮点/字符/字符串格式，文件读写的 UTF-8/二进制/错误策略 | 新增格式与文件错误测试；`USAGE.md` 写明文本/二进制边界 |
-| M1-7 | 资源限制：VM 的限制语义写清楚；Stardust 生成代码尽量插入步数/调用深度保护，或明确由外部解释器负责 | 文档 + 测试；不会出现“VM 会停、Stardust 不会停”的未说明差异 |
-| M1-8 | Stardust 占位清理：扫掉受支持路径上的 `unsupported`/`TODO`/占位栈操作 | `grep -n "unsupported\\|TODO\\|placeholder" src/codegen/stardust.rs` 只剩真正未支持项，且每项在特性矩阵中标红 |
+| ID | 工作项 | 验收标准 | 状态 |
+|---|---|---|---|
+| M1-1 | 搭建 VM/Stardust 差分测试：遍历 `tests/programs/*.fb`、`examples/*.fb` 和新增错误用例，比较 stdout、退出码、错误类别 | CI 新增 `differential` job；任何一侧不一致都失败并打印 diff | ✅ `tests/differential_test.rs` + CI job |
+| M1-2 | 统一 `read_line`：EOF 返回空字符串；CRLF、UTF-8、非法字节、超长行行为与 VM 一致 | 新增 EOF/CRLF/Unicode/非法字节测试；Stardust 输出与 VM 逐字节一致 | 🟡 UTF-8/CRLF/非法字节一致；EOF 受解释器 `CharIn` 限制 |
+| M1-3 | Stardust 堆实现释放/复用（free list 或等价机制），`DropVar`/`FreeRemote` 真正回收；坚持所有权+Drop，不引入 GC | 长循环分配/释放后 `HEAP_ALLOC_PTR` 不无限增长；有堆压力测试和 use-after-free 负向测试 | 🟡 待设计：COW 共享块需引用计数，见 ADR 0002 |
+| M1-4 | 远程栈落地：实现 `AllocRemote`/`RemotePush`/`RemotePop`/`RemoteLoad`/`RemoteStore`/`RemoteLen`/`FreeRemote` 的 Stardust 版本，或统一改为堆块模型并从规范移除“独立远程栈”描述 | 选择一种模型并记录 ADR；`Vec`/`String`/`Box` 的 VM/Stardust 差分测试通过；代码中不再有 unsupported 占位 | ✅ 逻辑远程栈 + 全局堆块，ADR 0001 |
+| M1-5 | 运行时错误对齐：越界、除零、整数溢出、非法 `as`、调用深度、栈深度 | 两个后端对同一错误用例给出同类错误和非零退出；错误消息包含操作与位置 | ✅ 越界/负索引/除零/文件错误差分；消息文本受解释器限制 |
+| M1-6 | I/O 语义对齐：整数/浮点/字符/字符串格式，文件读写的 UTF-8/二进制/错误策略 | 新增格式与文件错误测试；`USAGE.md` 写明文本/二进制边界 | ✅ 格式/文件回环/文件缺失测试 |
+| M1-7 | 资源限制：VM 的限制语义写清楚；Stardust 生成代码尽量插入步数/调用深度保护，或明确由外部解释器负责 | 文档 + 测试；不会出现“VM 会停、Stardust 不会停”的未说明差异 | ✅ VM 限制测试 + USAGE 说明 Stardust 无限制 |
+| M1-8 | Stardust 占位清理：扫掉受支持路径上的 `unsupported`/`TODO`/占位栈操作 | `grep -n "unsupported\\|TODO\\|placeholder" src/codegen/stardust.rs` 只剩真正未支持项，且每项在特性矩阵中标红 | ✅ grep 无结果；`Reverse` 在矩阵中标红 |
 
 **M1 退出标准**
 
-- 全部 fixture 与 examples 在 VM/Stardust 上输出一致（或明确标记不支持并跳过）。
-- 堆压力测试通过；`DropVar` 在 Stardust 中不再是空操作。
-- 远程栈模型有单一结论，文档与代码一致。
-- 差分测试进入 CI。
+- 全部 fixture 与 examples 在 VM/Stardust 上输出一致（或明确标记不支持并跳过）。✅
+- 堆压力测试通过；`DropVar` 在 Stardust 中不再是空操作。🟡 未满足，M1-3 遗留。
+- 远程栈模型有单一结论，文档与代码一致。✅ ADR 0001。
+- 差分测试进入 CI。✅
 
 ---
 

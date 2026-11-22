@@ -16,7 +16,8 @@
 //! `Roll`/`WriteVar`/`Ret` 的临时交换，槽 1 是 bump allocator，槽 2..15
 //! 是生成序列的临时区，堆块从地址 16 开始分配。
 //!
-//! 远程栈在 Stardust 解释器中没有对应原语，仍以占位注释保持栈效果；
+//! 远程数据（`Vec`/`String`/`Box` 等）在 Stardust 解释器中没有独立远程栈原语，
+//! 统一表示为全局堆块；`stardust!` 的 `Store`/`Load` 直接映射为堆操作。
 //! 文件 I/O 使用解释器的 `FileRead`/`FileWrite` 指令（`,` 前 2/3 个空格）。
 
 use std::collections::{HashMap, HashSet};
@@ -39,6 +40,10 @@ const HEAP_SIZE: usize = 5;
 const HEAP_NEW_HANDLE: usize = 6;
 /// 循环计数器。
 const HEAP_COUNTER: usize = 7;
+/// `read_line` 的 pending 字节（-1 表示无）。
+const HEAP_PENDING: usize = 8;
+/// `read_line` 当前多字节序列的字节数。
+const HEAP_BYTE_COUNT: usize = 9;
 /// 第一个可分配的堆块地址。
 const HEAP_BASE: i64 = 16;
 /// 堆块头部长度：`[len, cap, elems...]`。
@@ -115,8 +120,6 @@ pub struct StardustGen {
     /// 当前指令是否可达（Ret/UncondJump 之后为 false）。
     reachable: bool,
     fn_info: HashMap<FnId, FnInfo>,
-    /// 远程栈是否处于 active 状态（仅用于保持栈效果）。
-    active_remote: bool,
     /// 当前函数的返回尾声标签。
     epilogue_label: usize,
     /// 当前正在生成的函数（用于识别自递归调用）。
@@ -146,7 +149,6 @@ impl StardustGen {
             branch_states: HashMap::new(),
             reachable: true,
             fn_info: HashMap::new(),
-            active_remote: false,
             epilogue_label: 0,
             current_fn: None,
             next_helper_label: 0,
@@ -265,7 +267,6 @@ impl StardustGen {
         self.indirect_bindings.clear();
         self.branch_states.clear();
         self.reachable = true;
-        self.active_remote = false;
         self.scopes = vec![Scope::default()];
 
         // 被 `Ref` 取址的变量需要改成堆单元间接访问，这样 `*p = v`
@@ -342,11 +343,14 @@ impl StardustGen {
                     match &constant {
                         Some(ConstValue::Int(n)) => self.emit_push_int(*n),
                         _ => {
+                            // 只有不可由用户代码构造的内部值会走到这里
+                            //（Ref/FnPtr/ElementId 等）；触发运行时陷阱，
+                            // 避免静默压入 0。
                             self.emit_comment(&format!(
-                                "unsupported value `{}`: placeholder 0",
+                                "internal value `{}` cannot be materialised",
                                 value.type_name()
                             ));
-                            self.emit_push_int(0);
+                            self.emit_bounds_trap();
                         }
                     }
                 }
@@ -622,56 +626,16 @@ impl StardustGen {
                 self.stack.push(Slot::unknown());
             }
 
-            // ─── 远程栈（占位，保持栈效果）───
-            MirInst::AllocRemote => {
-                self.emit_comment("AllocRemote unsupported: pop capacity, push placeholder handle");
-                self.pop_n_emit(1);
-                self.emit_push_int(0);
+            // ─── 堆操作（stardust! 的 store/load）───
+            MirInst::HeapStore => {
+                self.raw_inst(0, '-'); // Store: [value, addr]
+                self.stack.pop();
+                self.stack.pop();
+            }
+            MirInst::HeapLoad => {
+                self.raw_inst(1, '-'); // Load: [addr] -> [heap[addr]]
+                self.stack.pop();
                 self.stack.push(Slot::unknown());
-            }
-            MirInst::FreeRemote => {
-                self.emit_comment("FreeRemote unsupported: pop handle");
-                self.pop_n_emit(1);
-            }
-            MirInst::RemotePush => {
-                self.emit_comment("RemotePush unsupported: pop value");
-                self.pop_n_emit(1);
-            }
-            MirInst::RemotePop => {
-                self.emit_comment("RemotePop unsupported: push placeholder value");
-                self.emit_push_int(0);
-                self.stack.push(Slot::unknown());
-            }
-            MirInst::RemoteLoad { index } => {
-                self.emit_comment(&format!(
-                    "RemoteLoad({index}) unsupported: push placeholder value"
-                ));
-                self.emit_push_int(0);
-                self.stack.push(Slot::unknown());
-            }
-            MirInst::RemoteStore { index } => {
-                self.emit_comment(&format!(
-                    "RemoteStore({index}) unsupported: pop value"
-                ));
-                self.pop_n_emit(1);
-            }
-            MirInst::RemoteLen => {
-                self.emit_comment("RemoteLen unsupported: push placeholder length");
-                self.emit_push_int(0);
-                self.stack.push(Slot::unknown());
-            }
-            MirInst::SwitchToRemote => {
-                self.emit_comment("SwitchToRemote unsupported: pop handle");
-                self.pop_n_emit(1);
-                self.active_remote = true;
-            }
-            MirInst::SwitchToLocal => {
-                self.emit_comment("SwitchToLocal unsupported");
-                if self.active_remote {
-                    self.emit_push_int(0);
-                    self.stack.push(Slot::unknown());
-                    self.active_remote = false;
-                }
             }
 
             // ─── I/O ───
@@ -1012,7 +976,7 @@ impl StardustGen {
             if self.stack.pop().is_some() {
                 self.raw_inst(4, '+');
             } else {
-                self.emit_comment("WARNING: placeholder Pop skipped (model stack empty)");
+                self.emit_comment("model stack underflow: skipping Pop on an unreachable path");
             }
         }
     }
@@ -1135,6 +1099,35 @@ impl StardustGen {
         self.raw_inst(1, '-'); // Load
     }
 
+    /// 把 `read_line` 的字节计数设为 1（合法字符只追加一次）。
+    fn emit_set_byte_count_one(&mut self) {
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+    }
+
+    /// 读取下一个输入字节：优先消费 `read_line` 的 pending 字节，否则 CharIn。
+    /// 栈效果：压入一个字节。
+    fn emit_read_byte_or_pending(&mut self) {
+        let has_pending = self.fresh_helper_label();
+        let got_byte = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_PENDING); // [p]
+        self.emit_dup(); // [p, p]
+        self.emit_push_int(-1); // [p, p, -1]
+        self.raw_inst(1, '='); // Ne: [p, cond]
+        self.raw_inst(has_pending, '\''); // pop cond -> [p]
+        self.emit_pop(); // []
+        self.raw_inst(1, ','); // CharIn -> [b]
+        self.raw_inst(got_byte, '~');
+        self.raw_inst(has_pending, '`');
+        // [p]：暂存 p，把 pending 清为 -1，再把 p 压回栈。
+        self.emit_store_scratch(HEAP_VALUE); // [p] -> []
+        self.emit_push_int(-1);
+        self.emit_store_scratch(HEAP_PENDING);
+        self.emit_load_scratch(HEAP_VALUE); // [p]
+        self.raw_inst(got_byte, '`');
+        // [b]
+    }
+
     /// `[.., size]` → `[.., handle]`。分配 `size` 个堆单元并推进 bump 指针。
     fn emit_alloc_from_stack(&mut self) {
         self.emit_store_scratch(HEAP_SIZE);
@@ -1200,11 +1193,13 @@ impl StardustGen {
             if let Some(n) = elem.as_i64() {
                 self.emit_push_int(n);
             } else {
+                // 嵌套元组字面量目前没有可用的字段访问语法（`t.0.0` 不受支持）；
+                // 触发陷阱而不是静默写入 0。
                 self.emit_comment(&format!(
-                    "nested unsupported tuple element `{}`: storing 0",
+                    "nested tuple element `{}` has no supported representation",
                     elem.type_name()
                 ));
-                self.emit_push_int(0);
+                self.emit_bounds_trap();
             }
             self.emit_swap();
             self.raw_inst(0, '-');
@@ -1244,10 +1239,42 @@ impl StardustGen {
 
     /// `[handle, index]` → `[element]`。
     fn gen_index_access(&mut self) {
+        // 边界检查：index 必须在 [0, len) 内；越界触发除零陷阱，
+        // 使 Stardust 解释器以非零状态退出（解释器没有自定义错误原语）。
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_store_scratch(HEAP_HANDLE);
+        let non_negative = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0);
+        self.emit_ge(); // index >= 0
+        self.raw_inst(non_negative, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(non_negative, '`');
+
+        let in_bounds = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-'); // Load len
+        self.emit_lt(); // index < len
+        self.raw_inst(in_bounds, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(in_bounds, '`');
+
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_load_scratch(HEAP_INDEX);
         self.emit_push_int(BLOCK_HEADER);
         self.emit_add();
         self.emit_add();
         self.raw_inst(1, '-');
+    }
+
+    /// 越界陷阱：Stardust 解释器没有断言/自定义错误指令，用除零触发非零退出。
+    fn emit_bounds_trap(&mut self) {
+        self.emit_push_int(1);
+        self.emit_push_int(0);
+        self.raw_inst(3, '*'); // Div
     }
 
     /// 保留枚举值并压入标签（块下标 0，位于头部之后）。
@@ -1480,6 +1507,26 @@ impl StardustGen {
         self.emit_store_scratch(HEAP_HANDLE);
         self.stack.pop();
 
+        // 边界检查：越界写入同样触发除零陷阱。
+        let non_negative = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0);
+        self.emit_ge(); // index >= 0
+        self.raw_inst(non_negative, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(non_negative, '`');
+
+        let in_bounds = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-'); // Load len
+        self.emit_lt(); // index < len
+        self.raw_inst(in_bounds, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(in_bounds, '`');
+
         self.gen_clone_block(HEAP_HANDLE, HEAP_NEW_HANDLE);
         self.emit_load_scratch(HEAP_NEW_HANDLE);
         self.emit_push_int(BLOCK_HEADER);
@@ -1658,7 +1705,11 @@ impl StardustGen {
     /// 块中保存的是 Unicode 码点（与字符串字面量一致），因此 `print_str`
     /// 可以直接 CharOut。块从 16 个字符开始按需翻倍，行尾的 `\r` 会在
     /// 读到 `\n` 后统一去掉（与 VM 的 trim 行为一致）。
-    /// 输入 EOF 仍无法检测（CharIn 会报错），非法首字节按 U+FFFD 处理。
+    ///
+    /// 解码与 VM 的 `String::from_utf8_lossy` 对齐：非法首字节、非法续字节
+    /// 都替换为 U+FFFD；非法续字节会通过 `HEAP_PENDING` 留到下一轮，
+    /// 因此不会吞掉后续字符。输入 EOF 仍无法检测（CharIn 会报 I/O 错误），
+    /// 该差异记录在 `USAGE.md` 中。
     fn gen_read_line(&mut self) {
         const INITIAL_CAP: i64 = 16;
         self.emit_alloc_const(BLOCK_HEADER as usize + INITIAL_CAP as usize);
@@ -1667,6 +1718,8 @@ impl StardustGen {
         self.emit_write_header_const(HEAP_HANDLE, 1, INITIAL_CAP);
         self.emit_push_int(0);
         self.emit_store_scratch(HEAP_COUNTER);
+        self.emit_push_int(-1);
+        self.emit_store_scratch(HEAP_PENDING);
 
         let read_loop = self.fresh_helper_label();
         let grow = self.fresh_helper_label();
@@ -1682,11 +1735,20 @@ impl StardustGen {
         let utf8_4 = self.fresh_helper_label();
         let cont_loop = self.fresh_helper_label();
         let cont_done = self.fresh_helper_label();
+        let valid_cont = self.fresh_helper_label();
+        let check2 = self.fresh_helper_label();
+        let check3 = self.fresh_helper_label();
+        let check4 = self.fresh_helper_label();
+        let check_surrogate = self.fresh_helper_label();
+        let range_bad = self.fresh_helper_label();
         let append = self.fresh_helper_label();
 
         self.raw_inst(read_loop, '`');
         // 容量检查放在读取之前，避免多消费一个输入字节。
+        // 预留 4 个槽：非法多字节序列会逐字节追加 U+FFFD（最多 4 个）。
         self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(4);
+        self.emit_add();
         self.emit_load_scratch(HEAP_HANDLE);
         self.emit_push_int(1);
         self.emit_add();
@@ -1694,7 +1756,7 @@ impl StardustGen {
         self.emit_ge();
         self.raw_inst(grow, '\'');
 
-        self.raw_inst(1, ','); // CharIn: b0
+        self.emit_read_byte_or_pending(); // [b0]
         self.emit_dup();
         self.emit_push_int(10); // '\n'
         self.raw_inst(0, '=');
@@ -1726,6 +1788,8 @@ impl StardustGen {
         // ASCII：码点就是该字节。
         self.raw_inst(ascii, '`');
         self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
         self.raw_inst(append, '~');
 
         // 非法首字节：替换字符 U+FFFD。
@@ -1733,6 +1797,8 @@ impl StardustGen {
         self.emit_pop();
         self.emit_push_int(0xFFFD);
         self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
         self.raw_inst(append, '~');
 
         // 多字节首字节：先写入掩码后的高位。
@@ -1742,6 +1808,8 @@ impl StardustGen {
         self.emit_store_scratch(HEAP_INDEX);
         self.emit_push_int(1);
         self.emit_store_scratch(HEAP_SIZE);
+        self.emit_push_int(2);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
         self.raw_inst(cont_loop, '~');
 
         self.raw_inst(utf8_3, '`');
@@ -1750,6 +1818,8 @@ impl StardustGen {
         self.emit_store_scratch(HEAP_INDEX);
         self.emit_push_int(2);
         self.emit_store_scratch(HEAP_SIZE);
+        self.emit_push_int(3);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
         self.raw_inst(cont_loop, '~');
 
         self.raw_inst(utf8_4, '`');
@@ -1758,15 +1828,33 @@ impl StardustGen {
         self.emit_store_scratch(HEAP_INDEX);
         self.emit_push_int(3);
         self.emit_store_scratch(HEAP_SIZE);
+        self.emit_push_int(4);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
         self.raw_inst(cont_loop, '~');
 
-        // 读后续字节：acc = acc * 64 + (byte % 64)。
+        // 读后续字节：先校验 10xxxxxx，再累加 acc = acc * 64 + (byte % 64)。
         self.raw_inst(cont_loop, '`');
         self.emit_load_scratch(HEAP_SIZE);
         self.emit_push_int(0);
         self.raw_inst(0, '='); // Eq: SIZE == 0 时结束
         self.raw_inst(cont_done, '\'');
-        self.raw_inst(1, ','); // CharIn
+        self.emit_read_byte_or_pending(); // [b]
+        self.emit_dup();
+        self.emit_push_int(64);
+        self.raw_inst(3, '*'); // Div: [b, b / 64]
+        self.emit_push_int(2);
+        self.raw_inst(0, '='); // Eq: b / 64 == 2（即 10xxxxxx）
+        self.raw_inst(valid_cont, '\''); // pop cond -> [b]
+
+        // 非法续字节：把该字节留到下一轮，当前码点替换为 U+FFFD。
+        self.emit_store_scratch(HEAP_PENDING); // [b] -> []
+        self.emit_push_int(0xFFFD);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+        self.raw_inst(cont_done, '~');
+
+        self.raw_inst(valid_cont, '`');
         self.emit_push_int(64); // 0x3F 掩码 = mod 64
         self.raw_inst(4, '*'); // Mod
         self.emit_store_scratch(HEAP_VALUE);
@@ -1784,7 +1872,67 @@ impl StardustGen {
 
         self.raw_inst(cont_done, '`');
 
-        // 追加码点到块末尾。
+        // 校验码点范围：overlong、surrogate、> U+10FFFF 都替换为 U+FFFD。
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(2);
+        self.raw_inst(0, '=');
+        self.raw_inst(check2, '\'');
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(3);
+        self.raw_inst(0, '=');
+        self.raw_inst(check3, '\'');
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(4);
+        self.raw_inst(0, '=');
+        self.raw_inst(check4, '\'');
+        self.raw_inst(append, '~');
+
+        self.raw_inst(check2, '`');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0x80);
+        self.raw_inst(2, '='); // Lt: 2 字节码点必须 >= 0x80
+        self.raw_inst(range_bad, '\'');
+        self.emit_set_byte_count_one();
+        self.raw_inst(append, '~');
+
+        self.raw_inst(check3, '`');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0x800);
+        self.raw_inst(2, '='); // Lt: 3 字节码点必须 >= 0x800
+        self.raw_inst(range_bad, '\'');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0xD800);
+        self.emit_ge(); // INDEX >= 0xD800 时继续检查 surrogate 上界
+        self.raw_inst(check_surrogate, '\'');
+        self.emit_set_byte_count_one();
+        self.raw_inst(append, '~');
+
+        self.raw_inst(check_surrogate, '`');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0xE000);
+        self.raw_inst(2, '='); // Lt: 0xD800..0xDFFF 非法
+        self.raw_inst(range_bad, '\'');
+        self.emit_set_byte_count_one();
+        self.raw_inst(append, '~');
+
+        self.raw_inst(check4, '`');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0x10000);
+        self.raw_inst(2, '='); // Lt: 4 字节码点必须 >= 0x10000
+        self.raw_inst(range_bad, '\'');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0x110000);
+        self.emit_ge(); // INDEX >= 0x110000 非法
+        self.raw_inst(range_bad, '\'');
+        self.emit_set_byte_count_one();
+        self.raw_inst(append, '~');
+
+        self.raw_inst(range_bad, '`');
+        self.emit_push_int(0xFFFD);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(append, '~');
+
+        // 追加码点到块末尾；BYTE_COUNT 次（非法多字节序列逐字节替换）。
         self.raw_inst(append, '`');
         self.emit_load_scratch(HEAP_HANDLE);
         self.emit_push_int(BLOCK_HEADER);
@@ -1798,7 +1946,15 @@ impl StardustGen {
         self.emit_push_int(1);
         self.emit_add();
         self.emit_store_scratch(HEAP_COUNTER);
-        self.raw_inst(read_loop, '~');
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(0);
+        self.raw_inst(0, '=');
+        self.raw_inst(read_loop, '\'');
+        self.raw_inst(append, '~');
 
         // 容量不足：分配两倍大小的新块并复制已有字符。
         self.raw_inst(grow, '`');
@@ -2188,7 +2344,7 @@ mod tests {
         ];
         let code = generate(mir);
         assert!(code.contains(&format!("{}\n", line_with_spaces(0, ',')))); // CharOut
-        assert!(code.contains(&format!("{}\n", line_with_spaces(5, '+')))); // placeholder pop / Push(0)
+        assert!(code.contains(&format!("{}\n", line_with_spaces(5, '+')))); // Pop / Push(0) encoding
     }
 
     #[test]
@@ -2260,8 +2416,10 @@ mod tests {
         Pop,
         Add,
         Sub,
+        Div,
         Gt,
         Ge,
+        Lt,
         Store,
         Load,
         ShiftL,
@@ -2292,9 +2450,11 @@ mod tests {
                 '*' => match spaces {
                     0 => TestInst::Add,
                     1 => TestInst::Sub,
+                    3 => TestInst::Div,
                     _ => panic!("unexpected '*' encoding: {line:?}"),
                 },
                 '=' => match spaces {
+                    2 => TestInst::Lt,
                     3 => TestInst::Gt,
                     5 => TestInst::Ge,
                     _ => panic!("unexpected '=' encoding: {line:?}"),
@@ -2356,6 +2516,17 @@ mod tests {
                     let b = stack.pop().expect("sub underflow");
                     let a = stack.pop().expect("sub underflow");
                     stack.push(a - b);
+                }
+                TestInst::Div => {
+                    let b = stack.pop().expect("div underflow");
+                    let a = stack.pop().expect("div underflow");
+                    assert_ne!(b, 0, "division by zero trap");
+                    stack.push(a / b);
+                }
+                TestInst::Lt => {
+                    let b = stack.pop().expect("lt underflow");
+                    let a = stack.pop().expect("lt underflow");
+                    stack.push((a < b) as i64);
                 }
                 TestInst::Gt => {
                     let b = stack.pop().expect("gt underflow");
