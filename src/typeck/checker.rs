@@ -151,6 +151,23 @@ impl TypeCheckError {
     }
 }
 
+/// 类型检查警告（不阻止编译）。
+#[derive(Debug, Clone)]
+pub enum TypeCheckWarning {
+    /// 前面的分支已经覆盖了该模式。
+    UnreachablePattern { span: Span },
+}
+
+impl std::fmt::Display for TypeCheckWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeCheckWarning::UnreachablePattern { span } => {
+                write!(f, "{span}: unreachable pattern")
+            }
+        }
+    }
+}
+
 impl std::fmt::Display for TypeCheckError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -198,7 +215,7 @@ impl std::fmt::Display for TypeCheckError {
             }
             TypeCheckError::BreakWithValue { span } => write!(
                 f,
-                "{span}: `break value` is not supported yet; use `break` without a value"
+                "{span}: `break value` is only supported inside `loop`; use `break` without a value"
             ),
             TypeCheckError::LoopUsedAsValue { span } => write!(
                 f,
@@ -251,6 +268,14 @@ struct FnContext {
     return_types: Vec<HirType>,
 }
 
+/// 类型检查期的循环上下文。
+struct LoopCheckContext {
+    /// 是否为值 `loop`（只有 `loop` 允许 `break value`）。
+    is_loop: bool,
+    /// 所有 `break` 值合并出的结果类型。
+    result_ty: Option<HirType>,
+}
+
 /// 基础类型检查器
 pub struct TypeChecker<'a> {
     functions: HashMap<String, FnSignature>,
@@ -261,9 +286,10 @@ pub struct TypeChecker<'a> {
     fn_stack: Vec<FnContext>,
     /// 当前循环嵌套深度；`break`/`continue` 只在大于 0 时合法。
     loop_depth: usize,
-    /// 大于 0 时允许 `loop` 出现在语句位置（其值被丢弃）。
-    allow_unit_loop: usize,
+    /// 循环上下文栈：记录最近循环是否为 `loop` 以及 `break` 值类型。
+    loop_contexts: Vec<LoopCheckContext>,
     errors: Vec<TypeCheckError>,
+    warnings: Vec<TypeCheckWarning>,
 }
 
 impl<'a> TypeChecker<'a> {
@@ -289,13 +315,22 @@ impl<'a> TypeChecker<'a> {
             scopes: Vec::new(),
             fn_stack: Vec::new(),
             loop_depth: 0,
-            allow_unit_loop: 0,
+            loop_contexts: Vec::new(),
             errors: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
-    /// 检查整个程序，返回所有发现的类型错误
-    pub fn check_program(mut self, program: &HirProgram) -> Vec<TypeCheckError> {
+    /// 检查整个程序，返回所有发现的类型错误（丢弃警告，兼容旧调用）。
+    pub fn check_program(self, program: &HirProgram) -> Vec<TypeCheckError> {
+        self.check_program_with_warnings(program).0
+    }
+
+    /// 检查整个程序，返回类型错误与警告。
+    pub fn check_program_with_warnings(
+        mut self,
+        program: &HirProgram,
+    ) -> (Vec<TypeCheckError>, Vec<TypeCheckWarning>) {
         for decl in &program.decls {
             match decl {
                 HirDecl::Fn(f) => {
@@ -326,7 +361,7 @@ impl<'a> TypeChecker<'a> {
                 }),
             }
         }
-        self.errors
+        (self.errors, self.warnings)
     }
 
     /// 校验属性的语法与已知名称；未识别属性必须报错，不能静默丢弃。
@@ -425,33 +460,28 @@ impl<'a> TypeChecker<'a> {
         self.errors.push(error);
     }
 
+    fn warning(&mut self, warning: TypeCheckWarning) {
+        self.warnings.push(warning);
+    }
+
     // ─── 语句 ───
 
     fn check_block(&mut self, block: &HirBlock) -> HirType {
         self.check_block_with_loop_tail(block, false)
     }
 
-    /// 检查块；`allow_loop_tail` 用于返回 () 的函数体尾部。
+    /// 检查块；`_allow_loop_tail` 保留为调用兼容参数。
     fn check_block_with_loop_tail(
         &mut self,
         block: &HirBlock,
-        allow_loop_tail: bool,
+        _allow_loop_tail: bool,
     ) -> HirType {
         self.push_scope();
         for stmt in &block.stmts {
             self.check_stmt(stmt);
         }
         let ty = match &block.tail {
-            Some(expr) => {
-                if allow_loop_tail {
-                    self.allow_unit_loop += 1;
-                    let ty = self.check_expr(expr);
-                    self.allow_unit_loop -= 1;
-                    ty
-                } else {
-                    self.check_expr(expr)
-                }
-            }
+            Some(expr) => self.check_expr(expr),
             None => HirType::Unit,
         };
         self.pop_scope();
@@ -492,10 +522,7 @@ impl<'a> TypeChecker<'a> {
                 self.bind_pattern(pattern, &binding_ty);
             }
             HirStmt::Expr(expr, _) => {
-                // 语句位置允许 unit 循环（循环产生的值被丢弃）。
-                self.allow_unit_loop += 1;
                 self.check_expr(expr);
-                self.allow_unit_loop -= 1;
             }
             HirStmt::Assign { target, value, span } => {
                 let value_ty = self.check_expr(value);
@@ -766,7 +793,15 @@ impl<'a> TypeChecker<'a> {
             HirExpr::Match(scrutinee, arms, span) => {
                 let scrutinee_ty = self.check_expr(scrutinee);
                 let mut result_ty: Option<HirType> = None;
+                let mut seen_patterns: Vec<String> = Vec::new();
+                let mut irrefutable_seen = false;
                 for arm in arms {
+                    let key = pattern_key(&arm.pattern);
+                    let duplicate = arm.guard.is_none()
+                        && seen_patterns.iter().any(|seen| seen == &key);
+                    if irrefutable_seen || duplicate {
+                        self.warning(TypeCheckWarning::UnreachablePattern { span: arm.span });
+                    }
                     self.validate_pattern_bindings(&arm.pattern);
                     self.push_scope();
                     self.bind_match_pattern(&arm.pattern, &scrutinee_ty);
@@ -776,6 +811,12 @@ impl<'a> TypeChecker<'a> {
                     }
                     let body_ty = self.check_expr(&arm.body);
                     self.pop_scope();
+                    if arm.guard.is_none() {
+                        if pattern_is_irrefutable(&arm.pattern) {
+                            irrefutable_seen = true;
+                        }
+                        seen_patterns.push(key);
+                    }
                     match &result_ty {
                         None => result_ty = Some(body_ty),
                         Some(expected) => {
@@ -800,20 +841,27 @@ impl<'a> TypeChecker<'a> {
                 }
                 result_ty.unwrap_or(HirType::Never)
             }
-            HirExpr::Loop(body, span) => {
-                if self.allow_unit_loop == 0 {
-                    self.error(TypeCheckError::LoopUsedAsValue { span: *span });
-                }
+            HirExpr::Loop(body, _) => {
                 self.loop_depth += 1;
+                self.loop_contexts.push(LoopCheckContext {
+                    is_loop: true,
+                    result_ty: None,
+                });
                 self.check_block(body);
+                let ctx = self.loop_contexts.pop().expect("loop context");
                 self.loop_depth -= 1;
-                HirType::Unit
+                ctx.result_ty.unwrap_or(HirType::Never)
             }
             HirExpr::While(cond, body, _) => {
                 let cond_ty = self.check_expr(cond);
                 self.require_bool(&cond_ty, cond_span(cond, expr_span(expr)));
                 self.loop_depth += 1;
+                self.loop_contexts.push(LoopCheckContext {
+                    is_loop: false,
+                    result_ty: None,
+                });
                 self.check_block(body);
+                self.loop_contexts.pop();
                 self.loop_depth -= 1;
                 HirType::Unit
             }
@@ -823,22 +871,68 @@ impl<'a> TypeChecker<'a> {
                 self.push_scope();
                 self.bind_pattern(pattern, &elem_ty);
                 self.loop_depth += 1;
+                self.loop_contexts.push(LoopCheckContext {
+                    is_loop: false,
+                    result_ty: None,
+                });
                 self.check_block(body);
+                self.loop_contexts.pop();
                 self.loop_depth -= 1;
                 self.pop_scope();
                 HirType::Unit
             }
             HirExpr::Block(block, _) => self.check_block(block),
             HirExpr::Break(value, span) => {
-                if let Some(value) = value {
-                    self.error(TypeCheckError::BreakWithValue { span: *span });
-                    self.check_expr(value);
-                }
                 if self.loop_depth == 0 {
+                    if let Some(value) = value {
+                        self.check_expr(value);
+                    }
                     self.error(TypeCheckError::LoopControlOutsideLoop {
                         keyword: "break",
                         span: *span,
                     });
+                    return HirType::Never;
+                }
+                if let Some(value) = value {
+                    let value_ty = self.check_expr(value);
+                    if let Some(ctx) = self.loop_contexts.last_mut() {
+                        if !ctx.is_loop {
+                            self.error(TypeCheckError::BreakWithValue { span: *span });
+                        } else {
+                            match &ctx.result_ty {
+                                None => ctx.result_ty = Some(value_ty),
+                                Some(expected) => {
+                                    if !is_assignable(expected, &value_ty)
+                                        && !is_assignable(&value_ty, expected)
+                                    {
+                                        let expected = expected.clone();
+                                        self.error(TypeCheckError::TypeMismatch {
+                                            expected,
+                                            found: value_ty,
+                                            span: *span,
+                                            context: "break value".to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(ctx) = self.loop_contexts.last_mut() {
+                    if ctx.is_loop {
+                        match &ctx.result_ty {
+                            None => ctx.result_ty = Some(HirType::Unit),
+                            Some(expected) if *expected != HirType::Unit => {
+                                let expected = expected.clone();
+                                self.error(TypeCheckError::TypeMismatch {
+                                    expected,
+                                    found: HirType::Unit,
+                                    span: *span,
+                                    context: "break value".to_string(),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 HirType::Never
             }
@@ -1776,6 +1870,40 @@ impl TypeChecker<'_> {
 ///
 /// 结构体与元组解构本身不限制值，只要其子模式都不可失败，就覆盖整个类型；
 /// 这正是 `match p { Point { x, y } => ... }` 能作为穷尽分支的原因。
+/// 生成忽略 span 的模式键，用于检测重复分支。
+fn pattern_key(pattern: &ast::Pattern) -> String {
+    match pattern {
+        ast::Pattern::Var(name, _) => format!("var:{name}"),
+        ast::Pattern::Lit(lit, _) => format!("lit:{lit:?}"),
+        ast::Pattern::Wildcard(_) => "_".to_string(),
+        ast::Pattern::Tuple(elems, rest, _) => {
+            let elems: Vec<String> = elems.iter().map(pattern_key).collect();
+            format!("tuple:{elems:?}:{}", rest.is_some())
+        }
+        ast::Pattern::Struct { name, fields, rest, .. } => {
+            let fields: Vec<(String, Option<String>)> = fields
+                .iter()
+                .map(|(field, pattern)| (field.clone(), pattern.as_ref().map(pattern_key)))
+                .collect();
+            format!("struct:{}:{fields:?}:{rest}", name.join("::"))
+        }
+        ast::Pattern::Enum { name, variant, inner, .. } => {
+            format!(
+                "enum:{}::{variant}:{:?}",
+                name.join("::"),
+                inner.as_deref().map(pattern_key)
+            )
+        }
+        ast::Pattern::Ref(inner, mutable, _) => {
+            format!("ref:{mutable}:{}", pattern_key(inner))
+        }
+        ast::Pattern::Or(patterns, _) => {
+            let patterns: Vec<String> = patterns.iter().map(pattern_key).collect();
+            format!("or:{patterns:?}")
+        }
+    }
+}
+
 fn pattern_is_irrefutable(pattern: &ast::Pattern) -> bool {
     match pattern {
         ast::Pattern::Var(_, _) | ast::Pattern::Wildcard(_) => true,
@@ -2113,9 +2241,17 @@ fn cond_span(cond: &HirExpr, fallback: Span) -> Span {
     if span.line == 0 { fallback } else { span }
 }
 
-/// 便捷入口：检查整个 HIR 程序
+/// 便捷入口：检查整个 HIR 程序（丢弃警告）。
 pub fn check_program(program: &HirProgram, type_table: &TypeTable) -> Vec<TypeCheckError> {
-    TypeChecker::new(program, type_table).check_program(program)
+    check_program_with_warnings(program, type_table).0
+}
+
+/// 便捷入口：检查整个 HIR 程序，返回错误与警告。
+pub fn check_program_with_warnings(
+    program: &HirProgram,
+    type_table: &TypeTable,
+) -> (Vec<TypeCheckError>, Vec<TypeCheckWarning>) {
+    TypeChecker::new(program, type_table).check_program_with_warnings(program)
 }
 
 #[cfg(test)]

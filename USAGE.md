@@ -34,7 +34,7 @@ freebird run --debug hello.fb  # 调试模式
 freebird check hello.fb        # JSON 诊断输出
 ```
 
-`check` 与 `run`/`build` 执行同一套前端检查：`parse` → 名称解析 → 类型检查 → 借用/移动检查。发现问题时退出码为 1；诊断中包含行、列和修复建议。
+`check` 与 `run`/`build` 执行同一套前端检查：`parse` → 名称解析 → 类型检查 → 借用/移动检查。发现问题时退出码为 1；诊断中包含行、列和修复建议。警告（如不可达 `match` 分支）以 `warning` 级别输出，JSON 包含 `error_count` 与 `warning_count`；只有错误会使退出码非 0。
 
 ### 编译
 
@@ -48,8 +48,8 @@ freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 
 - VM 已支持数值/字符/布尔、变量与作用域、控制流、函数调用/递归、数组、结构体、枚举匹配、`Vec`、`Box`、字符串、元组解构以及 `read_*`/`print_*`/文件 I/O。
 - 运行前会执行名称解析、类型检查和借用/移动检查；`check` 与 `run` 报告同一组前端错误。
-- `match` 支持结构体、枚举（含嵌套载荷）、元组、字面量、`or`、引用和 `_` 模式，并在类型检查阶段拒绝非穷尽匹配。`let` 支持变量、元组和结构体解构；可失败模式（如枚举变体）必须改用 `match`。
-- `ret n` 的 `n` 必须是整数字面量；`loop` 目前只作为语句使用，`break value`、把 `loop` 当值、循环外的 `break`/`continue` 都会在编译期报错。
+- `match` 支持结构体、枚举（含嵌套载荷）、元组、字面量、`or`、引用、`..` 剩余和 `_` 模式，并在类型检查阶段拒绝非穷尽匹配；重复分支或兜底分支之后的分支会产生 `warning` 级诊断。`let` 支持变量、元组和结构体解构；可失败模式（如枚举变体）必须改用 `match`。
+- `ret n` 的 `n` 必须是整数字面量；`loop` 支持值语义与 `break value`，`if let` / `while let` 已支持（VM/Stardust 输出一致）；`while`/`for` 中的 `break value` 会在编译期报错；循环标签 `break 'label` 尚未实现。
 - `#id`、`use` 和 `extern` 函数调用尚未实现：声明可以解析，但使用处会报 `unsupported feature`，不会静默返回栈上残留值。
 - Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆块上（逻辑远程栈，见 `docs/adr/0001-logical-remote-stack.md`）。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 文本处理，非 UTF-8/二进制内容不在支持范围内。
 - `read_line` 与 VM 的 `String::from_utf8_lossy` 对齐：CRLF、UTF-8、非法首字节/续字节、overlong/surrogate/越界码点都逐字节一致。**已知差异**：输入 EOF 时 Stardust 解释器的 `CharIn` 直接报 I/O 错误（VM 返回空字符串），生成代码无法捕获。

@@ -115,23 +115,20 @@ fn continue_outside_loop_is_rejected() {
     );
 }
 
-// ─── M0-3：break value 与 loop 值语义 ───
+// ─── M2-6：break value 与 loop 值语义（M0 时临时拒绝，现已实现）───
 
 #[test]
-fn break_with_value_is_rejected() {
-    assert_rejected(
-        "break value",
-        "fn main() { loop { break 42; } }",
-        "`break value` is not supported yet",
-    );
+fn break_value_and_loop_value_are_supported() {
+    let source = "fn main() { let v = loop { break 42; }; print(v); }";
+    assert_backends_agree(source, "loop_value", b"42\n");
 }
 
 #[test]
-fn loop_used_as_value_is_rejected() {
+fn break_value_outside_loop_is_rejected() {
     assert_rejected(
-        "loop value",
-        "fn main() { let v = loop { break; }; print(v); }",
-        "`loop` cannot be used as a value yet",
+        "while break value",
+        "fn main() { while true { break 1; } }",
+        "`break value` is only supported inside `loop`",
     );
 }
 

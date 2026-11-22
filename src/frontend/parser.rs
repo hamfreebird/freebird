@@ -561,6 +561,38 @@ impl Parser {
             }
             TokenKind::While => {
                 self.advance();
+                if self.eat(TokenKind::Let) {
+                    // `while let PAT = EXPR { BODY }` 降级为：
+                    // loop { match EXPR { PAT => BODY, _ => break } }
+                    let pattern = self.parse_pattern()?;
+                    self.expect(TokenKind::Eq)?;
+                    let scrutinee = self.parse_expr_no_struct(0)?;
+                    let body = self.parse_block()?;
+                    let match_expr = Expr::Match(
+                        Box::new(scrutinee),
+                        vec![
+                            MatchArm {
+                                pattern,
+                                guard: None,
+                                body: Box::new(Expr::Block(body, span)),
+                                span,
+                            },
+                            MatchArm {
+                                pattern: Pattern::Wildcard(span),
+                                guard: None,
+                                body: Box::new(Expr::Break(None, span)),
+                                span,
+                            },
+                        ],
+                        span,
+                    );
+                    let loop_block = Block {
+                        stmts: vec![Stmt::Expr(match_expr, span)],
+                        tail: None,
+                        span,
+                    };
+                    return Ok(Expr::Loop(loop_block, span));
+                }
                 let cond = self.parse_expr_no_struct(0)?;
                 let body = self.parse_block()?;
                 Ok(Expr::While(Box::new(cond), body, span))
@@ -679,6 +711,41 @@ impl Parser {
 
     fn parse_if_expr(&mut self) -> Result<Expr, FrontendError> {
         let span = self.advance().span;
+        if self.eat(TokenKind::Let) {
+            // `if let PAT = EXPR { ... } else { ... }` 降级为 match：
+            // 匹配分支执行 then，`_` 分支执行 else（缺省为 unit）。
+            let pattern = self.parse_pattern()?;
+            self.expect(TokenKind::Eq)?;
+            let scrutinee = self.parse_expr_no_struct(0)?;
+            let then_block = self.parse_block()?;
+            let else_expr = if self.eat(TokenKind::Else) {
+                if self.check(TokenKind::If) {
+                    self.parse_if_expr()?
+                } else {
+                    Expr::Block(self.parse_block()?, span)
+                }
+            } else {
+                Expr::Lit(Literal::Unit, span)
+            };
+            return Ok(Expr::Match(
+                Box::new(scrutinee),
+                vec![
+                    MatchArm {
+                        pattern,
+                        guard: None,
+                        body: Box::new(Expr::Block(then_block, span)),
+                        span,
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard(span),
+                        guard: None,
+                        body: Box::new(else_expr),
+                        span,
+                    },
+                ],
+                span,
+            ));
+        }
         let cond = self.parse_expr_no_struct(0)?;
         let then_block = self.parse_block()?;
         let else_block = if self.eat(TokenKind::Else) {

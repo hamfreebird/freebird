@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::frontend::error::FrontendError;
 use crate::hir::resolver::ResolveError;
 use crate::borrowck::checker::BorrowError;
-use crate::typeck::TypeCheckError;
+use crate::typeck::{TypeCheckError, TypeCheckWarning};
 use crate::frontend::token::Span;
 
 /// 诊断级别
@@ -225,20 +225,66 @@ pub fn generate_diagnostic_json(
     type_errors: &[TypeCheckError],
     borrow_errors: &[BorrowError],
 ) -> String {
+    generate_diagnostic_json_with_warnings(
+        source,
+        parse_errors,
+        resolve_errors,
+        type_errors,
+        borrow_errors,
+        &[],
+    )
+}
+
+/// 生成包含类型检查警告的 JSON 诊断。
+pub fn generate_diagnostic_json_with_warnings(
+    source: &str,
+    parse_errors: &[FrontendError],
+    resolve_errors: &[ResolveError],
+    type_errors: &[TypeCheckError],
+    borrow_errors: &[BorrowError],
+    type_warnings: &[TypeCheckWarning],
+) -> String {
     let mut diagnostics = Vec::new();
     diagnostics.extend(frontend_to_diagnostics(parse_errors));
     diagnostics.extend(resolve_to_diagnostics(resolve_errors));
     diagnostics.extend(type_to_diagnostics(type_errors));
     diagnostics.extend(borrow_to_diagnostics(borrow_errors));
+    diagnostics.extend(type_warnings_to_diagnostics(type_warnings));
 
-    let error_count = diagnostics.len();
+    let error_count = diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Error))
+        .count();
+    let warning_count = diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Warning))
+        .count();
     let report = DiagnosticReport {
         source: source.to_string(),
         errors: diagnostics,
         error_count,
+        warning_count,
     };
 
     serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{{}}".to_string())
+}
+
+fn type_warnings_to_diagnostics(warnings: &[TypeCheckWarning]) -> Vec<Diagnostic> {
+    warnings
+        .iter()
+        .map(|warning| {
+            let span = match warning {
+                TypeCheckWarning::UnreachablePattern { span } => *span,
+            };
+            Diagnostic {
+                level: DiagnosticLevel::Warning,
+                message: warning.to_string(),
+                span: SourceSpan::from_span(span),
+                notes: Vec::new(),
+                suggestion: None,
+            }
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -246,6 +292,7 @@ struct DiagnosticReport {
     source: String,
     errors: Vec<Diagnostic>,
     error_count: usize,
+    warning_count: usize,
 }
 
 #[cfg(test)]

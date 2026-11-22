@@ -7,7 +7,7 @@ use crate::codegen::{optimize_mir, StardustGen};
 use crate::frontend::parse;
 use crate::hir::lower;
 use crate::mir::MirGen;
-use crate::typeck::{check_program, TypeTable};
+use crate::typeck::{check_program, check_program_with_warnings, TypeTable};
 use crate::vm::config::RuntimeConfig;
 use crate::vm::id::FnId;
 use crate::vm::mir::MirInst;
@@ -117,29 +117,35 @@ fn apply_runtime_attributes(program: &crate::hir::types::HirProgram, config: &mu
     }
 }
 
-/// 检查源码（词法+语法+名称解析+基础类型检查，不执行）
-pub fn check_source(source: &str) -> Result<(), Vec<String>> {
+/// 检查源码（词法+语法+名称解析+类型/借用检查），同时返回警告。
+///
+/// 返回值第一项是错误，第二项是警告；有警告但无错误时程序仍可编译。
+pub fn check_source_with_warnings(source: &str) -> (Vec<String>, Vec<String>) {
     let (ast, ast_errors) = parse(source);
     let mut all_errors: Vec<String> = ast_errors.iter().map(|e| e.to_string()).collect();
+    let mut warnings: Vec<String> = Vec::new();
 
     let (hir, hir_errors) = lower(&ast);
     all_errors.extend(hir_errors.iter().map(|e| e.to_string()));
 
     if ast_errors.is_empty() && hir_errors.is_empty() {
         let type_table = TypeTable::from_ast_decls(&ast.decls);
-        let type_errors = check_program(&hir, &type_table);
+        let (type_errors, type_warnings) = check_program_with_warnings(&hir, &type_table);
         all_errors.extend(type_errors.iter().map(|e| e.to_string()));
+        warnings.extend(type_warnings.iter().map(|w| w.to_string()));
 
         if type_errors.is_empty() {
             all_errors.extend(check_borrow(&hir).iter().map(|e| e.to_string()));
         }
     }
 
-    if all_errors.is_empty() {
-        Ok(())
-    } else {
-        Err(all_errors)
-    }
+    (all_errors, warnings)
+}
+
+/// 检查源码（词法+语法+名称解析+基础类型检查，不执行）
+pub fn check_source(source: &str) -> Result<(), Vec<String>> {
+    let (errors, _warnings) = check_source_with_warnings(source);
+    if errors.is_empty() { Ok(()) } else { Err(errors) }
 }
 
 /// 编译到 Stardust 源码

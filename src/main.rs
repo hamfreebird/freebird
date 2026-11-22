@@ -9,7 +9,7 @@ use freebird::diagnostics;
 use freebird::frontend::parse;
 use freebird::hir::lower;
 use freebird::repl::Repl;
-use freebird::typeck::{check_program, TypeTable};
+use freebird::typeck::{check_program_with_warnings, TypeTable};
 
 /// Freebird — 一门基于双栈虚拟机的高级系统编程语言
 #[derive(Parser)]
@@ -90,21 +90,25 @@ fn main() {
             let (ast, parse_errors) = parse(&source);
             let (hir, resolve_errors) = lower(&ast);
             let mut type_errors = Vec::new();
+            let mut type_warnings = Vec::new();
             let mut borrow_errors = Vec::new();
             if parse_errors.is_empty() && resolve_errors.is_empty() {
                 let type_table = TypeTable::from_ast_decls(&ast.decls);
-                type_errors = check_program(&hir, &type_table);
+                let (errors, warnings) = check_program_with_warnings(&hir, &type_table);
+                type_errors = errors;
+                type_warnings = warnings;
                 // 与 run/build 保持一致：类型检查通过后继续做借用/移动检查。
                 if type_errors.is_empty() {
                     borrow_errors = check_borrow(&hir);
                 }
             }
-            let json = diagnostics::generate_diagnostic_json(
+            let json = diagnostics::generate_diagnostic_json_with_warnings(
                 &source,
                 &parse_errors,
                 &resolve_errors,
                 &type_errors,
                 &borrow_errors,
+                &type_warnings,
             );
             println!("{json}");
 

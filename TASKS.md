@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 204 unit + 61 integration 全绿（2026-11-22；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28）。
+> 当前：`cargo test` = 201 unit + 94 integration 全绿（2026-11-23；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 10 + `tests/differential_test.rs` 2）。
 > 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)，能力矩阵见 [`STATUS.md`](STATUS.md)；本表保留已完成项的历史记录。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
@@ -11,7 +11,7 @@
 |---|---|---|
 | M0-1 | `ret` 只接受整数立即数 | 其他表达式在解析阶段报 `InvalidRetOperand`；`ret n` 元数仍由类型检查校验 |
 | M0-2 | 循环外 `break`/`continue` | 类型检查报 `LoopControlOutsideLoop` |
-| M0-3 | `loop`/`break value` | M0 明确拒绝 `break value`、值位置的 `loop`；unit 循环保持可用；M2-6 再实现值语义 |
+| M0-3 | `loop`/`break value` | M0 明确拒绝 `break value`、值位置的 `loop`；M2-6 已恢复值语义并补正向测试 |
 | M0-4 | `match` 完整被匹配表达式 | 使用 `parse_expr_no_struct`，括号内恢复结构体字面量 |
 | M0-5 | 模式绑定与穷尽性 | 结构体/枚举嵌套/元组/字面量/`or`/引用模式；字段简写；未知变体/字段；非穷尽与 `or` 绑定不一致均报错；`let` 结构体解构 |
 | M0-6 | 空体函数与 extern | 普通空体报错；extern 调用报 `ExternCall`，不再返回残留参数 |
@@ -34,7 +34,15 @@
 | M1-7 | 资源限制 | VM 的 step/call-depth 测试；USAGE 明确 Stardust 无等价限制 |
 | M1-8 | 占位清理 | `src/codegen/stardust.rs` 中 `unsupported`/`TODO`/`placeholder` 已清零；`Reverse` 在矩阵中标红 |
 
-> 当前测试基线：`cargo test` = 201 unit + 84 integration（33 + 28 + 21 + 2）。
+> 当前测试基线：`cargo test` = 201 unit + 94 integration（33 + 28 + 21 + 10 + 2）。
+
+## M2 — 语言补全（进行中：M2-5 基础完成，M2-6 除标签外完成）
+
+| ID | 项目 | 结果 |
+|---|---|---|
+| M2-5 | 模式匹配收尾 | `..` 结构体/元组剩余、嵌套/or/守卫/穷尽性；重复与兜底后分支警告（`check` JSON `warning_count`） |
+| M2-6 | 循环值语义 | `if let`/`while let` 降级为 `match`/`loop`；`loop` 值 + `break value`（隐藏结果变量）；`while`/`for` 的 `break value` 拒绝；循环标签未实现 |
+| 其余 | M2-1/2/3/4/7/8/9 | 待办 |
 
 ## P0 — 基础正确性与可验证性
 

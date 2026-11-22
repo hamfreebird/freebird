@@ -15,11 +15,11 @@ pub mod typeck;
 pub mod vm;
 
 // 重导出常用类型
-pub use diagnostics::generate_diagnostic_json;
+pub use diagnostics::{generate_diagnostic_json, generate_diagnostic_json_with_warnings};
 pub use frontend::parse;
 pub use hir::lower;
 pub use io::{std_library, IoLib};
-pub use pipeline::{build_stardust, check_source, run_source};
+pub use pipeline::{build_stardust, check_source, check_source_with_warnings, run_source};
 pub use vm::Vm;
 pub use vm::config::RuntimeConfig;
 pub use vm::error::VmError;

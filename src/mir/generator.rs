@@ -161,6 +161,8 @@ struct LoopContext {
     saw_break: bool,
     /// 循环体内是否出现过 `continue`（决定 for 的递增标签是否可达）。
     saw_continue: bool,
+    /// 值 `loop` 的隐藏结果变量；while/for 为 None。
+    result_var: Option<String>,
 }
 
 /// 模式取值路径：从被匹配值出发逐层取出子值。
@@ -347,6 +349,7 @@ impl MirGen {
         break_target: usize,
         continue_target: usize,
         body_base: StackTracker,
+        result_var: Option<String>,
     ) {
         self.loop_contexts.push(LoopContext {
             break_target,
@@ -355,6 +358,7 @@ impl MirGen {
             scope_depth: self.scope_depth,
             saw_break: false,
             saw_continue: false,
+            result_var,
         });
     }
 
@@ -895,7 +899,7 @@ impl MirGen {
                 self.stack.pop();
 
                 let body_base = self.stack.clone();
-                self.push_loop(loop_end, loop_start, body_base.clone());
+                self.push_loop(loop_end, loop_start, body_base.clone(), None);
                 self.gen_block(body, fn_sig);
                 self.pop_loop();
 
@@ -918,17 +922,32 @@ impl MirGen {
             HirExpr::Loop(body, _) => {
                 let loop_start = self.labels.fresh();
                 let loop_end = self.labels.fresh();
+                let result_name = self.fresh_hidden_name("loop_result");
+
+                // 结果变量初始为 unit；`break value` 会覆盖它。
+                self.mir.push(MirInst::Push {
+                    value: Value::Unit,
+                    ty: TypeId::Unit,
+                });
+                self.stack.push_temp();
+                self.mir.push(MirInst::BindVar {
+                    name: result_name.clone(),
+                });
+                self.stack.bind_top(result_name.clone());
 
                 self.mir.push(MirInst::Mark(loop_start));
-
                 let body_base = self.stack.clone();
-                self.push_loop(loop_end, loop_start, body_base.clone());
+                self.push_loop(
+                    loop_end,
+                    loop_start,
+                    body_base.clone(),
+                    Some(result_name.clone()),
+                );
                 self.gen_block(body, fn_sig);
                 let ctx = self.pop_loop();
 
                 if self.reachable {
-                    // loop 表达式当前按 unit 处理；丢弃循环体尾部结果，
-                    // 避免每次迭代在栈上累积值。
+                    // 正常迭代结束：清理循环体尾部结果，回到循环入口状态。
                     let body_results = self.stack.len().saturating_sub(body_base.len());
                     for _ in 0..body_results {
                         self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
@@ -941,6 +960,16 @@ impl MirGen {
                 // 只有 break 能离开 loop；没有 break 时循环之后不可达。
                 self.reachable = ctx.is_some_and(|c| c.saw_break);
                 self.stack = body_base;
+
+                // 读取结果并移除隐藏变量槽，只留下结果值。
+                self.mir.push(MirInst::ReadVar {
+                    name: result_name,
+                });
+                self.stack.push_temp();
+                self.mir.push(MirInst::Swap);
+                self.stack.swap();
+                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                self.stack.pop();
             }
             HirExpr::For { pattern, iterable, body, .. } => {
                 let loop_start = self.labels.fresh();
@@ -991,7 +1020,7 @@ impl MirGen {
                 self.mir.push(MirInst::Jump(loop_end));
                 self.stack.pop();
 
-                self.push_loop(loop_end, continue_label, body_base.clone());
+                self.push_loop(loop_end, continue_label, body_base.clone(), None);
 
                 self.enter_scope();
                 self.mir.push(MirInst::ReadVar { name: iter_name.clone() });
@@ -1088,11 +1117,22 @@ impl MirGen {
             }
             HirExpr::Break(value, _) => {
                 if let Some(val) = value {
-                    // 当前 break 值按 unit 循环语义丢弃；循环表达式本身的类型
-                    // 仍是 unit。先求值以保留副作用，再随循环体栈槽一起回退。
                     self.gen_expr(val, fn_sig);
                     if !self.reachable {
                         return;
+                    }
+                    if let Some(result_var) = self
+                        .loop_contexts
+                        .last()
+                        .and_then(|ctx| ctx.result_var.clone())
+                    {
+                        self.mir.push(MirInst::WriteVar { name: result_var });
+                        self.stack.pop(); // RHS 被 WriteVar 消费
+                    } else {
+                        // while/for 的带值 break 已在类型检查阶段拒绝；
+                        // 这里保守丢弃值。
+                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.stack.pop();
                     }
                 }
                 if let Some(last) = self.loop_contexts.last_mut() {
