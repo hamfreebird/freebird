@@ -297,6 +297,8 @@ pub enum Decl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDecl {
     pub name: String,
+    /// 泛型参数（MVP：仅类型参数，如 `<T>`）。
+    pub generics: Vec<String>,
     pub params: Vec<FnParam>,
     pub return_type: Option<Type>,
     pub body: Option<Block>,
@@ -316,6 +318,8 @@ pub struct FnParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDecl {
     pub name: String,
+    /// 泛型参数（MVP：仅类型参数）。
+    pub generics: Vec<String>,
     pub fields: Vec<StructField>,
     pub attrs: Vec<Attribute>,
     pub span: Span,
@@ -332,6 +336,8 @@ pub struct StructField {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     pub name: String,
+    /// 泛型参数（MVP：仅类型参数）。
+    pub generics: Vec<String>,
     pub variants: Vec<EnumVariant>,
     pub attrs: Vec<Attribute>,
     pub span: Span,

@@ -301,6 +301,10 @@ pub struct TypeChecker<'a> {
     loop_contexts: Vec<LoopCheckContext>,
     /// 下一个循环表达式要使用的标签（由 `Labelled` 设置）。
     pending_loop_label: Option<String>,
+    /// 用户泛型结构体/枚举/函数的类型参数。
+    generic_structs: HashMap<String, Vec<String>>,
+    generic_enums: HashMap<String, Vec<String>>,
+    generic_fns: HashMap<String, Vec<String>>,
     errors: Vec<TypeCheckError>,
     warnings: Vec<TypeCheckWarning>,
 }
@@ -313,12 +317,27 @@ impl<'a> TypeChecker<'a> {
             .map(|sig| (sig.name.clone(), sig.clone()))
             .collect();
         let mut extern_functions = HashMap::new();
+        let mut generic_structs = HashMap::new();
+        let mut generic_enums = HashMap::new();
+        let mut generic_fns = HashMap::new();
         for decl in &program.decls {
-            if let HirDecl::Extern(ext) = decl {
-                for item in &ext.items {
-                    let crate::hir::types::HirExternItem::Fn(f) = item;
-                    extern_functions.insert(f.name.clone(), ext.abi.clone());
+            match decl {
+                HirDecl::Extern(ext) => {
+                    for item in &ext.items {
+                        let crate::hir::types::HirExternItem::Fn(f) = item;
+                        extern_functions.insert(f.name.clone(), ext.abi.clone());
+                    }
                 }
+                HirDecl::Struct(s) if !s.generics.is_empty() => {
+                    generic_structs.insert(s.name.clone(), s.generics.clone());
+                }
+                HirDecl::Enum(e) if !e.generics.is_empty() => {
+                    generic_enums.insert(e.name.clone(), e.generics.clone());
+                }
+                HirDecl::Fn(f) if !f.generics.is_empty() => {
+                    generic_fns.insert(f.name.clone(), f.generics.clone());
+                }
+                _ => {}
             }
         }
         Self {
@@ -330,6 +349,9 @@ impl<'a> TypeChecker<'a> {
             loop_depth: 0,
             loop_contexts: Vec::new(),
             pending_loop_label: None,
+            generic_structs,
+            generic_enums,
+            generic_fns,
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -1240,7 +1262,7 @@ impl<'a> TypeChecker<'a> {
             },
         };
 
-        let Some(sig) = sig else {
+        let Some(mut sig) = sig else {
             for arg in args {
                 match arg {
                     HirCallArg::Pos(e, _) | HirCallArg::Named(_, e, _) => {
@@ -1261,6 +1283,35 @@ impl<'a> TypeChecker<'a> {
             });
         }
 
+        // 先求值参数，便于泛型函数从实参推断类型。
+        let mut arg_types: Vec<(HirType, Span)> = Vec::with_capacity(args.len());
+        for arg in args {
+            let (expr, arg_span) = match arg {
+                HirCallArg::Pos(e, s) => (e, *s),
+                HirCallArg::Named(_, e, s) => (e, *s),
+            };
+            arg_types.push((self.check_expr(expr), arg_span));
+        }
+
+        // 泛型函数：从实参推断类型参数并替换签名。
+        if let Some(params) = self.generic_fns.get(&sig.name).cloned() {
+            let mut generic_map: HashMap<String, HirType> = HashMap::new();
+            for (i, (found, _)) in arg_types.iter().enumerate() {
+                let expected = match &args[i] {
+                    HirCallArg::Named(name, _, _) => sig
+                        .params
+                        .iter()
+                        .find(|(pname, _)| pname == name)
+                        .map(|(_, ty)| ty),
+                    HirCallArg::Pos(_, _) => sig.params.get(i).map(|(_, ty)| ty),
+                };
+                if let Some(expected) = expected {
+                    self.unify_generic(expected, found, &params, &mut generic_map);
+                }
+            }
+            sig = self.substitute_signature(&sig, &generic_map);
+        }
+
         // 栈传参不检查实参个数；空参数调用按普通零参调用处理。
         if !stack_pass {
             if args.len() != sig.params.len() {
@@ -1273,29 +1324,23 @@ impl<'a> TypeChecker<'a> {
             }
         }
 
-        for (i, arg) in args.iter().enumerate() {
-            let (expr, arg_span) = match arg {
-                HirCallArg::Pos(e, s) => (e, *s),
-                HirCallArg::Named(_, e, s) => (e, *s),
-            };
-            let found = self.check_expr(expr);
-
-            let expected = match arg {
+        for (i, (found, arg_span)) in arg_types.iter().enumerate() {
+            let expected = match &args[i] {
                 HirCallArg::Named(name, _, _) => sig
                     .params
                     .iter()
                     .find(|(pname, _)| pname == name)
-                    .map(|(_, ty)| ty.clone()),
-                HirCallArg::Pos(_, _) => sig.params.get(i).map(|(_, ty)| ty.clone()),
+                    .map(|(_, ty)| ty),
+                HirCallArg::Pos(_, _) => sig.params.get(i).map(|(_, ty)| ty),
             };
 
             if let Some(expected) = expected
-                && !is_assignable(&expected, &found)
+                && !is_assignable(expected, found)
             {
                 self.error(TypeCheckError::TypeMismatch {
-                    expected,
-                    found,
-                    span: arg_span,
+                    expected: expected.clone(),
+                    found: found.clone(),
+                    span: *arg_span,
                     context: format!("argument {} of `{}`", i + 1, sig.name),
                 });
             }
@@ -1696,11 +1741,144 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
-    fn field_type(&mut self, inner_ty: &HirType, field: &str, span: Span) -> HirType {        let type_name = match inner_ty {
-            HirType::Path(segments) => segments.join("::"),
+    fn hir_type_from_name(name: &str) -> HirType {
+        HirType::Path(name.split("::").map(str::to_string).collect())
+    }
+
+    fn substitute_type(
+        &self,
+        ty: &HirType,
+        map: &HashMap<String, HirType>,
+    ) -> HirType {
+        match ty {
+            HirType::Path(segments) if segments.len() == 1 => map
+                .get(&segments[0])
+                .cloned()
+                .unwrap_or_else(|| ty.clone()),
+            HirType::Generic(base, args) => HirType::Generic(
+                Box::new(self.substitute_type(base, map)),
+                args.iter().map(|arg| self.substitute_type(arg, map)).collect(),
+            ),
+            HirType::Ref(inner, mutable) => {
+                HirType::Ref(Box::new(self.substitute_type(inner, map)), *mutable)
+            }
+            HirType::Tuple(types) => {
+                HirType::Tuple(types.iter().map(|t| self.substitute_type(t, map)).collect())
+            }
+            HirType::Array(inner) => {
+                HirType::Array(Box::new(self.substitute_type(inner, map)))
+            }
+            HirType::FnPtr(params, rets) => HirType::FnPtr(
+                params.iter().map(|t| self.substitute_type(t, map)).collect(),
+                rets.iter().map(|t| self.substitute_type(t, map)).collect(),
+            ),
+            _ => ty.clone(),
+        }
+    }
+
+    fn unify_generic(
+        &self,
+        expected: &HirType,
+        found: &HirType,
+        params: &[String],
+        map: &mut HashMap<String, HirType>,
+    ) {
+        if let HirType::Path(segments) = expected
+            && segments.len() == 1
+            && params.contains(&segments[0])
+        {
+            map.entry(segments[0].clone())
+                .or_insert_with(|| found.clone());
+            return;
+        }
+        match (expected, found) {
+            (HirType::Generic(e_base, e_args), HirType::Generic(f_base, f_args))
+                if e_base == f_base && e_args.len() == f_args.len() =>
+            {
+                for (expected, found) in e_args.iter().zip(f_args.iter()) {
+                    self.unify_generic(expected, found, params, map);
+                }
+            }
+            (HirType::Ref(e, _), HirType::Ref(f, _)) => {
+                self.unify_generic(e, f, params, map);
+            }
+            (HirType::Array(e), HirType::Array(f)) => {
+                self.unify_generic(e, f, params, map);
+            }
+            (HirType::Tuple(e), HirType::Tuple(f)) if e.len() == f.len() => {
+                for (expected, found) in e.iter().zip(f.iter()) {
+                    self.unify_generic(expected, found, params, map);
+                }
+            }
+            (HirType::FnPtr(e_params, e_rets), HirType::FnPtr(f_params, f_rets))
+                if e_params.len() == f_params.len() && e_rets.len() == f_rets.len() =>
+            {
+                for (expected, found) in e_params.iter().zip(f_params.iter()) {
+                    self.unify_generic(expected, found, params, map);
+                }
+                for (expected, found) in e_rets.iter().zip(f_rets.iter()) {
+                    self.unify_generic(expected, found, params, map);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn substitute_signature(
+        &self,
+        sig: &FnSignature,
+        map: &HashMap<String, HirType>,
+    ) -> FnSignature {
+        FnSignature {
+            name: sig.name.clone(),
+            params: sig
+                .params
+                .iter()
+                .map(|(name, ty)| (name.clone(), self.substitute_type(ty, map)))
+                .collect(),
+            return_types: sig
+                .return_types
+                .iter()
+                .map(|ty| self.substitute_type(ty, map))
+                .collect(),
+            n: sig.n,
+            m: sig.m,
+            span: sig.span,
+        }
+    }
+
+    fn field_type(&mut self, inner_ty: &HirType, field: &str, span: Span) -> HirType {
+        let (type_name, generic_map): (String, HashMap<String, HirType>) = match inner_ty {
+            HirType::Path(segments) => {
+                let name = segments.join("::");
+                let map = self
+                    .generic_structs
+                    .get(&name)
+                    .map(|params| {
+                        params
+                            .iter()
+                            .map(|param| (param.clone(), HirType::Unknown))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (name, map)
+            }
+            HirType::Generic(base, args) => {
+                let HirType::Path(segments) = base.as_ref() else {
+                    return HirType::Unknown;
+                };
+                let name = segments.join("::");
+                let Some(params) = self.generic_structs.get(&name) else {
+                    return HirType::Unknown;
+                };
+                let map = params
+                    .iter()
+                    .cloned()
+                    .zip(args.iter().cloned())
+                    .collect();
+                (name, map)
+            }
             HirType::Unknown => return HirType::Unknown,
-            // 泛型容器的方法/字段尚未实现，避免级联误报。
-            HirType::Generic(_, _) => return HirType::Unknown,
             _ => {
                 self.error(TypeCheckError::UnknownField {
                     type_name: inner_ty.name(),
@@ -1713,13 +1891,10 @@ impl<'a> TypeChecker<'a> {
 
         match self.type_table.lookup_struct(&type_name) {
             Some(def) => match def.fields.iter().find(|f| f.name == field) {
-                Some(field_def) => HirType::Path(
-                    field_def
-                        .type_name
-                        .split("::")
-                        .map(str::to_string)
-                        .collect(),
-                ),
+                Some(field_def) => {
+                    let ty = Self::hir_type_from_name(&field_def.type_name);
+                    self.substitute_type(&ty, &generic_map)
+                }
                 None => {
                     self.error(TypeCheckError::UnknownField {
                         type_name,
@@ -1744,20 +1919,25 @@ impl<'a> TypeChecker<'a> {
     ) -> HirType {
         let type_name = name.join("::");
         let struct_def = self.type_table.lookup_struct(&type_name).cloned();
+        let generic_params = self.generic_structs.get(&type_name).cloned();
 
         match struct_def {
             Some(def) => {
+                let mut generic_map: HashMap<String, HirType> = HashMap::new();
                 for (field_name, expr) in fields {
                     let found = self.check_expr(expr);
                     match def.fields.iter().find(|f| &f.name == field_name) {
                         Some(field_def) => {
-                            let expected = HirType::Path(
-                                field_def
-                                    .type_name
-                                    .split("::")
-                                    .map(str::to_string)
-                                    .collect(),
-                            );
+                            let expected = Self::hir_type_from_name(&field_def.type_name);
+                            if let Some(params) = &generic_params {
+                                self.unify_generic(
+                                    &expected,
+                                    &found,
+                                    params,
+                                    &mut generic_map,
+                                );
+                            }
+                            let expected = self.substitute_type(&expected, &generic_map);
                             if !is_assignable(&expected, &found) {
                                 self.error(TypeCheckError::TypeMismatch {
                                     expected,
@@ -1778,7 +1958,20 @@ impl<'a> TypeChecker<'a> {
                         }
                     }
                 }
-                HirType::Path(name.to_vec())
+                if let Some(params) = generic_params {
+                    let args = params
+                        .iter()
+                        .map(|param| {
+                            generic_map
+                                .get(param)
+                                .cloned()
+                                .unwrap_or(HirType::Unknown)
+                        })
+                        .collect();
+                    HirType::Generic(Box::new(HirType::Path(name.to_vec())), args)
+                } else {
+                    HirType::Path(name.to_vec())
+                }
             }
             None => {
                 for (_, expr) in fields {
@@ -1806,34 +1999,46 @@ impl<'a> TypeChecker<'a> {
         span: Span,
     ) -> HirType {
         let enum_name = name.join("::");
-        let enum_ty = HirType::Path(name.to_vec());
+        let base_ty = HirType::Path(name.to_vec());
         let enum_def = self.type_table.lookup_enum(&enum_name).cloned();
+        let generic_params = self.generic_enums.get(&enum_name).cloned();
+        let fallback_ty = if let Some(params) = &generic_params {
+            HirType::Generic(
+                Box::new(base_ty.clone()),
+                params.iter().map(|_| HirType::Unknown).collect(),
+            )
+        } else {
+            base_ty.clone()
+        };
         let data_ty = data.map(|e| self.check_expr(e));
 
         let Some(def) = enum_def else {
-            return enum_ty;
+            return fallback_ty;
         };
 
-        let Some(variant_def) = def.variants.iter().find(|v| v.name == variant) else {
+        let Some(variant_def) = def.variants.iter().find(|v| v.name == variant).cloned() else {
             self.error(TypeCheckError::UnknownVariant {
                 enum_name,
                 variant: variant.to_string(),
                 span,
             });
-            return enum_ty;
+            return fallback_ty;
         };
 
+        let mut generic_map: HashMap<String, HirType> = HashMap::new();
         match (&variant_def.data_type, &data_ty) {
             (Some(expected_name), Some(found)) => {
-                let expected = HirType::Path(
-                    expected_name.split("::").map(str::to_string).collect(),
-                );
+                let expected = Self::hir_type_from_name(expected_name);
+                if let Some(params) = &generic_params {
+                    self.unify_generic(&expected, found, params, &mut generic_map);
+                }
+                let expected = self.substitute_type(&expected, &generic_map);
                 if !is_assignable(&expected, found) {
                     self.error(TypeCheckError::TypeMismatch {
                         expected,
                         found: found.clone(),
                         span,
-                        context: format!("payload of `{}::{variant}`", enum_ty.name()),
+                        context: format!("payload of `{enum_name}::{variant}`"),
                     });
                 }
             }
@@ -1842,22 +2047,34 @@ impl<'a> TypeChecker<'a> {
                     expected: HirType::Unit,
                     found: data_ty.unwrap_or(HirType::Unknown),
                     span,
-                    context: format!("payload of `{}::{variant}`", enum_ty.name()),
+                    context: format!("payload of `{enum_name}::{variant}`"),
                 });
             }
-            (Some(expected_name), None) => {
+            (Some(_), None) => {
                 self.error(TypeCheckError::ArgumentCountMismatch {
-                    function: format!("{}::{variant}", enum_ty.name()),
+                    function: format!("{enum_name}::{variant}"),
                     expected: 1,
                     found: 0,
                     span,
                 });
-                let _ = expected_name;
             }
             (None, None) => {}
         }
 
-        enum_ty
+        if let Some(params) = generic_params {
+            let args = params
+                .iter()
+                .map(|param| {
+                    generic_map
+                        .get(param)
+                        .cloned()
+                        .unwrap_or(HirType::Unknown)
+                })
+                .collect();
+            HirType::Generic(Box::new(base_ty), args)
+        } else {
+            base_ty
+        }
     }
 
     /// 校验 `or` 模式每个分支绑定相同的变量集合。
@@ -1919,6 +2136,37 @@ impl<'a> TypeChecker<'a> {
             }
             ast::Pattern::Enum { name, variant, inner, span } => {
                 let enum_name = name.join("::");
+                let generic_map: HashMap<String, HirType> = match scrutinee_ty {
+                    HirType::Generic(base, args) => {
+                        if let HirType::Path(segments) = base.as_ref()
+                            && segments.join("::") == enum_name
+                        {
+                            self.generic_enums
+                                .get(&enum_name)
+                                .map(|params| {
+                                    params
+                                        .iter()
+                                        .cloned()
+                                        .zip(args.iter().cloned())
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            HashMap::new()
+                        }
+                    }
+                    HirType::Path(segments) if segments.join("::") == enum_name => self
+                        .generic_enums
+                        .get(&enum_name)
+                        .map(|params| {
+                            params
+                                .iter()
+                                .map(|param| (param.clone(), HirType::Unknown))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    _ => HashMap::new(),
+                };
                 let variant_def = self
                     .type_table
                     .lookup_enum(&enum_name)
@@ -1928,7 +2176,8 @@ impl<'a> TypeChecker<'a> {
                         .data_type
                         .as_ref()
                         .map(|t| {
-                            HirType::Path(t.split("::").map(str::to_string).collect())
+                            let ty = Self::hir_type_from_name(t);
+                            self.substitute_type(&ty, &generic_map)
                         })
                         .unwrap_or(HirType::Unknown),
                     None => {
@@ -1946,6 +2195,37 @@ impl<'a> TypeChecker<'a> {
             }
             ast::Pattern::Struct { name, fields, span, .. } => {
                 let struct_name = name.join("::");
+                let generic_map: HashMap<String, HirType> = match scrutinee_ty {
+                    HirType::Generic(base, args) => {
+                        if let HirType::Path(segments) = base.as_ref()
+                            && segments.join("::") == struct_name
+                        {
+                            self.generic_structs
+                                .get(&struct_name)
+                                .map(|params| {
+                                    params
+                                        .iter()
+                                        .cloned()
+                                        .zip(args.iter().cloned())
+                                        .collect()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            HashMap::new()
+                        }
+                    }
+                    HirType::Path(segments) if segments.join("::") == struct_name => self
+                        .generic_structs
+                        .get(&struct_name)
+                        .map(|params| {
+                            params
+                                .iter()
+                                .map(|param| (param.clone(), HirType::Unknown))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    _ => HashMap::new(),
+                };
                 let struct_def = self.type_table.lookup_struct(&struct_name).cloned();
                 if struct_def.is_none() {
                     self.error(TypeCheckError::UnknownStruct {
@@ -1966,9 +2246,8 @@ impl<'a> TypeChecker<'a> {
                     }
                     let field_ty = field
                         .map(|f| {
-                            HirType::Path(
-                                f.type_name.split("::").map(str::to_string).collect(),
-                            )
+                            let ty = Self::hir_type_from_name(&f.type_name);
+                            self.substitute_type(&ty, &generic_map)
                         })
                         .unwrap_or(HirType::Unknown);
                     match field_pattern {
@@ -2047,42 +2326,45 @@ impl TypeChecker<'_> {
             return true;
         }
 
-        match ty {
-            HirType::Path(segments) => {
-                let name = segments.join("::");
-                let short = segments.last().map(String::as_str).unwrap_or(name.as_str());
-                if let Some(def) = self
-                    .type_table
-                    .lookup_enum(&name)
-                    .or_else(|| self.type_table.lookup_enum(short))
-                {
-                    let mut covered = HashSet::new();
-                    for arm in arms {
-                        if arm.guard.is_none() {
-                            collect_covered_variants(&arm.pattern, &mut covered);
-                        }
-                    }
-                    return def.variants.iter().all(|v| covered.contains(&v.name));
+        let segments = match ty {
+            HirType::Path(segments) => segments,
+            HirType::Generic(base, _) => match base.as_ref() {
+                HirType::Path(segments) => segments,
+                _ => return false,
+            },
+            _ => return false,
+        };
+        let name = segments.join("::");
+        let short = segments.last().map(String::as_str).unwrap_or(name.as_str());
+        if let Some(def) = self
+            .type_table
+            .lookup_enum(&name)
+            .or_else(|| self.type_table.lookup_enum(short))
+        {
+            let mut covered = HashSet::new();
+            for arm in arms {
+                if arm.guard.is_none() {
+                    collect_covered_variants(&arm.pattern, &mut covered);
                 }
-                if name == "bool" {
-                    let mut true_covered = false;
-                    let mut false_covered = false;
-                    for arm in arms {
-                        if arm.guard.is_some() {
-                            continue;
-                        }
-                        collect_covered_bools(
-                            &arm.pattern,
-                            &mut true_covered,
-                            &mut false_covered,
-                        );
-                    }
-                    return true_covered && false_covered;
-                }
-                false
             }
-            _ => false,
+            return def.variants.iter().all(|v| covered.contains(&v.name));
         }
+        if name == "bool" {
+            let mut true_covered = false;
+            let mut false_covered = false;
+            for arm in arms {
+                if arm.guard.is_some() {
+                    continue;
+                }
+                collect_covered_bools(
+                    &arm.pattern,
+                    &mut true_covered,
+                    &mut false_covered,
+                );
+            }
+            return true_covered && false_covered;
+        }
+        false
     }
 }
 

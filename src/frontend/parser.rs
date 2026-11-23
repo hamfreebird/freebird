@@ -79,6 +79,7 @@ impl Parser {
     fn parse_fn(&mut self, attrs: Vec<Attribute>) -> Result<FnDecl, FrontendError> {
         let fn_span = self.expect(TokenKind::Fn)?.span;
         let name = self.expect_ident("function name")?;
+        let generics = self.parse_generic_params()?;
 
         self.expect(TokenKind::LParen)?;
         let params = self.parse_fn_params()?;
@@ -108,12 +109,32 @@ impl Parser {
 
         Ok(FnDecl {
             name,
+            generics,
             params,
             return_type,
             body,
             attrs,
             span: fn_span,
         })
+    }
+
+    /// 解析声明后的泛型参数 `<T, U>`；没有则返回空列表。
+    fn parse_generic_params(&mut self) -> Result<Vec<String>, FrontendError> {
+        let mut generics = Vec::new();
+        if !self.eat(TokenKind::Lt) {
+            return Ok(generics);
+        }
+        loop {
+            if self.check(TokenKind::Gt) {
+                break;
+            }
+            generics.push(self.expect_ident("generic parameter")?);
+            if !self.eat(TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(TokenKind::Gt)?;
+        Ok(generics)
     }
 
     fn parse_fn_params(&mut self) -> Result<Vec<FnParam>, FrontendError> {
@@ -139,12 +160,13 @@ impl Parser {
     fn parse_struct(&mut self, attrs: Vec<Attribute>) -> Result<StructDecl, FrontendError> {
         let struct_span = self.expect(TokenKind::Struct)?.span;
         let name = self.expect_ident("struct name")?;
+        let generics = self.parse_generic_params()?;
         self.expect(TokenKind::LBrace)?;
         let fields = self.parse_struct_fields()?;
         self.expect(TokenKind::RBrace)?;
         let _ = self.eat(TokenKind::Semicolon);
 
-        Ok(StructDecl { name, fields, attrs, span: struct_span })
+        Ok(StructDecl { name, generics, fields, attrs, span: struct_span })
     }
 
     fn parse_struct_fields(&mut self) -> Result<Vec<StructField>, FrontendError> {
@@ -170,12 +192,13 @@ impl Parser {
     fn parse_enum(&mut self, attrs: Vec<Attribute>) -> Result<EnumDecl, FrontendError> {
         let enum_span = self.expect(TokenKind::Enum)?.span;
         let name = self.expect_ident("enum name")?;
+        let generics = self.parse_generic_params()?;
         self.expect(TokenKind::LBrace)?;
         let variants = self.parse_enum_variants()?;
         self.expect(TokenKind::RBrace)?;
         let _ = self.eat(TokenKind::Semicolon);
 
-        Ok(EnumDecl { name, variants, attrs, span: enum_span })
+        Ok(EnumDecl { name, generics, variants, attrs, span: enum_span })
     }
 
     fn parse_enum_variants(&mut self) -> Result<Vec<EnumVariant>, FrontendError> {

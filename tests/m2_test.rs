@@ -129,6 +129,80 @@ fn main() {
 }
 
 #[test]
+fn generic_struct_matches() {
+    let source = r#"
+struct Pair<T> { a: T, b: T }
+fn main() {
+    let p: Pair<i64> = Pair { a: 1, b: 2 };
+    print(p.a);
+    print(p.b);
+}
+"#;
+    assert_same_output(source, "generic_struct", b"");
+}
+
+#[test]
+fn generic_function_matches() {
+    let source = r#"
+fn id<T>(x: T) -> T { x }
+fn main() {
+    print(id(7));
+    print(id(true) as i64);
+}
+"#;
+    assert_same_output(source, "generic_fn", b"");
+}
+
+#[test]
+fn generic_enum_matches() {
+    let source = r#"
+enum Maybe<T> { Nothing, Just(T) }
+fn main() {
+    let m: Maybe<i64> = Maybe::Just(5);
+    match m {
+        Maybe::Just(x) => print(x),
+        Maybe::Nothing => print(0),
+    }
+    let n: Maybe<i64> = Maybe::Nothing;
+    match n {
+        Maybe::Just(x) => print(x),
+        Maybe::Nothing => print(9),
+    }
+}
+"#;
+    assert_same_output(source, "generic_enum", b"");
+}
+
+#[test]
+fn generic_function_with_generic_struct_matches() {
+    let source = r#"
+struct Pair<T> { a: T, b: T }
+fn first<T>(p: Pair<T>) -> T { p.a }
+fn main() {
+    let p: Pair<i64> = Pair { a: 3, b: 4 };
+    print(first(p));
+}
+"#;
+    assert_same_output(source, "generic_combined", b"");
+}
+
+#[test]
+fn generic_struct_field_mismatch_is_rejected() {
+    let source = r#"
+struct Pair<T> { a: T, b: T }
+fn main() {
+    let p = Pair { a: 1, b: true };
+    print(p.a);
+}
+"#;
+    let errors = check_source(source).expect_err("generic field mismatch should be rejected");
+    assert!(
+        errors.join("\n").contains("type mismatch"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}
+
+#[test]
 fn loop_labels_break_continue_match() {
     let source = r#"
 fn main() {

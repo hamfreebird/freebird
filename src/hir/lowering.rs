@@ -104,6 +104,7 @@ impl Lowering {
                         let sig = self.fn_decl_to_signature(f);
                         HirExternItem::Fn(HirFnDecl {
                             name: f.name.clone(),
+                            generics: f.generics.clone(),
                             sig,
                             body: None,
                             attrs: f.attrs.clone(),
@@ -141,6 +142,7 @@ impl Lowering {
 
         Some(HirFnDecl {
             name: f.name.clone(),
+            generics: f.generics.clone(),
             sig,
             body,
             attrs: f.attrs.clone(),

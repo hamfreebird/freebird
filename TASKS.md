@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 201 unit + 106 integration 全绿（2026-11-23；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 22 + `tests/differential_test.rs` 2）。
+> 当前：`cargo test` = 201 unit + 111 integration 全绿（2026-11-23；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 27 + `tests/differential_test.rs` 2）。
 > 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)，能力矩阵见 [`STATUS.md`](STATUS.md)；本表保留已完成项的历史记录。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
@@ -34,9 +34,9 @@
 | M1-7 | 资源限制 | VM 的 step/call-depth 测试；USAGE 明确 Stardust 无等价限制 |
 | M1-8 | 占位清理 | `src/codegen/stardust.rs` 中 `unsupported`/`TODO`/`placeholder` 已清零；`Reverse` 在矩阵中标红 |
 
-> 当前测试基线：`cargo test` = 201 unit + 106 integration（33 + 28 + 21 + 22 + 2）。
+> 当前测试基线：`cargo test` = 201 unit + 111 integration（33 + 28 + 21 + 27 + 2）。
 
-## M2 — 语言补全（进行中：M2-5/M2-6 完成，M2-2/M2-4/M2-7 部分完成）
+## M2 — 语言补全（进行中：M2-1/M2-5/M2-6 完成，M2-2/M2-4/M2-7 部分完成）
 
 | ID | 项目 | 结果 |
 |---|---|---|
@@ -45,7 +45,8 @@
 | M2-4 | 函数指针 | `fn(A,B)->C` 类型、函数名作值、参数/返回值、间接调用；Stardust FnId dispatch；MVP 要求恰好一个返回值 |
 | M2-2 | Option/Result | 内建 i64 载荷枚举；构造/match；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or`；`Result` 方法明确报未实现，泛型化待 M2-1 |
 | M2-7 | 标准库扩展 | `abs`/`min`/`max`；Vec/String `is_empty`/`clear`；字符串解析/格式化待办 |
-| 其余 | M2-1/3/8/9 | 待办 |
+| M2-1 | 泛型 | `struct Pair<T>`/`enum Maybe<T>`/`fn id<T>(x: T) -> T` 声明与泛型实参类型；字段访问与函数实参推断 + 替换检查；布局/代码按基名共用一份（类型擦除 MVP，无约束/显式类型实参/单态化） |
+| 其余 | M2-3/8/9 | 待办 |
 
 ## P0 — 基础正确性与可验证性
 
