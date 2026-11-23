@@ -96,4 +96,4 @@
 - **M2-1 泛型（类型擦除 MVP）**：支持 `struct Pair<T>`、`enum Maybe<T>`、`fn id<T>(x: T) -> T`；类型实参从结构体字段和函数实参推断并做替换检查；布局按基名复用，VM/Stardust 各生成一份代码。暂不支持约束、显式类型实参（turbofish）与按实例单态化，泛型函数体只能使用与具体类型无关的操作。
 - **M2-2 Option/Result（泛型枚举）**：内建 `Option<T>`/`Result<T, E>`，载荷类型从构造表达式推断并做替换检查；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`。类型检查把每个方法调用的成功/失败变体标签标注在 `Span → MethodVariantTags` 上交给 MIR 生成器，因此 `Option`（`Some`=1/`None`=0）与 `Result`（`Ok`=0/`Err`=1）共用同一套指令。`map`/`ok`/`err` 等组合子待办。
 - **M2-7 标准库（部分）**：`abs`/`min`/`max`、`Vec`/`String` 的 `is_empty`/`clear`、转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`（新增 `EnumPayloadToOption`/`OptionToResult` 指令）、`int_to_str`（双后端，堆块逐位写入）与 `str_to_int`（VM 完整；Stardust 生成显式陷阱）。`map` 等组合子与 Stardust 的 `str_to_int` 待办。
-- **待实现**：M2-3 模块/`use`、M2-4 多返回值函数指针、M2-7 其余标准库（`map` 等组合子、Stardust 的 `str_to_int`）、M2-8 `unsafe`/`#id`、M2-9 `impl`。
+- **待实现**：M2-3 模块/`use`、M2-4 多返回值函数指针、M2-7 其余标准库（`map` 等组合子、Stardust 的 `str_to_int`）、M2-8 `unsafe`/`#id`、M2-9 `impl` 的实现（决策见 `docs/adr/0003-user-impl-methods.md`：方案 C）。

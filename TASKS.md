@@ -46,7 +46,8 @@
 | M2-2 | Option/Result | 泛型枚举 `Option<T>`/`Result<T,E>`：载荷类型推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or`；`Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map` 等组合子待办 |
 | M2-7 | 标准库扩展 | `abs`/`min`/`max`；Vec/String `is_empty`/`clear`；`Option`/`Result` 转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`；`int_to_str` 双后端、`str_to_int` 仅 VM（Stardust 显式陷阱）；`map` 等组合子待办 |
 | M2-1 | 泛型 | `struct Pair<T>`/`enum Maybe<T>`/`fn id<T>(x: T) -> T` 声明与泛型实参类型；字段访问与函数实参推断 + 替换检查；布局/代码按基名共用一份（类型擦除 MVP，无约束/显式类型实参/单态化） |
-| 其余 | M2-3/8/9 | 待办 |
+| M2-9 | 用户方法与 `impl` | ADR 0003 定案方案 C：`impl Type { fn f(&self) }`、名字扁平化为 `Type::f`、用户方法优先于内建方法分派；实现待办 |
+| 其余 | M2-3/8 | 待办 |
 
 ## P0 — 基础正确性与可验证性
 
