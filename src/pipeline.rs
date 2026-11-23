@@ -34,13 +34,16 @@ pub fn run_file(path: &Path, config: RuntimeConfig) -> Result<Vec<u8>, String> {
 /// 递归加载模块：`mod foo;` 读取同目录 `foo.fb`，其顶层函数以 `foo::name` 注册。
 fn load_program(path: &Path) -> Result<crate::frontend::ast::Program, String> {
     let mut loading: Vec<std::path::PathBuf> = Vec::new();
-    load_module(path, None, &mut loading)
+    let mut pub_names: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    load_module(path, None, &mut loading, &mut pub_names)
 }
 
 fn load_module(
     path: &Path,
     prefix: Option<&str>,
     loading: &mut Vec<std::path::PathBuf>,
+    pub_names: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
 ) -> Result<crate::frontend::ast::Program, String> {
     let canonical = path
         .canonicalize()
@@ -64,6 +67,25 @@ fn load_module(
     }
     // 先收集本模块声明的类型名（用于改写类型引用），再消费 decls。
     let local_types = local_type_names(&parsed.decls);
+    // 记录本模块的公开名字（`pub`），供跨模块 `use` 的可见性检查。
+    if let Some(prefix) = prefix {
+        let mut visible = std::collections::HashSet::new();
+        for decl in &parsed.decls {
+            match decl {
+                crate::frontend::ast::Decl::Fn(f) if f.public => {
+                    visible.insert(f.name.clone());
+                }
+                crate::frontend::ast::Decl::Struct(s) if s.public => {
+                    visible.insert(s.name.clone());
+                }
+                crate::frontend::ast::Decl::Enum(e) if e.public => {
+                    visible.insert(e.name.clone());
+                }
+                _ => {}
+            }
+        }
+        pub_names.insert(prefix.to_string(), visible);
+    }
     loading.push(canonical);
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let mut decls = Vec::new();
@@ -75,7 +97,7 @@ fn load_module(
                     Some(p) => format!("{p}::{name}"),
                     None => name.clone(),
                 };
-                let sub = load_module(&sub_path, Some(&sub_prefix), loading).map_err(|e| {
+                let sub = load_module(&sub_path, Some(&sub_prefix), loading, pub_names).map_err(|e| {
                     format!("while loading module `{name}` (declared at {span}): {e}")
                 })?;
                 decls.extend(sub.decls);
@@ -84,6 +106,22 @@ fn load_module(
         }
     }
     loading.pop();
+    // 跨模块 `use mod::name;` 只能访问 `pub` 名字。
+    for decl in &decls {
+        if let crate::frontend::ast::Decl::Use(path, span) = decl
+            && path.len() >= 2
+        {
+            let module = path[..path.len() - 1].join("::");
+            let name = &path[path.len() - 1];
+            if let Some(visible) = pub_names.get(&module)
+                && !visible.contains(name)
+            {
+                return Err(format!(
+                    "`{module}::{name}` is not `pub` (used at {span}); declare it `pub` in `{module}`"
+                ));
+            }
+        }
+    }
     Ok(crate::frontend::ast::Program { decls })
 }
 

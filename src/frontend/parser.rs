@@ -39,7 +39,9 @@ impl Parser {
     fn parse_decl(&mut self) -> Result<Decl, FrontendError> {
         let attrs = self.parse_attributes()?;
 
-        match self.peek() {
+        let public = self.eat(TokenKind::Pub);
+
+        let mut decl = match self.peek() {
             TokenKind::Fn => self.parse_fn(attrs).map(Decl::Fn),
             TokenKind::Struct => self.parse_struct(attrs).map(Decl::Struct),
             TokenKind::Enum => self.parse_enum(attrs).map(Decl::Enum),
@@ -73,7 +75,16 @@ impl Parser {
                     token.span,
                 ))
             }
+        }?;
+        if public {
+            match &mut decl {
+                Decl::Fn(f) => f.public = true,
+                Decl::Struct(s) => s.public = true,
+                Decl::Enum(e) => e.public = true,
+                _ => {}
+            }
         }
+        Ok(decl)
     }
 
     // ─── 函数声明 ───
@@ -111,6 +122,7 @@ impl Parser {
 
         Ok(FnDecl {
             name,
+            public: false,
             generics,
             params,
             return_type,
@@ -205,7 +217,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
         let _ = self.eat(TokenKind::Semicolon);
 
-        Ok(StructDecl { name, generics, fields, attrs, span: struct_span })
+        Ok(StructDecl { name, public: false, generics, fields, attrs, span: struct_span })
     }
 
     fn parse_struct_fields(&mut self) -> Result<Vec<StructField>, FrontendError> {
@@ -237,7 +249,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
         let _ = self.eat(TokenKind::Semicolon);
 
-        Ok(EnumDecl { name, generics, variants, attrs, span: enum_span })
+        Ok(EnumDecl { name, public: false, generics, variants, attrs, span: enum_span })
     }
 
     fn parse_enum_variants(&mut self) -> Result<Vec<EnumVariant>, FrontendError> {

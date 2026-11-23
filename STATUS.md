@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-23。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **201 unit + 132 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 48，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **201 unit + 133 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 49，`tests/differential_test.rs` 2）。
 
 ## 1. 语言与运行时
 

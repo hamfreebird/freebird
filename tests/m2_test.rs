@@ -730,7 +730,7 @@ fn module_declaration_needs_file_loader() {
 fn module_loader_and_use_alias_match() {
     let dir = std::env::temp_dir().join(format!("freebird_m23_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    std::fs::write(dir.join("util.fb"), "fn double(x: i64) -> i64 { x * 2 }\n")
+    std::fs::write(dir.join("util.fb"), "pub fn double(x: i64) -> i64 { x * 2 }\n")
         .expect("write module");
     let main_path = dir.join("main.fb");
     std::fs::write(
@@ -806,7 +806,7 @@ fn module_local_types_are_prefixed() {
     std::fs::create_dir_all(&dir).expect("create temp dir");
     std::fs::write(
         dir.join("util.fb"),
-        "struct Point { x: i64, y: i64 }\n\nfn make(x: i64, y: i64) -> Point {\n    Point { x: x, y: y }\n}\n\nfn sum(p: Point) -> i64 { p.x + p.y }\n",
+        "struct Point { x: i64, y: i64 }\n\npub fn make(x: i64, y: i64) -> Point {\n    Point { x: x, y: y }\n}\n\npub fn sum(p: Point) -> i64 { p.x + p.y }\n",
     )
     .expect("write module");
     let main_path = dir.join("main.fb");
@@ -818,5 +818,29 @@ fn module_local_types_are_prefixed() {
     let out = freebird::run_file(&main_path, freebird::RuntimeConfig::test())
         .expect("module-local types should work");
     assert_eq!(String::from_utf8_lossy(&out), "7\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn private_module_items_are_not_importable() {
+    let dir = std::env::temp_dir().join(format!("freebird_m2x3_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("util.fb"),
+        "pub fn double(x: i64) -> i64 { x * 2 }\nfn secret(x: i64) -> i64 { x }\n",
+    )
+    .expect("write module");
+    let main_path = dir.join("main.fb");
+    std::fs::write(&main_path, "mod util;\nuse util::secret;\nfn main() { print(secret(1)); }\n")
+        .expect("write main");
+    let err = freebird::run_file(&main_path, freebird::RuntimeConfig::test())
+        .expect_err("non-pub items must not be importable");
+    assert!(err.contains("is not `pub`"), "unexpected error: {err}");
+    // 同一模块里 `pub` 的名字可以使用。
+    std::fs::write(&main_path, "mod util;\nuse util::double;\nfn main() { print(double(21)); }\n")
+        .expect("rewrite main");
+    let out = freebird::run_file(&main_path, freebird::RuntimeConfig::test())
+        .expect("pub items should be importable");
+    assert_eq!(String::from_utf8_lossy(&out), "42\n");
     let _ = std::fs::remove_dir_all(&dir);
 }

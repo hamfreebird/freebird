@@ -309,6 +309,8 @@ pub struct ImplDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnDecl {
     pub name: String,
+    /// `pub`：可跨模块使用。
+    pub public: bool,
     /// 泛型参数（MVP：仅类型参数，如 `<T>`）。
     pub generics: Vec<String>,
     pub params: Vec<FnParam>,
@@ -330,6 +332,8 @@ pub struct FnParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDecl {
     pub name: String,
+    /// `pub`：可跨模块使用。
+    pub public: bool,
     /// 泛型参数（MVP：仅类型参数）。
     pub generics: Vec<String>,
     pub fields: Vec<StructField>,
@@ -348,6 +352,8 @@ pub struct StructField {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     pub name: String,
+    /// `pub`：可跨模块使用。
+    pub public: bool,
     /// 泛型参数（MVP：仅类型参数）。
     pub generics: Vec<String>,
     pub variants: Vec<EnumVariant>,
