@@ -727,7 +727,7 @@ impl<'a> TypeChecker<'a> {
             HirExpr::IdRef(_, span) => {
                 self.error(TypeCheckError::UnsupportedFeature {
                     feature: "`#id` / ElementId expressions".to_string(),
-                    reference: "readme.md §4.3 (ElementId is not implemented in the VM value model)"
+                    reference: "readme.md §4.3 (raw element IDs are not part of the language)"
                         .to_string(),
                     span: *span,
                 });

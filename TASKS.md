@@ -47,7 +47,8 @@
 | M2-7 | 标准库扩展 | `abs`/`min`/`max`；Vec/String `is_empty`/`clear`；`Option`/`Result` 转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`；`int_to_str`/`str_to_int` 双后端；`Option::map`/`Result::map` 双后端 |
 | M2-1 | 泛型 | `struct Pair<T>`/`enum Maybe<T>`/`fn id<T>(x: T) -> T` 声明与泛型实参类型；字段访问与函数实参推断 + 替换检查；布局/代码按基名共用一份（类型擦除 MVP，无约束/显式类型实参/单态化） |
 | M2-9 | 用户方法与 `impl` | ADR 0003 方案 C：`impl Type { fn f(self) }` 与关联函数 `Type::f(...)` 已落地（名字扁平化、用户方法优先）；`&self` 只读方法与 `&mut self` 写方法均已支持（含 `FieldStoreRef` 引用写回） |
-| 其余 | M2-3/8 | 待办 |
+| M2-8 | unsafe / `#id` | `#id` 与 `current_stack_id` 已从规范移除（§4.3 改为「元素 ID 访问（不支持）」、§10.1 栈 ID 行改为编译期拒绝），类型检查保持显式诊断；unsafe 块内的低级栈内建（push/swap 等）待办 |
+| 其余 | M2-3 | 待办 |
 
 ## P0 — 基础正确性与可验证性
 

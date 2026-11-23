@@ -223,22 +223,14 @@ roll(-2):               将 b（栈顶）放到位置 2
   → [d, c, b, a]       恢复原状
 ```
 
-### 4.3 `#id` 语法
+### 4.3 元素 ID 访问（不支持）
 
-除了变量名，程序员可以直接使用 ID 来引用栈中元素。`#` 操作符提取变量或表达式结果对应的 `ElementId`：
+语言**不提供**原始元素 ID 的访问。`#x`、`*(#x)` 与 `current_stack_id()`
+属于实现内部的双栈细节（`ElementId`），无法在 Stardust 后端表达，因此不作为
+语言特性提供：
 
-```freebird
-let x = 10;
-let id_of_x: ElementId = #x;       // #x 返回 x 绑定的 ElementId
-let y = *(#x) + 1;                 // *(id) 通过 ID 直接读取值
-```
-
-- `#var` 返回变量 `var` 的 `ElementId`（类型为 `ElementId`）。
-- `*(id)` 通过 `ElementId` 读取值，语义与通过变量名访问完全相同（触发栈顶化）。
-- `ElementId` 是 Copy 类型，可被传递和存储。
-- 通过已失效 ElementId 访问值的行为是**未定义行为**，仅允许在 unsafe 块中进行。
-
----
+- `#x` 与 `*(#x)` 在编译期报 `unsupported feature`（见 §10.1）；
+- 需要底层栈操作时使用 `unsafe` 块中的低级栈内建（见 §10.2）。
 
 ## 5. 类型系统
 
@@ -675,7 +667,7 @@ fn borrow_mut(s: &mut String) { ... } // 独占借用
 | 跨类型 | 不允许 | `unsafe { let x: i32 = pop(); }` |
 | 函数调用 | `divrem(10, 3)` | 动态确定 n/m 的调用 |
 | 返回 | `ret 3`（m 匹配签名） | `unsafe { ret n; }`（运行时 n） |
-| 栈 ID | 不可访问 | `unsafe { let sid = current_stack_id(); }` |
+| 栈 ID | 不提供（编译期拒绝） | — |
 
 ### 10.2 Unsafe 块
 
@@ -689,7 +681,7 @@ unsafe {
 ```
 
 在 unsafe 块内：
-- 所有低级栈指令（见附录 A）均可直接使用。
+- 提供低级栈内建 `push(x)`、`pop()`、`dup()`、`swap()`（见下）；`roll(n)` 尚未提供。
 - 类型栈的维护由程序员负责。
 - 编译器不保证类型安全，错误操作可能导致未定义行为。
 - Unsafe 块可调用 safe 函数，但反过来不行。
