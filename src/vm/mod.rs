@@ -257,6 +257,12 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
+            MirInst::Reverse => {
+                let mut frame = self.pop_frame()?;
+                frame.data.reverse();
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
             MirInst::Pick => {
                 let mut frame = self.pop_frame()?;
                 frame.data.pick(&mut self.id_alloc)?;

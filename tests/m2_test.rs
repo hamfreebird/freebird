@@ -861,6 +861,18 @@ fn main() {
 }
 
 #[test]
+fn stardust_reverse_round_trip_matches() {
+    let source = r#"
+fn main() {
+    // Reverse 反转整个数据栈；连续两次反转应恢复原状。
+    let x = stardust! { Push(1) Push(2) Push(3) Reverse Reverse };
+    print(x);
+}
+"#;
+    assert_same_output(source, "stardust_reverse", b"");
+}
+
+#[test]
 fn raw_stack_builtins_require_unsafe() {
     let errors = check_source("fn main() { push(1); }")
         .expect_err("raw stack builtins should require an unsafe block");

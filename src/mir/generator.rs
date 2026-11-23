@@ -115,6 +115,11 @@ impl StackTracker {
         }
     }
 
+    /// Reverse 后更新栈跟踪（整栈反转）
+    pub fn reverse(&mut self) {
+        self.slots.reverse();
+    }
+
     /// 交换栈顶两个槽
     pub fn swap(&mut self) {
         let len = self.slots.len();
@@ -2322,9 +2327,8 @@ impl MirGen {
                 self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Reverse => {
-                self.mir.push(MirInst::Comment(
-                    "stardust Reverse is not supported by the Stardust backend (M3-4)".to_string(),
-                ));
+                self.mir.push(MirInst::Reverse);
+                self.stack.reverse();
             }
             crate::frontend::ast::StardustInst::Rotate => {
                 self.mir.push(MirInst::Roll { n: 2 });

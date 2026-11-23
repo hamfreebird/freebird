@@ -428,6 +428,10 @@ impl StardustGen {
                     self.emit_comment("WARNING: Swap with fewer than 2 stack slots skipped");
                 }
             }
+            MirInst::Reverse => {
+                self.raw_inst(5, '*'); // Reverse：反转整个数据栈
+                self.stack.reverse();
+            }
             MirInst::Roll { n } => {
                 self.emit_roll(*n);
                 self.model_roll(*n);

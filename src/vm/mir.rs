@@ -82,6 +82,7 @@ pub enum MirInst {
         n: i32,
     }, // 正/负/零 roll
     Swap,
+    Reverse, // 反转整个求值栈（stardust! 的 Reverse）
     Pick, // pop n, dup stack[n]
 
     // === 算术 ===
@@ -245,6 +246,7 @@ impl std::fmt::Display for MirInst {
             MirInst::Dup { .. } => write!(f, "Dup"),
             MirInst::Roll { n } => write!(f, "Roll({n})"),
             MirInst::Swap => write!(f, "Swap"),
+            MirInst::Reverse => write!(f, "Reverse"),
             MirInst::Pick => write!(f, "Pick"),
             MirInst::Add { .. } => write!(f, "Add"),
             MirInst::Sub { .. } => write!(f, "Sub"),

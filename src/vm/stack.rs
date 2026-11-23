@@ -124,6 +124,12 @@ impl DualStack {
         Ok(())
     }
 
+    /// Reverse：反转整个数据栈（ID 栈与值栈保持同步）。
+    pub fn reverse(&mut self) {
+        self.ids.reverse();
+        self.values.reverse();
+    }
+
     /// Pick(n): 读取 n（栈顶），复制位置 n 的元素到栈顶（新 ElementId）
     /// n 从栈顶向下数，0 = 栈顶自己（等价于 dup）
     pub fn pick(&mut self, alloc: &mut IdAllocator) -> Result<(), VmError> {
@@ -412,5 +418,22 @@ mod tests {
         assert_eq!(stack.get_from_top(1).unwrap().1, &Value::I64(200));
         assert_eq!(stack.get_from_top(2).unwrap().1, &Value::I64(100));
         assert!(stack.get_from_top(3).is_none());
+    }
+
+    #[test]
+    fn test_reverse_keeps_ids_aligned() {
+        let mut alloc = make_alloc();
+        let mut stack = DualStack::new();
+        let id0 = alloc.alloc_element();
+        let id1 = alloc.alloc_element();
+        let id2 = alloc.alloc_element();
+        stack.push(id0, Value::I64(10));
+        stack.push(id1, Value::I64(20));
+        stack.push(id2, Value::I64(30));
+        stack.reverse();
+        // 反转后顶→底为 10、20、30，ID 与值保持对齐。
+        assert_eq!(stack.get_from_top(0).unwrap(), (&id0, &Value::I64(10)));
+        assert_eq!(stack.get_from_top(1).unwrap(), (&id1, &Value::I64(20)));
+        assert_eq!(stack.get_from_top(2).unwrap(), (&id2, &Value::I64(30)));
     }
 }
