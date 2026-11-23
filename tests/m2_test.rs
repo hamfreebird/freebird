@@ -565,3 +565,48 @@ fn ok_or_argument_type_is_checked() {
         "unexpected diagnostics: {errors:?}"
     );
 }
+
+#[test]
+fn int_to_str_matches() {
+    let source = r#"
+fn main() {
+    print_str(int_to_str(0));
+    println_str(int_to_str(-42));
+    println_str(int_to_str(1234));
+}
+"#;
+    assert_same_output(source, "int_to_str", b"");
+}
+
+#[test]
+fn str_to_int_parses_on_vm() {
+    let source = r#"
+fn main() {
+    match str_to_int("1234") {
+        Option::Some(v) => print(v),
+        Option::None => print(-1),
+    }
+    match str_to_int("-42") {
+        Option::Some(v) => print(v),
+        Option::None => print(-2),
+    }
+    match str_to_int("12x") {
+        Option::Some(v) => print(v),
+        Option::None => print(-3),
+    }
+    match str_to_int("") {
+        Option::Some(v) => print(v),
+        Option::None => print(-4),
+    }
+}
+"#;
+    let output = match run_vm(source, b"") {
+        Run::Ok(out) => out,
+        Run::Failed(err) => panic!("VM run failed: {err}"),
+    };
+    assert_eq!(String::from_utf8_lossy(&output), "1234\n-42\n-3\n-4\n");
+    assert!(
+        matches!(run_stardust(source, "str_to_int", b""), Run::Failed(_)),
+        "Stardust should trap instead of silently returning None"
+    );
+}

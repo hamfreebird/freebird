@@ -830,6 +830,31 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
+            MirInst::IntToStr => {
+                let mut frame = self.pop_frame()?;
+                let (_, val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let n = val.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: val.type_name().to_string(),
+                })?;
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, string_to_value(&n.to_string()));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::StrToInt { some_tag, none_tag } => {
+                let mut frame = self.pop_frame()?;
+                let (_, val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let text = value_to_string(&val)?;
+                let converted = match text.trim().parse::<i64>() {
+                    Ok(n) => Value::Tuple(vec![Value::I32(*some_tag), Value::I64(n)]),
+                    Err(_) => Value::Tuple(vec![Value::I32(*none_tag)]),
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, converted);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
             MirInst::Unwrap { success_tag } => {
                 let mut frame = self.pop_frame()?;
                 let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;

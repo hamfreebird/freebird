@@ -650,7 +650,20 @@ fn builtin_type(name: &str) -> HirType {
         "()" => HirType::Unit,
         "!" => HirType::Never,
         "_" => HirType::Wildcard,
-        other => HirType::Path(other.split("::").map(str::to_string).collect()),
+        other => {
+            // 支持 `Option<i64>` 这类单层泛型实参写法。
+            if let Some(open) = other.find('<')
+                && other.ends_with('>')
+            {
+                let base = &other[..open];
+                let args = &other[open + 1..other.len() - 1];
+                return HirType::Generic(
+                    Box::new(HirType::Path(vec![base.to_string()])),
+                    args.split(',').map(|arg| builtin_type(arg.trim())).collect(),
+                );
+            }
+            HirType::Path(other.split("::").map(str::to_string).collect())
+        }
     }
 }
 

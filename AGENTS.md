@@ -5,7 +5,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Commands
 
 - Build: `cargo build --release` (edition 2024, Rust 1.85+).
-- Test: `cargo test` — current baseline is 201 unit + 119 integration tests, all green (`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 33 + `tests/differential_test.rs` 2).
+- Test: `cargo test` — current baseline is 201 unit + 119 integration tests, all green (`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 35 + `tests/differential_test.rs` 2).
 - Single test: `cargo test <test_name>`; integration only: `cargo test --test integration_test test_fib_program`, `cargo test --test m0_test`, `cargo test --test m1_test`, `cargo test --test m2_test`, `cargo test --test differential_test`.
 - CLI: `cargo run -- run <file.fb>`, `cargo run -- check <file.fb>`, `cargo run -- build [--target stardust|llvm] <file.fb>`, `cargo run -- repl`.
 - Run tests from the repo root: integration tests load fixtures via relative paths. `tests/programs/*.fb` and `examples/*.fb` are discovered automatically by `tests/differential_test.rs`; add a same-named `.in` file for stdin. Add explicit tests for new behavior, and keep fixtures runnable on both backends.
@@ -27,7 +27,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Language surface
 
 - Builtins are registered from `src/io.rs::BUILTINS`: `print`/`print_int`, `print_char`, `print_str`, `println_str`, `read_int`, `read_char`, `read_line`, `file_read`, `file_write`, `abs`, `min`, and `max`.
-- Standard library MVP: built-in generic `Option<T>` / `Result<T, E>` enums; `Option` methods `is_some`/`is_none`/`unwrap`/`unwrap_or`/`ok_or` and `Result` methods `is_ok`/`is_err`/`unwrap`/`unwrap_or`/`ok`/`err`; container methods `len`/`push`/`pop`/`is_empty`/`clear` for `Vec` and `String`. `int_to_str`/`str_to_int` and combinators such as `map` are still pending.
+- Standard library MVP: built-in generic `Option<T>` / `Result<T, E>` enums; `Option` methods `is_some`/`is_none`/`unwrap`/`unwrap_or`/`ok_or` and `Result` methods `is_ok`/`is_err`/`unwrap`/`unwrap_or`/`ok`/`err`; container methods `len`/`push`/`pop`/`is_empty`/`clear` for `Vec` and `String`. `int_to_str` works on both backends while `str_to_int` is VM-only (the Stardust backend emits an explicit trap); combinators such as `map` are still pending.
 - Tuple destructuring (`let (a, b) = ...`), struct destructuring (`let Point { x, y } = p`), enum `match` with payload bindings, `vec![...]`, arrays, `Box`, indexing, and field/index assignment work in the VM. Mutable parameters (`fn f(mut x: T)`) are not part of the syntax.
 - `match` supports struct, enum (including nested payloads), tuple, literal, `or`, reference and `_` patterns, plus `..` rest patterns. Type checking rejects non-exhaustive matches, unknown variants/fields, `or` alternatives with different bindings, and refutable `let` patterns; redundant or unreachable arms produce warnings (`check` JSON includes `warning_count`).
 - `if let` / `while let` are supported and lowered to `match` / `loop` in the parser. Value-position `loop` and `break value` are supported (M2-6); `break value` outside `loop` is rejected. Loop labels `'outer: loop { ... }` plus `break 'outer` / `continue 'outer` work for `loop`/`while`/`for`.

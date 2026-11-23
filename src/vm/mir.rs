@@ -171,6 +171,8 @@ pub enum MirInst {
     Abs,                         // pop i64, push |x|
     Min,                         // pop b, pop a, push min(a, b)
     Max,                         // pop b, pop a, push max(a, b)
+    IntToStr,                    // pop i64，push 十进制字符串
+    StrToInt { some_tag: i64, none_tag: i64 }, // pop 字符串，push Option<i64>
     Unwrap { success_tag: i64 }, // pop enum, push payload; 失败时运行时错误
     UnwrapOr { success_tag: i64 }, // pop default, pop enum; 成功 payload，否则 default
     /// `Result::ok()`/`Result::err()`：pop 枚举，push Option
@@ -294,6 +296,11 @@ impl std::fmt::Display for MirInst {
             MirInst::Abs => write!(f, "Abs"),
             MirInst::Min => write!(f, "Min"),
             MirInst::Max => write!(f, "Max"),
+            MirInst::IntToStr => write!(f, "IntToStr"),
+            MirInst::StrToInt {
+                some_tag,
+                none_tag,
+            } => write!(f, "StrToInt(some_tag={some_tag}, none_tag={none_tag})"),
             MirInst::Unwrap { success_tag } => write!(f, "Unwrap({success_tag})"),
             MirInst::UnwrapOr { success_tag } => write!(f, "UnwrapOr({success_tag})"),
             MirInst::EnumPayloadToOption {

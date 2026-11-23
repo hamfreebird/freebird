@@ -33,6 +33,8 @@ pub const BUILTINS: &[BuiltinDef] = &[
         returns: &[],
     },
     BuiltinDef { name: "abs", params: &["i64"], returns: &["i64"] },
+    BuiltinDef { name: "int_to_str", params: &["i64"], returns: &["String"] },
+    BuiltinDef { name: "str_to_int", params: &["String"], returns: &["Option<i64>"] },
     BuiltinDef { name: "min", params: &["i64", "i64"], returns: &["i64"] },
     BuiltinDef { name: "max", params: &["i64", "i64"], returns: &["i64"] },
 ];

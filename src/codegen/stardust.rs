@@ -782,6 +782,19 @@ impl StardustGen {
                 self.stack.pop();
                 self.stack.push(Slot::unknown());
             }
+            MirInst::IntToStr => {
+                self.gen_int_to_str();
+                self.stack.pop();
+                self.stack.push(Slot::unknown());
+            }
+            MirInst::StrToInt {
+                some_tag,
+                none_tag,
+            } => {
+                self.gen_str_to_int(*some_tag, *none_tag);
+                self.stack.pop();
+                self.stack.push(Slot::unknown());
+            }
             MirInst::Unwrap { success_tag } => {
                 // [enum] -> [payload]；失败时除零陷阱。
                 let ok = self.fresh_helper_label();
@@ -1775,6 +1788,133 @@ impl StardustGen {
     }
 
     /// 保留枚举值并压入标签（块下标 0，位于头部之后）。
+    /// `IntToStr`：`[n]` → `[十进制字符串块]`。
+    ///
+    /// 块元素是 Unicode 码点（与字符串字面量、`print_str` 一致），负数前置 `-`。
+    fn gen_int_to_str(&mut self) {
+        let negative = self.fresh_helper_label();
+        let after_sign = self.fresh_helper_label();
+        let count_loop = self.fresh_helper_label();
+        let count_body = self.fresh_helper_label();
+        let count_done = self.fresh_helper_label();
+        let write_loop = self.fresh_helper_label();
+        let write_body = self.fresh_helper_label();
+        let write_done = self.fresh_helper_label();
+        let sign_block = self.fresh_helper_label();
+        let end = self.fresh_helper_label();
+
+        self.emit_store_scratch(HEAP_VALUE); // n
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_BYTE_COUNT); // sign
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_push_int(0);
+        self.emit_lt();
+        self.raw_inst(negative, '\'');
+        self.raw_inst(after_sign, '~');
+        self.raw_inst(negative, '`');
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(0);
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_VALUE);
+        self.raw_inst(after_sign, '`');
+
+        // 统计位数：count = 1，tmp = |n|
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(count_loop, '`');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(10);
+        self.emit_ge();
+        self.raw_inst(count_body, '\'');
+        self.raw_inst(count_done, '~');
+        self.raw_inst(count_body, '`');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(10);
+        self.raw_inst(3, '*'); // Div
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(count_loop, '~');
+        self.raw_inst(count_done, '`');
+
+        // 分配块：len = count + sign
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_CAP);
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_alloc_from_stack();
+        self.emit_store_scratch(HEAP_HANDLE);
+        self.emit_write_header_slot(HEAP_HANDLE, 0, HEAP_CAP);
+        self.emit_write_header_slot(HEAP_HANDLE, 1, HEAP_CAP);
+
+        // 从末位向前写数字。
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(write_loop, '`');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_ge();
+        self.raw_inst(write_body, '\'');
+        self.raw_inst(write_done, '~');
+        self.raw_inst(write_body, '`');
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_push_int(10);
+        self.raw_inst(4, '*'); // Mod
+        self.emit_push_int(48); // '0'
+        self.emit_add();
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_add();
+        self.raw_inst(0, '-'); // Store
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_push_int(10);
+        self.raw_inst(3, '*'); // Div
+        self.emit_store_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(write_loop, '~');
+        self.raw_inst(write_done, '`');
+
+        // 负号
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(1);
+        self.raw_inst(0, '='); // Eq
+        self.raw_inst(sign_block, '\'');
+        self.raw_inst(end, '~');
+        self.raw_inst(sign_block, '`');
+        self.emit_push_int(45); // '-'
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.raw_inst(0, '-');
+        self.raw_inst(end, '`');
+        self.emit_load_scratch(HEAP_HANDLE);
+    }
+
+    /// `StrToInt`：Stardust 后端尚未实现，生成显式陷阱而不是静默返回 `None`。
+    ///
+    /// 堆块解析路径（逐字符累积 + 枚举块分配）在当前解释器上会丢失解析标志，
+    /// 该限制记录在 `USAGE.md`，VM 后端已完整实现。
+    fn gen_str_to_int(&mut self, _some_tag: i64, _none_tag: i64) {
+        self.emit_comment("str_to_int: not implemented on the Stardust backend (VM only)");
+        self.emit_bounds_trap();
+    }
+
     fn gen_enum_tag(&mut self) {
         self.emit_dup();
         self.emit_push_int(BLOCK_HEADER);

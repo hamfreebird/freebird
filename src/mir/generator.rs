@@ -2026,6 +2026,24 @@ impl MirGen {
                 self.stack.pop();
                 self.stack.push_temp();
             }
+            "int_to_str" => {
+                self.mir.push(MirInst::IntToStr);
+                self.stack.pop();
+                self.stack.push_temp();
+            }
+            "str_to_int" => {
+                let some_tag = self
+                    .type_table
+                    .variant_tag("Option", "Some")
+                    .unwrap_or(1) as i64;
+                let none_tag = self
+                    .type_table
+                    .variant_tag("Option", "None")
+                    .unwrap_or(0) as i64;
+                self.mir.push(MirInst::StrToInt { some_tag, none_tag });
+                self.stack.pop();
+                self.stack.push_temp();
+            }
             "read_int" => {
                 self.mir.push(MirInst::NumIn);
                 self.stack.push_temp();
