@@ -645,19 +645,26 @@ fn main() {
 }
 
 #[test]
-fn mutable_receiver_is_explicitly_unsupported() {
-    let errors = check_source(
-        "struct Rect { w: i64 }\nimpl Rect {\n    fn grow(&mut self) { self.w = self.w + 1; }\n}\nfn main() { let mut r = Rect { w: 1 }; r.grow(); }",
-    )
-    .expect_err("`&mut self` should be rejected explicitly");
-    // 当前 `&mut self` 未实现：方法体内的 `self.field = ...` 会报“self 不可变”，
-    // 调用点还会报 `&mut self` 未实现（见 ADR 0003 的分期说明）。
-    assert!(
-        errors.join("\n").contains("self"),
-        "unexpected diagnostics: {errors:?}"
-    );
+fn mutable_receiver_matches() {
+    let source = r#"
+struct Rect { w: i64, h: i64 }
+impl Rect {
+    fn grow(&mut self, by: i64) {
+        self.w = self.w + by;
+        self.h = self.h + 1;
+    }
+    fn area(&self) -> i64 { self.w * self.h }
 }
-
+fn main() {
+    let mut r = Rect { w: 1, h: 2 };
+    r.grow(4);
+    print(r.w);
+    print(r.h);
+    print(r.area());
+}
+"#;
+    assert_same_output(source, "mut_receiver", b"");
+}
 #[test]
 fn zero_return_function_pointer_matches() {
     let source = r#"

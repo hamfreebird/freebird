@@ -486,7 +486,9 @@ impl BorrowChecker {
         self.enter_scope();
         for (name, ty) in &f.sig.params {
             let move_ty = is_move_hir_type(ty);
-            let result = self.declare_var(name, false, move_ty, f.sig.span);
+            // `&mut self`（以及 `&mut T` 参数）在方法体内需要可写。
+            let mutable = matches!(ty, HirType::Ref(_, true));
+            let result = self.declare_var(name, mutable, move_ty, f.sig.span);
             self.record(result);
         }
         self.check_block(body);

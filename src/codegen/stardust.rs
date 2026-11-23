@@ -641,6 +641,9 @@ impl StardustGen {
             MirInst::FieldStore { name, index } => {
                 self.gen_field_store(name, *index);
             }
+            MirInst::FieldStoreRef { name, index } => {
+                self.gen_field_store_ref(name, *index);
+            }
             MirInst::IndexStore { name } => {
                 self.gen_index_store(name);
             }
@@ -2424,6 +2427,42 @@ impl StardustGen {
         self.emit_load_scratch(HEAP_NEW_HANDLE);
         self.stack.push(Slot::unknown());
         self.gen_write_var(name);
+    }
+
+    /// `&mut self` 方法内 `self.field = v`。
+    ///
+    /// Stardust 的引用是堆单元（cell）：变量槽持有 cell 句柄，被引用值在
+    /// `cell + BLOCK_HEADER`。这里克隆目标块、写字段，再把新句柄放回 cell，
+    /// 使调用方通过原变量能看到更新（与 VM 的引用写回语义一致）。
+    fn gen_field_store_ref(&mut self, name: &str, index: usize) {
+        self.stack.pop();
+        self.emit_store_scratch(HEAP_VALUE); // 新值
+        self.gen_read_var(name); // cell 句柄
+        self.emit_store_scratch(HEAP_HANDLE);
+        self.stack.pop();
+
+        // cell 里的目标块句柄
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_NEW_HANDLE);
+
+        // 克隆后写字段（结构体是 Copy 类型）。
+        self.gen_clone_block(HEAP_NEW_HANDLE, HEAP_INDEX);
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(BLOCK_HEADER + index as i64);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_swap();
+        self.raw_inst(0, '-');
+
+        // 把新块句柄写回 cell 的 value 槽。
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.raw_inst(0, '-');
     }
 
     /// `[reference, value]` → 写入 Box 单元（`heap[handle+2]`）。

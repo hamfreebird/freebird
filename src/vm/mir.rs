@@ -152,6 +152,7 @@ pub enum MirInst {
     IndexAccess,                  // arr[i] (pop i, pop arr, push arr[i])
     StoreDeref,                   // *p = v (pop v, pop ref)
     FieldStore { name: String, index: usize }, // obj.field = v
+    FieldStoreRef { name: String, index: usize }, // `&mut self` 方法内 self.field = v
     IndexStore { name: String },  // arr[i] = v (pop v, pop i)
     MakeArray { count: u32 },     // 将栈顶 count 个值合并为单槽数组
     MakeArrayRepeat,              // pop count, pop elem，生成重复数组
@@ -277,6 +278,9 @@ impl std::fmt::Display for MirInst {
             MirInst::StoreDeref => write!(f, "StoreDeref"),
             MirInst::FieldStore { name, index } => {
                 write!(f, "FieldStore({name}.{index})")
+            }
+            MirInst::FieldStoreRef { name, index } => {
+                write!(f, "FieldStoreRef({name}.{index})")
             }
             MirInst::IndexStore { name } => write!(f, "IndexStore({name})"),
             MirInst::MakeArray { count } => write!(f, "MakeArray(count={count})"),

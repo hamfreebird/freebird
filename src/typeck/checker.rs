@@ -420,16 +420,6 @@ impl<'a> TypeChecker<'a> {
                     self.validate_attributes(&f.attrs);
                     // `&mut self` 接收者尚未实现：在检查方法体之前给出明确诊断，
                     // 避免先在方法体里报“self 不可变”这类误导信息。
-                    if let Some((name, HirType::Ref(_, true))) = f.sig.params.first()
-                        && name == "self"
-                    {
-                        self.error(TypeCheckError::UnsupportedFeature {
-                            feature: format!("`{}` with `&mut self`", f.name),
-                            reference: "ADR 0003: `&mut self` receivers are still pending; use `self`"
-                                .to_string(),
-                            span: f.span,
-                        });
-                    }
                     if f.body.is_none() {
                         self.error(TypeCheckError::MissingFunctionBody {
                             name: f.name.clone(),
@@ -1686,12 +1676,23 @@ impl<'a> TypeChecker<'a> {
             let mut receiver_ref = None;
             if let Some((_, HirType::Ref(inner, mutable))) = sig.params.first() {
                 if *mutable {
-                    self.error(TypeCheckError::UnsupportedFeature {
-                        feature: format!("`{fn_name}` with `&mut self`"),
-                        reference: "ADR 0003: `&mut self` receivers are still pending; use `self`"
-                            .to_string(),
-                        span,
-                    });
+                    receiver_ref = Some(true);
+                    if !matches!(receiver, HirExpr::Var(_)) {
+                        self.error(TypeCheckError::UnsupportedFeature {
+                            feature: format!("`{fn_name}` `&mut self` receiver must be a variable"),
+                            reference: "ADR 0003: reference receivers require a named variable"
+                                .to_string(),
+                            span,
+                        });
+                    }
+                    if !is_assignable(inner, &receiver_ty) {
+                        self.error(TypeCheckError::TypeMismatch {
+                            expected: (**inner).clone(),
+                            found: receiver_ty.clone(),
+                            span,
+                            context: format!("`&mut self` receiver of `{fn_name}`"),
+                        });
+                    }
                 } else {
                     receiver_ref = Some(false);
                     if !matches!(receiver, HirExpr::Var(_)) {

@@ -579,10 +579,20 @@ impl MirGen {
                         if !self.reachable {
                             return;
                         }
-                        self.mir.push(MirInst::FieldStore {
-                            name: var.name.clone(),
-                            index,
-                        });
+                        // `&mut self` 方法内的 `self.field = v` 写到引用目标。
+                        let is_mut_self = var.name == "self"
+                            && matches!(fn_sig.params.first(), Some((_, HirType::Ref(_, true))));
+                        if is_mut_self {
+                            self.mir.push(MirInst::FieldStoreRef {
+                                name: var.name.clone(),
+                                index,
+                            });
+                        } else {
+                            self.mir.push(MirInst::FieldStore {
+                                name: var.name.clone(),
+                                index,
+                            });
+                        }
                         self.stack.pop(); // value
                     }
                     HirAssignTarget::Index { array, index } => {

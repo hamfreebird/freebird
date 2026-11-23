@@ -532,6 +532,54 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
+            MirInst::FieldStoreRef { name, index } => {
+                // `&mut self` 方法内 `self.field = v`：写到引用目标。
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let ref_id = frame
+                    .vars
+                    .lookup(name)
+                    .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
+                let target = frame.data.find_id(ref_id).and_then(|pos| {
+                    let idx = frame.data.len() - 1 - pos;
+                    match &frame.data.values[idx] {
+                        Value::MutRef(id) | Value::Ref(id) => Some(*id),
+                        _ => None,
+                    }
+                });
+                self.call_stack.push(frame);
+                let Some(target_id) = target else {
+                    return Err(VmError::TypeMismatch {
+                        expected: "reference receiver".to_string(),
+                        found: "non-reference".to_string(),
+                    });
+                };
+                let Some((frame_idx, idx)) = self.find_ref_target(target_id) else {
+                    return Err(VmError::DanglingReference {
+                        id: target_id.0,
+                        name: name.clone(),
+                    });
+                };
+                match &mut self.call_stack[frame_idx].data.values[idx] {
+                    Value::Tuple(elems) => {
+                        let len = elems.len();
+                        let slot = elems.get_mut(*index).ok_or(VmError::IndexOutOfBounds {
+                            index: *index as i64,
+                            len,
+                        })?;
+                        *slot = value;
+                    }
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "struct".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
+                }
+                let mut frame = self.pop_frame()?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
             MirInst::FieldStore { name, index } => {
                 // obj.field = v: 栈顶为 value；就地修改变量持有的 Tuple
                 let mut frame = self.pop_frame()?;

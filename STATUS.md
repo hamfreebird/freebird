@@ -37,7 +37,7 @@
 | 字符串解析 / 格式化输出 | §9 | ❌ 待办 | ❌ 待办 | ❌ | — |
 | 用户 `impl`（关联函数 + `self` 方法） | §5 | ✅ | ✅ | ❌ | `m2_test` |
 | `&self` 接收者（只读方法） | §5 | ✅ | ✅ | ❌ | `m2_test` |
-| `&mut self` 接收者 | §5 | ❌ 未实现 | ❌ | ❌ | `m2_test` |
+| `&mut self` 接收者（写回） | §5 | ✅ | ✅ | ❌ | `m2_test` |
 | `file_read` / `file_write` | §9 | ✅ | ✅ | ❌ | 集成 |
 | `unsafe` + `stardust!` 宏 | §11 | 🟡 大部分 | 🟡 大部分（`Reverse` 未支持，M3-4） | ❌ | 集成 + `m1_test` |
 
@@ -99,5 +99,5 @@
 - **M2-1 泛型（类型擦除 MVP）**：支持 `struct Pair<T>`、`enum Maybe<T>`、`fn id<T>(x: T) -> T`；类型实参从结构体字段和函数实参推断并做替换检查；布局按基名复用，VM/Stardust 各生成一份代码。暂不支持约束、显式类型实参（turbofish）与按实例单态化，泛型函数体只能使用与具体类型无关的操作。
 - **M2-2 Option/Result（泛型枚举）**：内建 `Option<T>`/`Result<T, E>`，载荷类型从构造表达式推断并做替换检查；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`。类型检查把每个方法调用的成功/失败变体标签标注在 `Span → MethodVariantTags` 上交给 MIR 生成器，因此 `Option`（`Some`=1/`None`=0）与 `Result`（`Ok`=0/`Err`=1）共用同一套指令。`map`/`ok`/`err` 等组合子待办。
 - **M2-7 标准库（部分）**：`abs`/`min`/`max`、`Vec`/`String` 的 `is_empty`/`clear`、转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`（新增 `EnumPayloadToOption`/`OptionToResult` 指令）、`int_to_str`（双后端，堆块逐位写入）、`str_to_int`（双后端，堆块逐字符解析）与 `Option::map`/`Result::map`（MIR 用现有指令组合实现分支，双后端一致）。
-- **M2-9 impl/方法（方案 C 分期）**：`impl Type { fn f(self) }` 与关联函数 `Rect::square(3)` 已可用；名字扁平化为 `Type::f`，方法调用由类型检查解析（用户方法优先、内建方法兜底）并记录 `Span` 标注供 MIR 生成。`&self` 只读方法已支持（调用点取引用 + 方法体自动解引用）；`&mut self` 尚未实现，仍报未实现诊断。
-- **待实现**：M2-3 模块/`use`、M2-7 其余标准库、M2-8 `unsafe`/`#id`、M2-9 的 `&mut self` 接收者（决策见 `docs/adr/0003-user-impl-methods.md`）。
+- **M2-9 impl/方法（方案 C 分期）**：`impl Type { fn f(self) }` 与关联函数 `Rect::square(3)` 已可用；名字扁平化为 `Type::f`，方法调用由类型检查解析（用户方法优先、内建方法兜底）并记录 `Span` 标注供 MIR 生成。`&self` 只读方法与 `&mut self` 写方法均已支持：调用点对具名变量取引用，方法体 `self.field` 自动解引用，`self.field = v` 走 `FieldStoreRef` 写回引用目标（VM 用 `find_ref_target` 跨帧定位，Stardust 按 cell 语义写回）。
+- **待实现**：M2-3 模块/`use`、M2-7 其余标准库、M2-8 `unsafe`/`#id`（M2-9 的 impl/方法已全部落地，决策见 `docs/adr/0003-user-impl-methods.md`）。

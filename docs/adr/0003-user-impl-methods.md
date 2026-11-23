@@ -110,9 +110,11 @@ fn main() {
 - **已实现（2026-11-23）**：`&self` 只读方法。调用点对具名变量生成
   `Ref { mutable: false }`，方法体内 `self.field` 在 MIR 里自动插入 `Deref`，
   类型检查按解引用后的类型查字段。
-- **未实现**：`&mut self` 接收者。`self.field = v` 需要引用目标的字段写入语义
-  （VM 的 `FieldStore` 作用于变量本身，Stardust 侧引用是堆单元），当前仍报
-  `UnsupportedFeature` / 方法体内 `self` 不可变诊断。
+- **已实现（2026-11-23）**：`&mut self` 写方法。`self.field = v` 在 MIR 里生成
+  新增的 `MirInst::FieldStoreRef`：VM 通过 `find_ref_target` 定位引用目标（可跨帧）
+  并就地改字段；Stardust 按 cell 语义（变量槽持有 cell 句柄、被引用值在
+  `cell + BLOCK_HEADER`）克隆目标块、写字段后写回 cell。lowering 与 borrowck 也把
+  `&mut` 参数声明为可变，使方法体内的 `self.field = v` 通过写检查。
 
 同步更新 `readme.md` §5、`STATUS.md`、`TASKS.md`、`USAGE.md`。
 

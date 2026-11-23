@@ -148,7 +148,9 @@ impl Lowering {
 
             // 先声明所有参数
             for param in &f.params {
-                let _ = self.resolver.declare_var(&param.name, false, param.span);
+                // `&mut self` 接收者需要在方法体内可写。
+                let mutable = matches!(&param.ty, ast::Type::Ref(_, true, _));
+                let _ = self.resolver.declare_var(&param.name, mutable, param.span);
                 self.resolver.mark_initialized(&param.name);
             }
 
