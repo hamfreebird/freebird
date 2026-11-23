@@ -579,7 +579,7 @@ fn main() {
 }
 
 #[test]
-fn str_to_int_parses_on_vm() {
+fn str_to_int_matches() {
     let source = r#"
 fn main() {
     match str_to_int("1234") {
@@ -600,17 +600,8 @@ fn main() {
     }
 }
 "#;
-    let output = match run_vm(source, b"") {
-        Run::Ok(out) => out,
-        Run::Failed(err) => panic!("VM run failed: {err}"),
-    };
-    assert_eq!(String::from_utf8_lossy(&output), "1234\n-42\n-3\n-4\n");
-    assert!(
-        matches!(run_stardust(source, "str_to_int", b""), Run::Failed(_)),
-        "Stardust should trap instead of silently returning None"
-    );
+    assert_same_output(source, "str_to_int", b"");
 }
-
 #[test]
 fn impl_methods_and_associated_functions_match() {
     let source = r#"

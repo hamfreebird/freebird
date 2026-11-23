@@ -1906,13 +1906,173 @@ impl StardustGen {
         self.emit_load_scratch(HEAP_HANDLE);
     }
 
-    /// `StrToInt`：Stardust 后端尚未实现，生成显式陷阱而不是静默返回 `None`。
+    /// 构造单槽枚举块 `[tag]` 并压入句柄。
+    fn gen_push_empty_enum(&mut self, tag: i64) {
+        self.emit_alloc_const(BLOCK_HEADER as usize + 1);
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.emit_write_header_const(HEAP_COUNTER, 0, 1);
+        self.emit_write_header_const(HEAP_COUNTER, 1, 1);
+        self.emit_push_int(tag);
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_COUNTER);
+    }
+
+    /// 构造 `[tag, payload]` 双槽枚举块；payload 取自栈顶。
+    fn gen_push_enum_with_payload(&mut self, tag: i64) {
+        self.emit_store_scratch(HEAP_VALUE);
+        self.emit_alloc_const(BLOCK_HEADER as usize + 2);
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.emit_write_header_const(HEAP_COUNTER, 0, 2);
+        self.emit_write_header_const(HEAP_COUNTER, 1, 2);
+        self.emit_push_int(tag);
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(BLOCK_HEADER + 1);
+        self.emit_add();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_COUNTER);
+    }
+
+    /// `StrToInt`：`[字符串块]` → `[Option<i64>]`。
     ///
-    /// 堆块解析路径（逐字符累积 + 枚举块分配）在当前解释器上会丢失解析标志，
-    /// 该限制记录在 `USAGE.md`，VM 后端已完整实现。
-    fn gen_str_to_int(&mut self, _some_tag: i64, _none_tag: i64) {
-        self.emit_comment("str_to_int: not implemented on the Stardust backend (VM only)");
-        self.emit_bounds_trap();
+    /// 块布局为 `[len, cap, chars...]`：长度在句柄 +0（可直接 `Load`），
+    /// 字符从句柄 +`BLOCK_HEADER` 起。可选 `-` 前缀；非数字字符 → `None`。
+    fn gen_str_to_int(&mut self, some_tag: i64, none_tag: i64) {
+        let empty = self.fresh_helper_label();
+        let start = self.fresh_helper_label();
+        let neg = self.fresh_helper_label();
+        let after_neg = self.fresh_helper_label();
+        let loop_start = self.fresh_helper_label();
+        let body = self.fresh_helper_label();
+        let bad_low = self.fresh_helper_label();
+        let bad_high = self.fresh_helper_label();
+        let digits_done = self.fresh_helper_label();
+        let ok_path = self.fresh_helper_label();
+        let none_path = self.fresh_helper_label();
+        let done = self.fresh_helper_label();
+
+        self.emit_store_scratch(HEAP_HANDLE);
+        // len 在块头 +0。
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_CAP);
+
+        // 空串 → None
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_push_int(0);
+        self.raw_inst(0, '=');
+        self.raw_inst(empty, '\'');
+        self.raw_inst(start, '~');
+        self.raw_inst(empty, '`');
+        self.gen_push_empty_enum(none_tag);
+        self.raw_inst(done, '~');
+        self.raw_inst(start, '`');
+
+        // idx = 0；value = 0；sign = 1；first_digit = 0
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_VALUE);
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_SIZE);
+
+        // 首位 `-`：idx = first_digit = 1，sign = -1
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_push_int(45);
+        self.raw_inst(0, '=');
+        self.raw_inst(neg, '\'');
+        self.raw_inst(after_neg, '~');
+        self.raw_inst(neg, '`');
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_store_scratch(HEAP_SIZE);
+        self.emit_push_int(0);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+        self.raw_inst(after_neg, '`');
+
+        self.raw_inst(loop_start, '`');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_lt();
+        self.raw_inst(body, '\'');
+        self.raw_inst(digits_done, '~');
+        self.raw_inst(body, '`');
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_add();
+        self.raw_inst(1, '-'); // ch
+        self.emit_dup();
+        self.emit_push_int(48);
+        self.emit_lt();
+        self.raw_inst(bad_low, '\'');
+        self.emit_dup();
+        self.emit_push_int(57);
+        self.emit_swap();
+        self.emit_lt(); // 57 < ch，等价于 ch > '9'
+        self.raw_inst(bad_high, '\'');
+        self.emit_push_int(48);
+        self.emit_sub();
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_push_int(10);
+        self.raw_inst(2, '*'); // Mul
+        self.emit_add();
+        self.emit_store_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(loop_start, '~');
+        // 非法字符：丢弃 ch，累积值作废（下标设为长度以结束循环）。
+        // 非法字符：丢弃 ch，令 first_digit = idx = len（判定 `first < idx` 失败并退出循环）。
+        self.raw_inst(bad_low, '`');
+        self.emit_pop();
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_store_scratch(HEAP_SIZE);
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(loop_start, '~');
+        self.raw_inst(bad_high, '`');
+        self.emit_pop();
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_store_scratch(HEAP_SIZE);
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.raw_inst(loop_start, '~');
+        self.raw_inst(digits_done, '`');
+
+        // 有数字 ⇔ first_digit >= 0 且 idx > first_digit
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_swap(); // [first, idx]
+        self.emit_lt(); // first < idx
+        self.raw_inst(ok_path, '\'');
+        self.raw_inst(none_path, '~');
+        self.raw_inst(ok_path, '`');
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_load_scratch(HEAP_VALUE);
+        self.raw_inst(2, '*'); // sign * value
+        self.gen_push_enum_with_payload(some_tag);
+        self.raw_inst(done, '~');
+        self.raw_inst(none_path, '`');
+        self.gen_push_empty_enum(none_tag);
+        self.raw_inst(done, '`');
     }
 
     fn gen_enum_tag(&mut self) {
