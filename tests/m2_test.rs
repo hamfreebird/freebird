@@ -789,3 +789,13 @@ fn main() {
 "#;
     assert_same_output(source, "raw_dup", b"");
 }
+
+#[test]
+fn raw_stack_builtins_require_unsafe() {
+    let errors = check_source("fn main() { push(1); }")
+        .expect_err("raw stack builtins should require an unsafe block");
+    assert!(
+        errors.join("\n").contains("outside an `unsafe` block"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}

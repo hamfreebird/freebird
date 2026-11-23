@@ -305,6 +305,8 @@ pub struct TypeChecker<'a> {
     generic_structs: HashMap<String, Vec<String>>,
     generic_enums: HashMap<String, Vec<String>>,
     generic_fns: HashMap<String, Vec<String>>,
+    /// `unsafe` 块嵌套深度；值栈内建只在深度 > 0 时可用。
+    unsafe_depth: usize,
     /// `Option`/`Result` 方法调用解析出的成功/失败变体标签（按调用点 span）。
     method_variant_tags: MethodTagMap,
     errors: Vec<TypeCheckError>,
@@ -389,6 +391,7 @@ impl<'a> TypeChecker<'a> {
             generic_structs,
             generic_enums,
             generic_fns,
+            unsafe_depth: 0,
             method_variant_tags: HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -1138,7 +1141,13 @@ impl<'a> TypeChecker<'a> {
                 }
                 HirType::Never
             }
-            HirExpr::Unsafe(block, _) => self.check_block(block),
+            HirExpr::Unsafe(block, _) => {
+                // 值栈内建只允许出现在 unsafe 块内。
+                self.unsafe_depth += 1;
+                let ty = self.check_block(block);
+                self.unsafe_depth -= 1;
+                ty
+            }
             HirExpr::StardustMacro(_, _) => HirType::Unknown,
             HirExpr::As(inner, target, span) => {
                 let source = self.check_expr(inner);
@@ -1253,6 +1262,18 @@ impl<'a> TypeChecker<'a> {
         fn_sig: Option<&FnSignature>,
         span: Span,
     ) -> HirType {
+        // 值栈内建属于 unsafe 语义：必须出现在 unsafe 块内。
+        if self.unsafe_depth == 0
+            && let HirExpr::Var(var) = func
+            && matches!(var.name.as_str(), "push" | "pop" | "swap" | "dup")
+        {
+            self.error(TypeCheckError::UnsupportedFeature {
+                feature: format!("`{}` outside an `unsafe` block", var.name),
+                reference: "readme.md §10.2 (raw stack builtins are unsafe-only)".to_string(),
+                span,
+            });
+        }
+
         // 求值调用目标；函数名占位不产生类型错误
         let func_ty = self.check_expr(func);
 

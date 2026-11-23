@@ -35,8 +35,8 @@
 ## 安全边界
 
 - 这组内建属于 unsafe 语义：值栈上的值不参与类型检查，也不参与借用检查。
-- 当前实现**不**强制"只能在 unsafe 块内调用"（编译期缺少 unsafe 上下文跟踪），
-  这一点记录在 `USAGE.md`；后续若引入 unsafe 上下文，应在此处加检查。
+- 这组内建**只能在 `unsafe` 块内调用**：类型检查维护 `unsafe_depth`，在 `unsafe`
+  之外调用 `push`/`pop`/`swap`/`dup` 会报 `unsupported feature`（指向 `readme.md` §10.2）。
 - `pop()` 在空值栈上、`swap()`/`dup()` 在元素不足时给出明确的运行时错误。
 
 ## 后果
