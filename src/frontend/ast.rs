@@ -293,6 +293,8 @@ pub enum Decl {
     Use(Vec<String>, Span),
     /// 实现块: impl Type { fn ... }
     Impl(ImplDecl),
+    /// 模块声明: mod name;（加载同目录 name.fb）
+    Mod { name: String, span: Span },
 }
 
 /// `impl Type { ... }` 块；方法在 HIR 中扁平化为 `Type::name`。

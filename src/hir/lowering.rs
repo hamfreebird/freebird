@@ -136,6 +136,8 @@ impl Lowering {
             ast::Decl::Use(path, span) => Some(HirDecl::Use(path.clone(), *span)),
             // `impl` 已在上层展开为多个函数声明。
             ast::Decl::Impl(_) => None,
+            // `mod` 由流水线在降级前展开为子模块的声明。
+            ast::Decl::Mod { .. } => None,
         }
     }
 

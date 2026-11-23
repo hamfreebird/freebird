@@ -715,3 +715,13 @@ fn main() {
 "#;
     assert_same_output(source, "map_combinator", b"");
 }
+
+#[test]
+fn module_declaration_needs_file_loader() {
+    let errors = check_source("mod foo;\nfn main() { print(1); }")
+        .expect_err("`mod` should be rejected until the module loader exists");
+    assert!(
+        errors.join("\n").contains("module loader"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}

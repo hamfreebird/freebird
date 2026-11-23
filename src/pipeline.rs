@@ -23,6 +23,14 @@ pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String
         return Err(format!("Parse errors:\n{}", msg.join("\n")));
     }
 
+    // `mod name;` 需要文件级模块加载器（尚未实现），否则会被静默忽略。
+    if ast.decls.iter().any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. })) {
+        return Err(
+            "Module declarations (`mod name;`) need the file-based module loader, which is not implemented yet (M2-3)."
+                .to_string(),
+        );
+    }
+
     // 1.5 构建类型表
     let type_table = TypeTable::from_ast_decls(&ast.decls);
 
@@ -129,6 +137,16 @@ pub fn check_source_with_warnings(source: &str) -> (Vec<String>, Vec<String>) {
 
     let (hir, hir_errors) = lower(&ast);
     all_errors.extend(hir_errors.iter().map(|e| e.to_string()));
+
+    if ast_errors.is_empty()
+        && hir_errors.is_empty()
+        && ast.decls.iter().any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. }))
+    {
+        all_errors.push(
+            "Module declarations (`mod name;`) need the file-based module loader, which is not implemented yet (M2-3)."
+                .to_string(),
+        );
+    }
 
     if ast_errors.is_empty() && hir_errors.is_empty() {
         let type_table = TypeTable::from_ast_decls(&ast.decls);

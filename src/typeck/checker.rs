@@ -441,7 +441,7 @@ impl<'a> TypeChecker<'a> {
                 HirDecl::Enum(e) => self.validate_attributes(&e.attrs),
                 HirDecl::Use(_, span) => self.error(TypeCheckError::UnsupportedFeature {
                     feature: "`use` declarations".to_string(),
-                    reference: "readme.md §10 (modules are planned; no module loader yet)".to_string(),
+                    reference: "readme.md §10 (module loader is not implemented yet)".to_string(),
                     span: *span,
                 }),
             }

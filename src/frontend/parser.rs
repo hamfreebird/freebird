@@ -44,6 +44,7 @@ impl Parser {
             TokenKind::Struct => self.parse_struct(attrs).map(Decl::Struct),
             TokenKind::Enum => self.parse_enum(attrs).map(Decl::Enum),
             TokenKind::Impl => self.parse_impl().map(Decl::Impl),
+            TokenKind::Mod => self.parse_mod_decl(),
             TokenKind::Extern => {
                 if !attrs.is_empty() {
                     let span = attrs[0].span;
@@ -169,6 +170,14 @@ impl Parser {
             }
         }
         Ok(params)
+    }
+
+    /// 解析 `mod name;`：声明一个文件级模块（同名 `.fb` 文件）。
+    fn parse_mod_decl(&mut self) -> Result<Decl, FrontendError> {
+        let span = self.expect(TokenKind::Mod)?.span;
+        let name = self.expect_ident("module name")?;
+        self.expect(TokenKind::Semicolon)?;
+        Ok(Decl::Mod { name, span })
     }
 
     /// 解析 `impl Type { fn ... }` 块；方法名在降级时扁平化为 `Type::name`。

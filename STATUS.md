@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-23。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **201 unit + 125 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 41，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **201 unit + 126 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 42，`tests/differential_test.rs` 2）。
 
 ## 1. 语言与运行时
 
@@ -100,4 +100,4 @@
 - **M2-2 Option/Result（泛型枚举）**：内建 `Option<T>`/`Result<T, E>`，载荷类型从构造表达式推断并做替换检查；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`。类型检查把每个方法调用的成功/失败变体标签标注在 `Span → MethodVariantTags` 上交给 MIR 生成器，因此 `Option`（`Some`=1/`None`=0）与 `Result`（`Ok`=0/`Err`=1）共用同一套指令。`map`/`ok`/`err` 等组合子待办。
 - **M2-7 标准库（部分）**：`abs`/`min`/`max`、`Vec`/`String` 的 `is_empty`/`clear`、转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`（新增 `EnumPayloadToOption`/`OptionToResult` 指令）、`int_to_str`（双后端，堆块逐位写入）、`str_to_int`（双后端，堆块逐字符解析）与 `Option::map`/`Result::map`（MIR 用现有指令组合实现分支，双后端一致）。
 - **M2-9 impl/方法（方案 C 分期）**：`impl Type { fn f(self) }` 与关联函数 `Rect::square(3)` 已可用；名字扁平化为 `Type::f`，方法调用由类型检查解析（用户方法优先、内建方法兜底）并记录 `Span` 标注供 MIR 生成。`&self` 只读方法与 `&mut self` 写方法均已支持：调用点对具名变量取引用，方法体 `self.field` 自动解引用，`self.field = v` 走 `FieldStoreRef` 写回引用目标（VM 用 `find_ref_target` 跨帧定位，Stardust 按 cell 语义写回）。
-- **待实现**：M2-3 模块/`use`、M2-7 其余标准库、M2-8 的 unsafe 低级栈内建（`#id` 已从规范移除，`unsafe` 块内暂未提供 `push`/`swap` 等内建）（M2-9 的 impl/方法已全部落地，决策见 `docs/adr/0003-user-impl-methods.md`）。
+- **待实现**：M2-3 的文件级模块加载器与 `use` 路径解析（`mod name;` 已能解析并给出明确诊断）、M2-7 其余标准库、M2-8 的 unsafe 低级栈内建（`#id` 已从规范移除，`unsafe` 块内暂未提供 `push`/`swap` 等内建）（M2-9 的 impl/方法已全部落地，决策见 `docs/adr/0003-user-impl-methods.md`）。
