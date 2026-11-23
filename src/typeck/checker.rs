@@ -1526,8 +1526,8 @@ impl<'a> TypeChecker<'a> {
             _ => return None,
         };
         let allowed: &[&str] = match enum_name {
-            "Option" => &["is_some", "is_none", "unwrap", "unwrap_or", "ok_or"],
-            _ => &["is_ok", "is_err", "unwrap", "unwrap_or", "ok", "err"],
+            "Option" => &["is_some", "is_none", "unwrap", "unwrap_or", "ok_or", "map"],
+            _ => &["is_ok", "is_err", "unwrap", "unwrap_or", "ok", "err", "map"],
         };
         if !allowed.contains(&method) {
             return None;
@@ -1590,6 +1590,45 @@ impl<'a> TypeChecker<'a> {
                     Box::new(HirType::Path(vec!["Option".to_string()])),
                     vec![inner],
                 ))
+            }
+            // `Option::map(f)` / `Result::map(f)`：映射载荷类型。
+            "map" => {
+                self.check_method_arity(method, 1, args.len(), span);
+                let mapped = match args.first().map(|arg| self.check_expr(arg)) {
+                    Some(HirType::FnPtr(params, rets)) => {
+                        if let Some(expected) = params.first().cloned()
+                            && !is_assignable(&expected, &payload_ty)
+                        {
+                            self.error(TypeCheckError::TypeMismatch {
+                                expected,
+                                found: payload_ty.clone(),
+                                span,
+                                context: format!("{enum_name}::map argument"),
+                            });
+                        }
+                        rets.first().cloned().unwrap_or(HirType::Unknown)
+                    }
+                    Some(other) if !is_unknown(&other) => {
+                        self.error(TypeCheckError::NotCallable {
+                            found: other,
+                            span,
+                        });
+                        HirType::Unknown
+                    }
+                    _ => HirType::Unknown,
+                };
+                if enum_name == "Option" {
+                    Some(HirType::Generic(
+                        Box::new(HirType::Path(vec!["Option".to_string()])),
+                        vec![mapped],
+                    ))
+                } else {
+                    let err_ty = enum_args.get(1).cloned().unwrap_or(HirType::Unknown);
+                    Some(HirType::Generic(
+                        Box::new(HirType::Path(vec!["Result".to_string()])),
+                        vec![mapped, err_ty],
+                    ))
+                }
             }
             // `Option::ok_or(err)` → `Result<T, E>`。
             "ok_or" => {

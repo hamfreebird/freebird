@@ -692,3 +692,28 @@ fn main() {
 "#;
     assert_same_output(source, "fnptr_multi_return", b"");
 }
+
+#[test]
+fn option_and_result_map_match() {
+    let source = r#"
+fn inc(x: i64) -> i64 { x + 1 }
+fn main() {
+    let o: Option<i64> = Option::Some(7);
+    let m = o.map(inc);
+    print(m.is_some() as i64);
+    print(m.unwrap());
+
+    let n: Option<i64> = Option::None;
+    print(n.map(inc).is_none() as i64);
+
+    let r: Result<i64, bool> = Result::Ok(3);
+    let mr = r.map(inc);
+    print(mr.is_ok() as i64);
+    print(mr.unwrap());
+
+    let e: Result<i64, bool> = Result::Err(true);
+    print(e.map(inc).is_err() as i64);
+}
+"#;
+    assert_same_output(source, "map_combinator", b"");
+}

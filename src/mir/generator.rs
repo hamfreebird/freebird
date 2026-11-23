@@ -832,6 +832,75 @@ impl MirGen {
                         self.stack.pop();
                         self.stack.push_temp();
                     }
+                    // `Option::map(f)` / `Result::map(f)`：映射载荷。
+                    "map" => {
+                        let none_label = self.labels.fresh();
+                        let some_label = self.labels.fresh();
+                        let end_label = self.labels.fresh();
+                        let mapper = args.first().cloned();
+
+                        self.gen_expr(receiver, fn_sig);
+                        if !self.reachable {
+                            return;
+                        }
+                        self.mir.push(MirInst::EnumTag { total_slots: 2 });
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Push {
+                            value: Value::I64(tags.success),
+                            ty: TypeId::I64,
+                        });
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Eq);
+                        self.stack.pop();
+                        self.stack.pop();
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Not);
+                        self.mir.push(MirInst::Jump(none_label));
+                        self.stack.pop(); // bool
+
+                        let branch_base = self.stack.clone();
+
+                        // 成功分支：取出载荷 → 调用映射函数 → 重新包裹。
+                        self.mir.push(MirInst::Mark(some_label));
+                        self.stack = branch_base.clone();
+                        self.reachable = true;
+                        self.mir.push(MirInst::Unwrap {
+                            success_tag: tags.success,
+                        });
+                        if let Some(f) = &mapper {
+                            self.gen_expr(f, fn_sig);
+                        }
+                        self.mir.push(MirInst::CallIndirect {
+                            argc: 1,
+                            return_arity: 1,
+                        });
+                        self.stack.pop(); // fnptr
+                        self.stack.pop(); // payload
+                        self.stack.push_temp(); // mapped
+                        self.mir.push(MirInst::Push {
+                            value: Value::I64(tags.success),
+                            ty: TypeId::I64,
+                        });
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Swap);
+                        self.mir.push(MirInst::MakeEnum {
+                            variant: tags.success as usize,
+                            data_slots: 1,
+                        });
+                        self.stack.pop();
+                        self.stack.pop();
+                        self.stack.push_temp();
+                        let mapped_state = self.stack.clone();
+                        self.mir.push(MirInst::UncondJump(end_label));
+
+                        // 失败分支：原枚举即为结果（`None` / `Err(e)`）。
+                        self.mir.push(MirInst::Mark(none_label));
+                        self.stack = branch_base.clone();
+                        self.reachable = true;
+
+                        self.mir.push(MirInst::Mark(end_label));
+                        self.stack = mapped_state;
+                    }
                     // `Option::ok_or(default)` → `Result`。
                     "ok_or" => {
                         self.gen_expr(receiver, fn_sig);
