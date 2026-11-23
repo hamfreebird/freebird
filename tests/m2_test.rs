@@ -799,3 +799,24 @@ fn raw_stack_builtins_require_unsafe() {
         "unexpected diagnostics: {errors:?}"
     );
 }
+
+#[test]
+fn module_local_types_are_prefixed() {
+    let dir = std::env::temp_dir().join(format!("freebird_m2x2_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("util.fb"),
+        "struct Point { x: i64, y: i64 }\n\nfn make(x: i64, y: i64) -> Point {\n    Point { x: x, y: y }\n}\n\nfn sum(p: Point) -> i64 { p.x + p.y }\n",
+    )
+    .expect("write module");
+    let main_path = dir.join("main.fb");
+    std::fs::write(
+        &main_path,
+        "mod util;\nuse util::make;\nuse util::sum;\n\nfn main() { print(sum(make(3, 4))); }\n",
+    )
+    .expect("write main");
+    let out = freebird::run_file(&main_path, freebird::RuntimeConfig::test())
+        .expect("module-local types should work");
+    assert_eq!(String::from_utf8_lossy(&out), "7\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -62,6 +62,8 @@ fn load_module(
             msg.join("\n")
         ));
     }
+    // 先收集本模块声明的类型名（用于改写类型引用），再消费 decls。
+    let local_types = local_type_names(&parsed.decls);
     loading.push(canonical);
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let mut decls = Vec::new();
@@ -78,22 +80,257 @@ fn load_module(
                 })?;
                 decls.extend(sub.decls);
             }
-            other => decls.push(apply_prefix(other, prefix)),
+            other => decls.push(apply_prefix(other, prefix, &local_types)),
         }
     }
     loading.pop();
     Ok(crate::frontend::ast::Program { decls })
 }
 
-/// 给模块内的顶层函数加上 `mod::` 前缀（MVP 只处理函数）。
-fn apply_prefix(decl: crate::frontend::ast::Decl, prefix: Option<&str>) -> crate::frontend::ast::Decl {
+/// 收集模块顶层声明的类型名。
+fn local_type_names(decls: &[crate::frontend::ast::Decl]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for decl in decls {
+        match decl {
+            crate::frontend::ast::Decl::Struct(s) => {
+                names.insert(s.name.clone());
+            }
+            crate::frontend::ast::Decl::Enum(e) => {
+                names.insert(e.name.clone());
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// 给模块内声明加前缀，并把指向本模块类型的引用改写成 `mod::Name`。
+fn apply_prefix(
+    decl: crate::frontend::ast::Decl,
+    prefix: Option<&str>,
+    local: &std::collections::HashSet<String>,
+) -> crate::frontend::ast::Decl {
+    use crate::frontend::ast::Decl;
     let Some(prefix) = prefix else { return decl };
+    let rename = |name: &str| -> String {
+        if local.contains(name) {
+            format!("{prefix}::{name}")
+        } else {
+            name.to_string()
+        }
+    };
     match decl {
-        crate::frontend::ast::Decl::Fn(mut f) => {
+        Decl::Struct(mut s) => {
+            s.name = format!("{prefix}::{}", s.name);
+            for f in &mut s.fields {
+                f.ty = prefix_type(&f.ty, &rename);
+            }
+            Decl::Struct(s)
+        }
+        Decl::Enum(mut e) => {
+            e.name = format!("{prefix}::{}", e.name);
+            for v in &mut e.variants {
+                if let Some(data) = &v.data {
+                    v.data = Some(prefix_type(data, &rename));
+                }
+            }
+            Decl::Enum(e)
+        }
+        Decl::Impl(mut i) => {
+            i.type_name = rename(&i.type_name);
+            for f in &mut i.fns {
+                for p in &mut f.params {
+                    p.ty = prefix_type(&p.ty, &rename);
+                }
+                if let Some(ret) = &f.return_type {
+                    f.return_type = Some(prefix_type(ret, &rename));
+                }
+                if let Some(body) = &mut f.body {
+                    prefix_block(body, &rename);
+                }
+            }
+            Decl::Impl(i)
+        }
+        Decl::Fn(mut f) => {
             f.name = format!("{prefix}::{}", f.name);
-            crate::frontend::ast::Decl::Fn(f)
+            for p in &mut f.params {
+                p.ty = prefix_type(&p.ty, &rename);
+            }
+            if let Some(ret) = &f.return_type {
+                f.return_type = Some(prefix_type(ret, &rename));
+            }
+            if let Some(body) = &mut f.body {
+                prefix_block(body, &rename);
+            }
+            Decl::Fn(f)
         }
         other => other,
+    }
+}
+
+fn prefix_type(
+    ty: &crate::frontend::ast::Type,
+    rename: &impl Fn(&str) -> String,
+) -> crate::frontend::ast::Type {
+    use crate::frontend::ast::Type;
+    match ty {
+        Type::Path(segments, span) => {
+            if segments.len() == 1 {
+                Type::Path(vec![rename(&segments[0])], *span)
+            } else {
+                ty.clone()
+            }
+        }
+        Type::Generic(base, args, span) => Type::Generic(
+            Box::new(prefix_type(base, rename)),
+            args.iter().map(|a| prefix_type(a, rename)).collect(),
+            *span,
+        ),
+        Type::Ref(inner, mutable, span) => {
+            Type::Ref(Box::new(prefix_type(inner, rename)), *mutable, *span)
+        }
+        Type::Tuple(types, span) => {
+            Type::Tuple(types.iter().map(|t| prefix_type(t, rename)).collect(), *span)
+        }
+        Type::Array(inner, len, span) => {
+            Type::Array(Box::new(prefix_type(inner, rename)), len.clone(), *span)
+        }
+        Type::FnPtr(params, ret, span) => Type::FnPtr(
+            params.iter().map(|p| prefix_type(p, rename)).collect(),
+            ret.as_ref().map(|r| Box::new(prefix_type(r, rename))),
+            *span,
+        ),
+        other => other.clone(),
+    }
+}
+
+fn prefix_block(block: &mut crate::frontend::ast::Block, rename: &impl Fn(&str) -> String) {
+    for stmt in &mut block.stmts {
+        match stmt {
+            crate::frontend::ast::Stmt::Let { ty, init, .. } => {
+                if let Some(t) = ty {
+                    *t = prefix_type(t, rename);
+                }
+                if let Some(e) = init {
+                    prefix_expr(e, rename);
+                }
+            }
+            crate::frontend::ast::Stmt::Expr(e, _) => prefix_expr(e, rename),
+            crate::frontend::ast::Stmt::Assign { target, value, .. } => {
+                prefix_expr(target, rename);
+                prefix_expr(value, rename);
+            }
+        }
+    }
+    if let Some(tail) = &mut block.tail {
+        prefix_expr(tail, rename);
+    }
+}
+
+fn prefix_expr(expr: &mut crate::frontend::ast::Expr, rename: &impl Fn(&str) -> String) {
+    use crate::frontend::ast::{CallArg, Expr};
+    match expr {
+        Expr::Var(name, _) => {
+            if let Some((ty, rest)) = name.split_once("::") {
+                let renamed = rename(ty);
+                if renamed != ty {
+                    *name = format!("{renamed}::{rest}");
+                }
+            } else {
+                let renamed = rename(name);
+                if renamed != *name {
+                    *name = renamed;
+                }
+            }
+        }
+        Expr::Deref(inner, _) | Expr::Unary(_, inner, _) => prefix_expr(inner, rename),
+        Expr::Ref(inner, _, _) => prefix_expr(inner, rename),
+        Expr::Binary(lhs, _, rhs, _) => {
+            prefix_expr(lhs, rename);
+            prefix_expr(rhs, rename);
+        }
+        Expr::Call { func, args, .. } => {
+            prefix_expr(func, rename);
+            for arg in args {
+                match arg {
+                    CallArg::Pos(e, _) | CallArg::Named(_, e, _) => prefix_expr(e, rename),
+                }
+            }
+        }
+        Expr::FieldAccess(inner, _, _) => prefix_expr(inner, rename),
+        Expr::Index(a, b, _) => {
+            prefix_expr(a, rename);
+            prefix_expr(b, rename);
+        }
+        Expr::Tuple(elems, _) | Expr::Array(elems, _) => {
+            for e in elems {
+                prefix_expr(e, rename);
+            }
+        }
+        Expr::Repeat(a, b, _) => {
+            prefix_expr(a, rename);
+            prefix_expr(b, rename);
+        }
+        Expr::StructLit { name, fields, .. } => {
+            if name.len() == 1 {
+                let renamed = rename(&name[0]);
+                name[0] = renamed;
+            }
+            for (_, e) in fields {
+                prefix_expr(e, rename);
+            }
+        }
+        Expr::EnumLit { name, data, .. } => {
+            if name.len() == 1 {
+                let renamed = rename(&name[0]);
+                name[0] = renamed;
+            }
+            if let Some(d) = data {
+                prefix_expr(d, rename);
+            }
+        }
+        Expr::If(cond, then_b, else_b, _) => {
+            prefix_expr(cond, rename);
+            prefix_block(then_b, rename);
+            if let Some(b) = else_b {
+                prefix_block(b, rename);
+            }
+        }
+        Expr::Match(scrutinee, arms, _) => {
+            prefix_expr(scrutinee, rename);
+            for arm in arms {
+                if let Some(g) = &mut arm.guard {
+                    prefix_expr(g, rename);
+                }
+                prefix_expr(&mut arm.body, rename);
+            }
+        }
+        Expr::Loop(block, _) | Expr::Unsafe(block, _) => prefix_block(block, rename),
+        Expr::While(cond, body, _) => {
+            prefix_expr(cond, rename);
+            prefix_block(body, rename);
+        }
+        Expr::For { iterable, body, .. } => {
+            prefix_expr(iterable, rename);
+            prefix_block(body, rename);
+        }
+        Expr::Block(block, _) => prefix_block(block, rename),
+        Expr::Labelled(_, inner, _) => prefix_expr(inner, rename),
+        Expr::Break(v, _) | Expr::BreakLabel(_, v, _) => {
+            if let Some(e) = v {
+                prefix_expr(e, rename);
+            }
+        }
+        Expr::Return(elems, _) => {
+            for e in elems {
+                prefix_expr(e, rename);
+            }
+        }
+        Expr::As(inner, ty, _) => {
+            prefix_expr(inner, rename);
+            *ty = Box::new(prefix_type(ty, rename));
+        }
+        _ => {}
     }
 }
 
