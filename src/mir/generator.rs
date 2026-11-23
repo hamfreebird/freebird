@@ -922,7 +922,7 @@ impl MirGen {
                     }
                 }
             }
-            HirExpr::Call { func, args, stack_pass, fn_sig: call_sig, .. } => {
+            HirExpr::Call { func, args, stack_pass, fn_sig: call_sig, span } => {
                 // 间接调用：调用目标不是静态函数名，而是持有 FnPtr 的表达式。
                 let indirect = !matches!(
                     func.as_ref(),
@@ -940,7 +940,14 @@ impl MirGen {
                     if !self.reachable {
                         return;
                     }
-                    let ret_count = call_sig.as_ref().map_or(0, |s| s.m);
+                    let ret_count = call_sig.as_ref().map_or_else(
+                        || {
+                            self.method_variant_tags
+                                .get(span)
+                                .map_or(0, |r| r.return_arity)
+                        },
+                        |s| s.m,
+                    );
                     self.mir.push(MirInst::CallIndirect {
                         argc: args.len() as u32,
                         return_arity: ret_count,

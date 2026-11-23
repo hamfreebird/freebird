@@ -1273,15 +1273,15 @@ impl<'a> TypeChecker<'a> {
                 }
                 _ => {
                     if let HirType::FnPtr(params, rets) = &func_ty {
-                        // 多返回值间接调用仍待实现（MIR 的元组解构按单返回值假设）。
-                        if rets.len() > 1 {
-                            self.error(TypeCheckError::UnsupportedFeature {
-                                feature: "indirect calls with multiple return values".to_string(),
-                                reference: "M2-4: multiple returns via function pointers are pending"
-                                    .to_string(),
-                                span,
-                            });
-                        }
+                        // MIR 生成阶段没有类型信息，这里把返回元数标注给生成器。
+                        self.method_variant_tags.insert(
+                            span,
+                            MethodResolution {
+                                variant_tags: None,
+                                user_method: None,
+                                return_arity: rets.len() as u32,
+                            },
+                        );
                         Some(FnSignature {
                             name: "<fn>".to_string(),
                             n: params.len() as u32,

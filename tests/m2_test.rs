@@ -663,13 +663,15 @@ fn main() {
 }
 
 #[test]
-fn multi_return_function_pointer_is_explicitly_unsupported() {
-    let errors = check_source(
-        "fn pair() -> (i64, i64) { (3, 4) }\nfn main() {\n    let h: fn() -> (i64, i64) = pair;\n    let (a, b) = h();\n    print(a);\n}",
-    )
-    .expect_err("multi-return indirect call should be rejected explicitly");
-    assert!(
-        errors.join("\n").contains("multiple return values"),
-        "unexpected diagnostics: {errors:?}"
-    );
+fn multi_return_function_pointer_matches() {
+    let source = r#"
+fn pair() -> (i64, i64) { (3, 4) }
+fn main() {
+    let h: fn() -> (i64, i64) = pair;
+    let (a, b) = h();
+    print(a);
+    print(b);
+}
+"#;
+    assert_same_output(source, "fnptr_multi_return", b"");
 }

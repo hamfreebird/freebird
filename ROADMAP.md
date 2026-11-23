@@ -153,7 +153,7 @@
 | M2-1 | 用户泛型 MVP：`struct`/`enum`/`fn` 的泛型参数，单态化生成 MIR；先支持类型参数，不做高阶类型 | `Pair<T>`、`Option<T>`、`fn id<T>(x: T) -> T` 可解析、检查、运行；单态化测试覆盖多实例 | 🟡 类型擦除 MVP：泛型参数声明、字段访问/函数实参推断 + 替换检查；布局与代码按基名共用一份，未做单态化/约束/turbofish |
 | M2-2 | `Option`/`Result` 作为泛型枚举进入标准库，替代硬编码特例 | `Option::Some`/`None`、`Result::Ok`/`Err` 及基本 `unwrap`/`map` 可用；VM/Stardust 测试 | ✅ 泛型枚举：`Option<T>`/`Result<T, E>` 载荷推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or` 与 `Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map`/组合子待办 |
 | M2-3 | 模块与 `use`：至少支持文件级模块、`use path::item`、可见性检查；不引入完整包生态 | 多文件示例可编译运行；未解析路径报错；循环依赖有明确诊断 |
-| M2-4 | 函数指针：解析 `fn(A, B) -> C`，端到端支持 `Value::FnPtr`、间接调用、作为参数/返回值 | `let f: fn(i64) -> i64 = inc; f(1)` 在 VM/Stardust 上工作；错误签名报错 | 🟡 零/单返回值间接调用完成（Stardust FnId dispatch）；`fn(A) -> (B, C)` 的返回列表与函数声明一致，多返回值间接调用列入待办 |
+| M2-4 | 函数指针：解析 `fn(A, B) -> C`，端到端支持 `Value::FnPtr`、间接调用、作为参数/返回值 | `let f: fn(i64) -> i64 = inc; f(1)` 在 VM/Stardust 上工作；错误签名报错 | ✅ 零/单/多返回值间接调用均可用（Stardust FnId dispatch）；`fn(A) -> (B, C)` 的返回列表与函数声明一致，元数由类型检查标注供给 MIR |
 | M2-5 | 完整模式匹配：嵌套模式、`or` 模式、`..` 剩余、守卫、穷尽性/不可达分支检查 | 模式矩阵测试；不可达分支警告；非穷尽 `match` 编译失败 | ✅ 基础完成：`..`/嵌套/`or`/守卫/穷尽性 + 重复与兜底后分支警告 |
 | M2-6 | 循环值语义：`loop` 产出 `break value`，`if let`/`while let`，可选标签 `break 'label` | 相关程序输出正确；M0 的临时拒绝被移除并替换为正向测试 | ✅ `loop`/`break value`/`if let`/`while let`/`'label` + `break`/`continue 'label`（loop/while/for） |
 | M2-7 | 标准库扩展：`Vec`/`String` 常用方法、字符/字符串转换、数学函数、格式化输出；不再依赖类型检查器特例 | 标准库 API 文档 + 集成测试；方法调用在 VM/Stardust 一致 | 🟡 `abs`/`min`/`max` + Vec/String `is_empty`/`clear` + 转换组合子（`ok`/`err`/`ok_or`）+ `int_to_str`（双后端）与 `str_to_int`（VM；Stardust 生成陷阱）；`map` 等组合子待办 |

@@ -42,7 +42,7 @@
 |---|---|---|
 | M2-5 | 模式匹配收尾 | `..` 结构体/元组剩余、嵌套/or/守卫/穷尽性；重复与兜底后分支警告（`check` JSON `warning_count`） |
 | M2-6 | 循环值语义 | `if let`/`while let` 降级为 `match`/`loop`；`loop` 值 + `break value`；`while`/`for` 的 `break value` 拒绝；`'label` + `break`/`continue 'label` 支持 loop/while/for |
-| M2-4 | 函数指针 | `fn(A,B)->C` 类型、函数名作值、参数/返回值、间接调用；Stardust FnId dispatch；支持零/单返回值间接调用，多返回值间接调用报明确未实现 |
+| M2-4 | 函数指针 | `fn(A,B)->C` 类型、函数名作值、参数/返回值、间接调用；Stardust FnId dispatch；零/单/多返回值间接调用均可用（返回元数由类型检查标注供给 MIR） |
 | M2-2 | Option/Result | 泛型枚举 `Option<T>`/`Result<T,E>`：载荷类型推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or`；`Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map` 等组合子待办 |
 | M2-7 | 标准库扩展 | `abs`/`min`/`max`；Vec/String `is_empty`/`clear`；`Option`/`Result` 转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`；`int_to_str` 双后端、`str_to_int` 仅 VM（Stardust 显式陷阱）；`map` 等组合子待办 |
 | M2-1 | 泛型 | `struct Pair<T>`/`enum Maybe<T>`/`fn id<T>(x: T) -> T` 声明与泛型实参类型；字段访问与函数实参推断 + 替换检查；布局/代码按基名共用一份（类型擦除 MVP，无约束/显式类型实参/单态化） |
