@@ -26,6 +26,15 @@ impl Lowering {
         // 第二遍：降级所有声明
         let mut decls = Vec::new();
         for decl in &ast_program.decls {
+            // `impl` 块展开为若干个扁平化函数（`Type::name`）。
+            if let ast::Decl::Impl(i) = decl {
+                for f in expand_impl_decls(i) {
+                    if let Some(hir) = self.lower_fn(&f) {
+                        decls.push(HirDecl::Fn(hir));
+                    }
+                }
+                continue;
+            }
             if let Some(hir_decl) = self.lower_decl(decl) {
                 decls.push(hir_decl);
             }
@@ -53,6 +62,12 @@ impl Lowering {
                         #[allow(irrefutable_let_patterns)]
                         let ast::ExternItem::Fn(f) = item;
                         let sig = self.fn_decl_to_signature(f);
+                        self.resolver.register_fn(sig);
+                    }
+                }
+                ast::Decl::Impl(i) => {
+                    for f in expand_impl_decls(i) {
+                        let sig = self.fn_decl_to_signature(&f);
                         self.resolver.register_fn(sig);
                     }
                 }
@@ -119,6 +134,8 @@ impl Lowering {
                 }))
             }
             ast::Decl::Use(path, span) => Some(HirDecl::Use(path.clone(), *span)),
+            // `impl` 已在上层展开为多个函数声明。
+            ast::Decl::Impl(_) => None,
         }
     }
 
@@ -463,6 +480,28 @@ impl Lowering {
                     });
                 }
 
+                // 用户 `impl` 中的关联函数：`Type::func(args)` 解析为普通调用。
+                let assoc_name = format!("{}::{variant}", name.join("::"));
+                if let Some(sig) = self.resolver.lookup_fn(&assoc_name).cloned() {
+                    let mut hir_args = Vec::new();
+                    if let Some(e) = data
+                        && let Some(he) = self.lower_expr(e)
+                    {
+                        hir_args.push(HirCallArg::Pos(he, *span));
+                    }
+                    return Some(HirExpr::Call {
+                        func: Box::new(HirExpr::Var(HirVarRef {
+                            name: assoc_name,
+                            scope_depth: usize::MAX,
+                            span: *span,
+                        })),
+                        args: hir_args,
+                        stack_pass: false,
+                        fn_sig: Some(sig),
+                        span: *span,
+                    });
+                }
+
                 let hir_data = data.as_ref().and_then(|e| self.lower_expr(e).map(Box::new));
                 Some(HirExpr::EnumLit {
                     name: name.clone(),
@@ -777,5 +816,50 @@ mod tests {
         let src = "fn foo(a: i32) -> i32 { return a; } fn main() { foo(1, 2); }";
         let (_, errors) = lower_source(src);
         assert!(!errors.is_empty());
+    }
+}
+
+/// 把 `impl Type { fn ... }` 展开为名字扁平化（`Type::name`）的函数声明，
+/// 并把接收者/参数类型中的 `Self` 替换为具体类型。
+fn expand_impl_decls(decl: &ast::ImplDecl) -> Vec<ast::FnDecl> {
+    decl.fns
+        .iter()
+        .map(|f| {
+            let mut f = f.clone();
+            f.name = format!("{}::{}", decl.type_name, f.name);
+            for param in &mut f.params {
+                param.ty = replace_self_type(&param.ty, &decl.type_name);
+            }
+            if let Some(ret) = &mut f.return_type {
+                *ret = replace_self_type(ret, &decl.type_name);
+            }
+            f
+        })
+        .collect()
+}
+
+/// 把类型中的 `Self` 替换为 impl 目标类型。
+fn replace_self_type(ty: &ast::Type, type_name: &str) -> ast::Type {
+    match ty {
+        ast::Type::Path(segments, span)
+            if segments.len() == 1 && segments[0] == "Self" =>
+        {
+            ast::Type::Path(vec![type_name.to_string()], *span)
+        }
+        ast::Type::Ref(inner, mutable, span) => ast::Type::Ref(
+            Box::new(replace_self_type(inner, type_name)),
+            *mutable,
+            *span,
+        ),
+        ast::Type::Generic(base, args, span) => ast::Type::Generic(
+            Box::new(replace_self_type(base, type_name)),
+            args.iter().map(|a| replace_self_type(a, type_name)).collect(),
+            *span,
+        ),
+        ast::Type::Tuple(types, span) => ast::Type::Tuple(
+            types.iter().map(|t| replace_self_type(t, type_name)).collect(),
+            *span,
+        ),
+        other => other.clone(),
     }
 }

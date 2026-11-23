@@ -610,3 +610,42 @@ fn main() {
         "Stardust should trap instead of silently returning None"
     );
 }
+
+#[test]
+fn impl_methods_and_associated_functions_match() {
+    let source = r#"
+struct Rect { w: i64, h: i64 }
+
+impl Rect {
+    fn square(side: i64) -> Rect {
+        Rect { w: side, h: side }
+    }
+    fn area(self) -> i64 {
+        self.w * self.h
+    }
+    fn widen(self, by: i64) -> Rect {
+        Rect { w: self.w + by, h: self.h }
+    }
+}
+
+fn main() {
+    let s = Rect::square(3);
+    print(s.area());
+    let w = s.widen(2);
+    print(w.area());
+}
+"#;
+    assert_same_output(source, "impl_methods", b"");
+}
+
+#[test]
+fn reference_receiver_is_explicitly_unsupported() {
+    let errors = check_source(
+        "struct Rect { w: i64 }\nimpl Rect {\n    fn get(&self) -> i64 { self.w }\n}\nfn main() { let r = Rect { w: 1 }; print(r.get()); }",
+    )
+    .expect_err("`&self` should be rejected explicitly");
+    assert!(
+        errors.join("\n").contains("&self"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}

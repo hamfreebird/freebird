@@ -102,6 +102,15 @@ fn main() {
 7. **借用检查**：`&self` = 共享借用、`&mut self` = 独占借用，复用 `BorrowChecker`
    既有引用参数规则。
 
+### 分期落地（2026-11-23）
+
+- **已实现**：`impl` 块、关联函数（`Rect::square(3)`）、值接收者方法（`fn area(self)`，
+  含 `self.field`）。关联函数调用在降级阶段解析为普通函数调用；方法调用由类型检查
+  解析为 `Type::name` 并把 receiver 作为第 0 个实参。
+- **未实现**：`&self` / `&mut self` 接收者。当前由类型检查报
+  `UnsupportedFeature`（而不是落到字段/类型错误的误导信息），后续实现时需要在
+  调用点生成 `Ref` 并对方法体做自动解引用。
+
 同步更新 `readme.md` §5、`STATUS.md`、`TASKS.md`、`USAGE.md`。
 
 ## 后果

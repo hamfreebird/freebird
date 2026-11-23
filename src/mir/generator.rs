@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::frontend::ast::{self, BinOp, Literal, UnOp};
 use crate::frontend::token::Span;
 use crate::hir::types::*;
-use crate::typeck::{MethodVariantTags, TypeTable};
+use crate::typeck::{MethodTagMap, MethodVariantTags, TypeTable};
 use crate::vm::id::FnId;
 use crate::vm::mir::{MirInst, TypeId};
 use crate::vm::value::Value;
@@ -206,8 +206,8 @@ pub struct MirGen {
     /// 当前函数中活跃的变量名（用于去重）
     #[allow(dead_code)]
     active_vars: Vec<HashMap<String, usize>>,
-    /// 类型检查标注的内建枚举变体标签（`Option`/`Result` 方法调用）。
-    method_variant_tags: HashMap<Span, MethodVariantTags>,
+    /// 类型检查的方法解析标注（内建枚举标签 / 用户方法名）。
+    method_variant_tags: MethodTagMap,
 }
 
 impl MirGen {
@@ -241,7 +241,7 @@ impl MirGen {
     }
 
     /// 设置类型检查标注的内建枚举变体标签
-    pub fn with_method_variant_tags(mut self, tags: HashMap<Span, MethodVariantTags>) -> Self {
+    pub fn with_method_variant_tags(mut self, tags: MethodTagMap) -> Self {
         self.method_variant_tags = tags;
         self
     }
@@ -723,11 +723,43 @@ impl MirGen {
             HirExpr::MethodCall { receiver, method, args, span } => {
                 // 类型检查记录了 `Option`/`Result` 的成功/失败变体标签；
                 // 缺少标注时按内建 `Option`（None=0 / Some=1）处理。
-                let tags = self
-                    .method_variant_tags
-                    .get(span)
-                    .copied()
-                    .unwrap_or(MethodVariantTags { success: 1, failure: 0 });
+                let resolution = self.method_variant_tags.get(span).cloned();
+                // 用户方法：receiver 作为第 0 个实参，复用普通调用序列。
+                if let Some(fn_name) = resolution.as_ref().and_then(|r| r.user_method.clone()) {
+                    let argc = args.len() as u32 + 1;
+                    let ret_count = resolution.as_ref().map_or(0, |r| r.return_arity);
+                    self.mir.push(MirInst::Push {
+                        value: Value::CallElement { argc },
+                        ty: TypeId::Unknown,
+                    });
+                    self.stack.push_temp();
+                    self.gen_expr(receiver, fn_sig);
+                    for arg in args {
+                        self.gen_expr(arg, fn_sig);
+                    }
+                    let fn_id = self.name_to_id.get(&fn_name).copied().unwrap_or_else(|| {
+                        self.mir.push(MirInst::Comment(format!(
+                            "ERROR: unknown method '{fn_name}'"
+                        )));
+                        FnId(0)
+                    });
+                    self.mir.push(MirInst::Call { fn_id, return_arity: ret_count });
+                    for _ in 0..argc {
+                        self.stack.pop();
+                    }
+                    self.stack.pop(); // CallElement
+                    for _ in 0..ret_count {
+                        self.stack.push_temp();
+                    }
+                    return;
+                }
+                let tags = resolution
+                    .as_ref()
+                    .and_then(|r| r.variant_tags)
+                    .unwrap_or(MethodVariantTags {
+                        success: 1,
+                        failure: 0,
+                    });
                 match method.as_str() {
                     "is_some" | "is_none" | "is_ok" | "is_err" => {
                         self.gen_expr(receiver, fn_sig);

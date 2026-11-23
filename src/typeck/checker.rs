@@ -320,8 +320,19 @@ pub struct MethodVariantTags {
     pub failure: i64,
 }
 
-/// 方法调用 span → 内建枚举变体标签，供 MIR 生成器消费。
-pub type MethodTagMap = HashMap<Span, MethodVariantTags>;
+/// 单个方法调用的解析结果，供 MIR 生成器消费。
+#[derive(Debug, Clone, Default)]
+pub struct MethodResolution {
+    /// 内建 `Option`/`Result` 方法的成功/失败变体标签。
+    pub variant_tags: Option<MethodVariantTags>,
+    /// 用户方法解析到的扁平化函数名（`Type::name`）。
+    pub user_method: Option<String>,
+    /// 用户方法的返回值个数（MIR 生成调用时使用）。
+    pub return_arity: u32,
+}
+
+/// 方法调用 span → 解析结果。
+pub type MethodTagMap = HashMap<Span, MethodResolution>;
 
 impl<'a> TypeChecker<'a> {
     pub fn new(program: &HirProgram, type_table: &'a TypeTable) -> Self {
@@ -1470,6 +1481,19 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// 取接收者类型的类型名（`Rect` / `Vec` 等），用于用户方法解析。
+    fn receiver_type_name(ty: &HirType) -> Option<String> {
+        match ty {
+            HirType::Path(segments) => segments.last().cloned(),
+            HirType::Generic(base, _) => match base.as_ref() {
+                HirType::Path(segments) => segments.last().cloned(),
+                _ => None,
+            },
+            HirType::Ref(inner, _) => Self::receiver_type_name(inner),
+            _ => None,
+        }
+    }
+
     /// 内建 `Option`/`Result` 方法：返回 `Some(类型)` 表示该方法已处理。
     ///
     /// 同时记录成功/失败变体的标签，供 MIR 生成 `unwrap`/`is_ok` 等指令使用。
@@ -1502,9 +1526,13 @@ impl<'a> TypeChecker<'a> {
         };
         self.method_variant_tags.insert(
             span,
-            MethodVariantTags {
-                success: success as i64,
-                failure: failure as i64,
+            MethodResolution {
+                variant_tags: Some(MethodVariantTags {
+                    success: success as i64,
+                    failure: failure as i64,
+                }),
+                user_method: None,
+                return_arity: 1,
             },
         );
 
@@ -1584,6 +1612,65 @@ impl<'a> TypeChecker<'a> {
         span: Span,
     ) -> HirType {
         let receiver_ty = self.check_expr(receiver);
+        // 用户定义方法优先：按接收者类型查 `Type::method`。
+        if let Some(fn_name) = Self::receiver_type_name(&receiver_ty)
+            .map(|name| format!("{name}::{method}"))
+            .filter(|candidate| self.functions.contains_key(candidate))
+        {
+            let sig = self.functions.get(&fn_name).cloned().unwrap_or_else(|| {
+                FnSignature {
+                    name: fn_name.clone(),
+                    n: 0,
+                    m: 0,
+                    params: Vec::new(),
+                    return_types: Vec::new(),
+                    span,
+                }
+            });
+            self.method_variant_tags.insert(
+                span,
+                MethodResolution {
+                    variant_tags: None,
+                    user_method: Some(fn_name.clone()),
+                    return_arity: sig.return_types.len() as u32,
+                },
+            );
+            // 引用接收者（`&self`/`&mut self`）尚未实现，给出明确诊断而不是字段错误。
+            if let Some((_, HirType::Ref(_, _))) = sig.params.first() {
+                self.error(TypeCheckError::UnsupportedFeature {
+                    feature: format!("`{fn_name}` with `&self`/`&mut self`"),
+                    reference: "ADR 0003: reference receivers are a follow-up; use `self`"
+                        .to_string(),
+                    span,
+                });
+            }
+            // receiver 作为第 0 个实参。
+            let mut found_args: Vec<(HirType, Span)> = vec![(receiver_ty.clone(), span)];
+            for arg in args {
+                found_args.push((self.check_expr(arg), span));
+            }
+            if found_args.len() != sig.params.len() {
+                self.error(TypeCheckError::ArgumentCountMismatch {
+                    function: fn_name.clone(),
+                    expected: sig.params.len(),
+                    found: found_args.len(),
+                    span,
+                });
+            }
+            for (i, (found, arg_span)) in found_args.iter().enumerate() {
+                if let Some((_, expected)) = sig.params.get(i)
+                    && !is_assignable(expected, found)
+                {
+                    self.error(TypeCheckError::TypeMismatch {
+                        expected: expected.clone(),
+                        found: found.clone(),
+                        span: *arg_span,
+                        context: format!("argument {} of `{}`", i, fn_name),
+                    });
+                }
+            }
+            return sig.return_types.first().cloned().unwrap_or(HirType::Unit);
+        }
         let (receiver_name, receiver_args) = match &receiver_ty {
             HirType::Path(segments) => (segments.last().cloned().unwrap_or_default(), Vec::new()),
             HirType::Generic(base, args) => {

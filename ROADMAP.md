@@ -5,7 +5,7 @@
 > **M1 完成后基线**（2026-11-22）：`cargo test` = **201 unit + 84 integration** 全绿。
 > **M2-5/M2-6 后基线**（2026-11-23）：`cargo test` = **201 unit + 94 integration** 全绿（新增 `tests/m2_test.rs` 10 项）。
 > **M2-2/M2-7 后基线**（2026-11-23）：`cargo test` = **201 unit + 99 integration** 全绿（`tests/m2_test.rs` 15 项）。
-> **M2-7 字符串/组合子后基线**（2026-11-23）：`cargo test` = **201 unit + 119 integration** 全绿（`tests/m2_test.rs` 35 项）。
+> **M2-9 impl/方法后基线**（2026-11-23）：`cargo test` = **201 unit + 121 integration** 全绿（`tests/m2_test.rs` 37 项）。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 
@@ -158,7 +158,7 @@
 | M2-6 | 循环值语义：`loop` 产出 `break value`，`if let`/`while let`，可选标签 `break 'label` | 相关程序输出正确；M0 的临时拒绝被移除并替换为正向测试 | ✅ `loop`/`break value`/`if let`/`while let`/`'label` + `break`/`continue 'label`（loop/while/for） |
 | M2-7 | 标准库扩展：`Vec`/`String` 常用方法、字符/字符串转换、数学函数、格式化输出；不再依赖类型检查器特例 | 标准库 API 文档 + 集成测试；方法调用在 VM/Stardust 一致 | 🟡 `abs`/`min`/`max` + Vec/String `is_empty`/`clear` + 转换组合子（`ok`/`err`/`ok_or`）+ `int_to_str`（双后端）与 `str_to_int`（VM；Stardust 生成陷阱）；`map` 等组合子待办 |
 | M2-8 | `unsafe` 与 `#id`：实现受控的原始栈/元素 ID 访问，明确安全边界；或从规范移除并改为显式不支持 | `#x`、`*(#x)` 至少在一个后端可用；越界/悬空 ID 有定义行为或明确报错 |
-| M2-9 | 用户定义方法与 `impl`（若决定纳入语言） | 单独 ADR；若纳入，则方法解析、借用检查、双后端测试齐全 | 🟡 ADR 0003 已定：纳入 `impl` + 关联函数 + `self`/`&self`/`&mut self`（方案 C）；实现待办 |
+| M2-9 | 用户定义方法与 `impl`（若决定纳入语言） | 单独 ADR；若纳入，则方法解析、借用检查、双后端测试齐全 | 🟡 ADR 0003 方案 C：`impl` + 关联函数 + 值接收者方法已实现并在 VM/Stardust 通过；`&self`/`&mut self` 待办 |
 
 **M2 退出标准**
 

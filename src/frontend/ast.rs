@@ -291,6 +291,16 @@ pub enum Decl {
     Extern(ExternBlock),
     /// 使用声明: use path::to::name;
     Use(Vec<String>, Span),
+    /// 实现块: impl Type { fn ... }
+    Impl(ImplDecl),
+}
+
+/// `impl Type { ... }` 块；方法在 HIR 中扁平化为 `Type::name`。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplDecl {
+    pub type_name: String,
+    pub fns: Vec<FnDecl>,
+    pub span: Span,
 }
 
 /// 函数声明

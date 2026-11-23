@@ -43,6 +43,7 @@ impl Parser {
             TokenKind::Fn => self.parse_fn(attrs).map(Decl::Fn),
             TokenKind::Struct => self.parse_struct(attrs).map(Decl::Struct),
             TokenKind::Enum => self.parse_enum(attrs).map(Decl::Enum),
+            TokenKind::Impl => self.parse_impl().map(Decl::Impl),
             TokenKind::Extern => {
                 if !attrs.is_empty() {
                     let span = attrs[0].span;
@@ -143,16 +144,45 @@ impl Parser {
             return Ok(params);
         }
         loop {
-            let name = self.expect_ident("parameter name")?;
-            self.expect(TokenKind::Colon)?;
-            let ty = self.parse_type()?;
-            let span = self.current_span();
-            params.push(FnParam { name, ty, span });
+            let span = self.peek_span();
+            // 方法接收者：`self`、`&self`、`&mut self`。
+            let by_ref = self.eat(TokenKind::And);
+            let mutable_ref = by_ref && self.eat(TokenKind::Mut);
+            if matches!(self.peek(), TokenKind::Ident(name) if name == "self") {
+                self.advance();
+                // `Self` 在 impl 降级时替换为具体类型。
+                let base = Type::Path(vec!["Self".to_string()], span);
+                let ty = if by_ref {
+                    Type::Ref(Box::new(base), mutable_ref, span)
+                } else {
+                    base
+                };
+                params.push(FnParam { name: "self".to_string(), ty, span });
+            } else {
+                let name = self.expect_ident("parameter name")?;
+                self.expect(TokenKind::Colon)?;
+                let ty = self.parse_type()?;
+                params.push(FnParam { name, ty, span });
+            }
             if !self.eat(TokenKind::Comma) {
                 break;
             }
         }
         Ok(params)
+    }
+
+    /// 解析 `impl Type { fn ... }` 块；方法名在降级时扁平化为 `Type::name`。
+    fn parse_impl(&mut self) -> Result<ImplDecl, FrontendError> {
+        let span = self.expect(TokenKind::Impl)?.span;
+        let type_name = self.expect_ident("impl target type")?;
+        self.expect(TokenKind::LBrace)?;
+        let mut fns = Vec::new();
+        while !self.check(TokenKind::RBrace) && !self.check(TokenKind::Eof) {
+            let attrs = self.parse_attributes()?;
+            fns.push(self.parse_fn(attrs)?);
+        }
+        self.expect(TokenKind::RBrace)?;
+        Ok(ImplDecl { type_name, fns, span })
     }
 
     // ─── 结构体声明 ───
