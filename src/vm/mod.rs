@@ -780,6 +780,105 @@ impl Vm {
                 self.call_stack.push(frame);
             }
 
+            // === 标准库 ===
+            MirInst::Abs => {
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let n = value.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: value.type_name().to_string(),
+                })?;
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::I64(n.wrapping_abs()));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::Min => {
+                let mut frame = self.pop_frame()?;
+                let (_, b) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, a) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let a = a.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: a.type_name().to_string(),
+                })?;
+                let b = b.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: b.type_name().to_string(),
+                })?;
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::I64(a.min(b)));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::Max => {
+                let mut frame = self.pop_frame()?;
+                let (_, b) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, a) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let a = a.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: a.type_name().to_string(),
+                })?;
+                let b = b.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: b.type_name().to_string(),
+                })?;
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::I64(a.max(b)));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::Unwrap { success_tag } => {
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let payload = match &value {
+                    Value::Tuple(values) => {
+                        let tag = values
+                            .first()
+                            .and_then(Value::as_i64)
+                            .unwrap_or(i64::MIN);
+                        if tag != *success_tag {
+                            return Err(VmError::AssertionFailed(
+                                "unwrap on empty/failed value".to_string(),
+                            ));
+                        }
+                        values.get(1).cloned().unwrap_or(Value::Unit)
+                    }
+                    _ => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "enum".to_string(),
+                            found: value.type_name().to_string(),
+                        });
+                    }
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, payload);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::UnwrapOr { success_tag } => {
+                let mut frame = self.pop_frame()?;
+                let (_, default) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let payload = match &value {
+                    Value::Tuple(values) => {
+                        let tag = values
+                            .first()
+                            .and_then(Value::as_i64)
+                            .unwrap_or(i64::MIN);
+                        if tag == *success_tag {
+                            values.get(1).cloned().unwrap_or(Value::Unit)
+                        } else {
+                            default
+                        }
+                    }
+                    _ => default,
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, payload);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+
             // === I/O ===
             MirInst::NumOut => {
                 let mut frame = self.pop_frame()?;

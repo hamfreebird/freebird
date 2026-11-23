@@ -32,6 +32,9 @@ pub const BUILTINS: &[BuiltinDef] = &[
         params: &["String", "String"],
         returns: &[],
     },
+    BuiltinDef { name: "abs", params: &["i64"], returns: &["i64"] },
+    BuiltinDef { name: "min", params: &["i64", "i64"], returns: &["i64"] },
+    BuiltinDef { name: "max", params: &["i64", "i64"], returns: &["i64"] },
 ];
 
 /// 按名字查找内建函数

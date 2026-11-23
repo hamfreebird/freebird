@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-23。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **201 unit + 94 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 10，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **201 unit + 99 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 15，`tests/differential_test.rs` 2）。
 
 ## 1. 语言与运行时
 
@@ -26,6 +26,12 @@
 | 借用/移动检查 | §4 | ✅ 编译期 | ✅ 编译期 | — | 单元 + 集成 |
 | 标量 `as` 转换 | §5 | ✅ | ✅ | ❌ | 集成 |
 | `print_*` / `read_*` / `read_line` | §9 | ✅ | 🟡 UTF-8/CRLF/非法字节一致；EOF 报 I/O 错误 | ❌ | 集成 + `m1_test` |
+| `Option` / `Result` 内建枚举（i64 载荷） | §9 | ✅ | ✅ | ❌ | `m2_test` |
+| `Option` 方法（is_some/is_none/unwrap/unwrap_or） | §9 | ✅ | ✅ | ❌ | `m2_test` |
+| `Result` 方法 / 泛型 Option/Result | §9 | ❌ 待 M2-1 | ❌ 待 M2-1 | ❌ | — |
+| 数学内建 `abs` / `min` / `max` | §9 | ✅ | ✅ | ❌ | `m2_test` |
+| Vec/String `is_empty` / `clear` | §9 | ✅ | ✅ | ❌ | `m2_test` |
+| 字符串解析 / 格式化输出 | §9 | ❌ 待办 | ❌ 待办 | ❌ | — |
 | `file_read` / `file_write` | §9 | ✅ | ✅ | ❌ | 集成 |
 | `unsafe` + `stardust!` 宏 | §11 | 🟡 大部分 | 🟡 大部分（`Reverse` 未支持，M3-4） | ❌ | 集成 + `m1_test` |
 
@@ -83,4 +89,6 @@
 
 - **M2-5 模式匹配**：结构体/元组 `..` 剩余、嵌套模式、`or`、守卫与非穷尽检查已覆盖；新增重复/兜底后分支的不可达警告，`check` JSON 输出 `warning_count`。更复杂的覆盖分析（如 `or` 已覆盖的变体）仍有限。
 - **M2-6 循环值语义**：`if let` / `while let` 在 parser 层降级为 `match` / `loop`；值位置 `loop` 与 `break value` 通过隐藏结果变量实现，VM 与 Stardust 输出一致；`break value` 在 `while`/`for` 中被拒绝。循环标签 `break 'label` 尚未实现。
-- **待实现**：M2-1 泛型、M2-2 Option/Result 标准库、M2-3 模块/`use`、M2-4 函数指针、M2-7 标准库扩展、M2-8 `unsafe`/`#id`、M2-9 `impl`。
+- **M2-2 Option/Result（非泛型 MVP）**：内建 i64 载荷枚举 `Option`/`Result`，构造与 `match` 可用；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`；`Result` 方法在类型检查阶段明确报未实现，泛型化依赖 M2-1。
+- **M2-7 标准库（部分）**：新增 `abs`/`min`/`max` 数学内建，以及 `Vec`/`String` 的 `is_empty`/`clear`；`len`/`push`/`pop` 继续可用。字符串解析与格式化输出待办。
+- **待实现**：M2-1 泛型、M2-2 泛型化/Result 方法、M2-3 模块/`use`、M2-4 函数指针、M2-7 其余标准库、M2-8 `unsafe`/`#id`、M2-9 `impl`。

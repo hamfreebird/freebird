@@ -720,6 +720,104 @@ impl StardustGen {
                 self.stack.pop();
                 self.stack.push(Slot::unknown());
             }
+            MirInst::Abs => {
+                // [x] -> [|x|]
+                let neg = self.fresh_helper_label();
+                let end = self.fresh_helper_label();
+                self.emit_dup();
+                self.emit_push_int(0);
+                self.emit_lt();
+                self.raw_inst(neg, '\'');
+                self.raw_inst(end, '~');
+                self.raw_inst(neg, '`');
+                self.emit_push_int(0);
+                self.emit_swap();
+                self.emit_sub();
+                self.raw_inst(end, '`');
+            }
+            MirInst::Min => {
+                // [a, b] -> [min(a, b)]
+                let keep_a = self.fresh_helper_label();
+                let end = self.fresh_helper_label();
+                self.emit_store_scratch(HEAP_VALUE); // b
+                self.emit_store_scratch(HEAP_INDEX); // a
+                self.emit_load_scratch(HEAP_INDEX);
+                self.emit_load_scratch(HEAP_VALUE);
+                self.emit_lt();
+                self.raw_inst(keep_a, '\'');
+                self.emit_load_scratch(HEAP_VALUE);
+                self.raw_inst(end, '~');
+                self.raw_inst(keep_a, '`');
+                self.emit_load_scratch(HEAP_INDEX);
+                self.raw_inst(end, '`');
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push(Slot::unknown());
+            }
+            MirInst::Max => {
+                // [a, b] -> [max(a, b)]
+                let keep_a = self.fresh_helper_label();
+                let end = self.fresh_helper_label();
+                self.emit_store_scratch(HEAP_VALUE); // b
+                self.emit_store_scratch(HEAP_INDEX); // a
+                self.emit_load_scratch(HEAP_INDEX);
+                self.emit_load_scratch(HEAP_VALUE);
+                self.emit_gt();
+                self.raw_inst(keep_a, '\'');
+                self.emit_load_scratch(HEAP_VALUE);
+                self.raw_inst(end, '~');
+                self.raw_inst(keep_a, '`');
+                self.emit_load_scratch(HEAP_INDEX);
+                self.raw_inst(end, '`');
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push(Slot::unknown());
+            }
+            MirInst::Unwrap { success_tag } => {
+                // [enum] -> [payload]；失败时除零陷阱。
+                let ok = self.fresh_helper_label();
+                self.emit_store_scratch(HEAP_HANDLE);
+                self.emit_load_scratch(HEAP_HANDLE);
+                self.emit_push_int(BLOCK_HEADER);
+                self.emit_add();
+                self.raw_inst(1, '-');
+                self.emit_push_int(*success_tag);
+                self.raw_inst(0, '=');
+                self.raw_inst(ok, '\'');
+                self.emit_bounds_trap();
+                self.raw_inst(ok, '`');
+                self.emit_load_scratch(HEAP_HANDLE);
+                self.emit_push_int(BLOCK_HEADER + 1);
+                self.emit_add();
+                self.raw_inst(1, '-');
+                self.stack.pop();
+                self.stack.push(Slot::unknown());
+            }
+            MirInst::UnwrapOr { success_tag } => {
+                // [enum, default] -> [payload 或 default]
+                let use_payload = self.fresh_helper_label();
+                let end = self.fresh_helper_label();
+                self.emit_store_scratch(HEAP_VALUE); // default
+                self.emit_store_scratch(HEAP_HANDLE); // enum
+                self.emit_load_scratch(HEAP_HANDLE);
+                self.emit_push_int(BLOCK_HEADER);
+                self.emit_add();
+                self.raw_inst(1, '-');
+                self.emit_push_int(*success_tag);
+                self.raw_inst(0, '=');
+                self.raw_inst(use_payload, '\'');
+                self.emit_load_scratch(HEAP_VALUE);
+                self.raw_inst(end, '~');
+                self.raw_inst(use_payload, '`');
+                self.emit_load_scratch(HEAP_HANDLE);
+                self.emit_push_int(BLOCK_HEADER + 1);
+                self.emit_add();
+                self.raw_inst(1, '-');
+                self.raw_inst(end, '`');
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push(Slot::unknown());
+            }
 
             // ─── I/O ───
             MirInst::NumOut => {

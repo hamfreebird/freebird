@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::assert_same_output;
+use common::{assert_same_output, run_stardust, run_vm, Run};
 use freebird::{check_source, check_source_with_warnings};
 
 #[test]
@@ -126,6 +126,85 @@ fn main() {
 }
 "#;
     assert_same_output(source, "struct_rest_pattern", b"");
+}
+
+#[test]
+fn option_methods_match() {
+    let source = r#"
+fn main() {
+    let a = Option::Some(7);
+    print(a.is_some() as i64);
+    print(a.unwrap());
+    let b = Option::None;
+    print(b.is_none() as i64);
+    print(b.unwrap_or(42));
+}
+"#;
+    assert_same_output(source, "option_methods", b"");
+}
+
+#[test]
+fn math_builtins_match() {
+    let source = r#"
+fn main() {
+    print(abs(-3));
+    print(abs(8));
+    print(min(4, 9));
+    print(max(4, 9));
+    print(min(-2, 5));
+    print(max(-2, 5));
+}
+"#;
+    assert_same_output(source, "math_builtins", b"");
+}
+
+#[test]
+fn container_methods_match() {
+    let source = r#"
+fn main() {
+    let mut v = Vec::new();
+    print(v.is_empty() as i64);
+    v.push(1);
+    print(v.is_empty() as i64);
+    v.clear();
+    print(v.is_empty() as i64);
+    let mut s = String::new();
+    print(s.is_empty() as i64);
+    s.push('a');
+    print(s.is_empty() as i64);
+    s.clear();
+    print(s.is_empty() as i64);
+}
+"#;
+    assert_same_output(source, "container_methods", b"");
+}
+
+#[test]
+fn option_unwrap_none_fails_on_both_backends() {
+    let source = r#"
+fn main() {
+    let b = Option::None;
+    print(b.unwrap());
+}
+"#;
+    assert!(
+        matches!(run_vm(source, b""), Run::Failed(_)),
+        "VM should reject unwrap on None"
+    );
+    assert!(
+        matches!(run_stardust(source, "option_unwrap_none", b""), Run::Failed(_)),
+        "Stardust should reject unwrap on None"
+    );
+}
+
+#[test]
+fn result_unwrap_is_explicitly_unsupported() {
+    let errors = check_source("fn main() { let r = Result::Ok(1); print(r.unwrap()); }")
+        .expect_err("Result::unwrap should be rejected");
+    assert!(
+        errors.join("\n").contains("Result::unwrap"),
+        "unexpected diagnostics: {errors:?}"
+    );
 }
 
 #[test]

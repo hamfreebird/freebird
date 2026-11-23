@@ -686,6 +686,69 @@ impl MirGen {
             }
             HirExpr::MethodCall { receiver, method, args, .. } => {
                 match method.as_str() {
+                    "is_some" | "is_none" => {
+                        self.gen_expr(receiver, fn_sig);
+                        self.mir.push(MirInst::EnumTag { total_slots: 2 });
+                        self.stack.push_temp();
+                        let expected = if method == "is_some" { 1 } else { 0 };
+                        self.mir.push(MirInst::Push {
+                            value: Value::I64(expected),
+                            ty: TypeId::I64,
+                        });
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Eq);
+                        self.stack.pop();
+                        self.stack.pop();
+                        self.stack.push_temp();
+                        // 丢弃枚举本体，只保留 bool。
+                        self.mir.push(MirInst::Swap);
+                        self.stack.swap();
+                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.stack.pop();
+                    }
+                    "unwrap" => {
+                        self.gen_expr(receiver, fn_sig);
+                        self.mir.push(MirInst::Unwrap { success_tag: 1 });
+                        self.stack.pop();
+                        self.stack.push_temp();
+                    }
+                    "unwrap_or" => {
+                        self.gen_expr(receiver, fn_sig);
+                        if let Some(arg) = args.first() {
+                            self.gen_expr(arg, fn_sig);
+                        }
+                        self.mir.push(MirInst::UnwrapOr { success_tag: 1 });
+                        self.stack.pop();
+                        self.stack.pop();
+                        self.stack.push_temp();
+                    }
+                    "is_empty" => {
+                        self.gen_expr(receiver, fn_sig);
+                        self.mir.push(MirInst::ContainerLen);
+                        self.stack.pop();
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Push {
+                            value: Value::I64(0),
+                            ty: TypeId::I64,
+                        });
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::Eq);
+                        self.stack.pop();
+                        self.stack.pop();
+                        self.stack.push_temp();
+                    }
+                    "clear" => {
+                        let HirExpr::Var(var) = receiver.as_ref() else {
+                            self.mir.push(MirInst::Comment(
+                                "ERROR: `clear` receiver must be a variable".to_string(),
+                            ));
+                            return;
+                        };
+                        self.mir.push(MirInst::MakeArray { count: 0 });
+                        self.stack.push_temp();
+                        self.mir.push(MirInst::WriteVar { name: var.name.clone() });
+                        self.stack.pop();
+                    }
                     "len" => {
                         self.gen_expr(receiver, fn_sig);
                         self.mir.push(MirInst::ContainerLen);
@@ -1785,6 +1848,21 @@ impl MirGen {
                 self.mir.push(MirInst::FileWrite);
                 self.stack.pop(); // data
                 self.stack.pop(); // path
+            }
+            "abs" => {
+                self.mir.push(MirInst::Abs);
+                self.stack.pop();
+                self.stack.push_temp();
+            }
+            "min" | "max" => {
+                if name == "min" {
+                    self.mir.push(MirInst::Min);
+                } else {
+                    self.mir.push(MirInst::Max);
+                }
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             "read_int" => {
                 self.mir.push(MirInst::NumIn);

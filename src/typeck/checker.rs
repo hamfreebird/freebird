@@ -1268,7 +1268,95 @@ impl<'a> TypeChecker<'a> {
         span: Span,
     ) -> HirType {
         let receiver_ty = self.check_expr(receiver);
+        let receiver_name = match &receiver_ty {
+            HirType::Path(segments) => segments.last().cloned().unwrap_or_default(),
+            _ => String::new(),
+        };
+        if receiver_name == "Option" {
+            let i64_ty = HirType::Path(vec!["i64".to_string()]);
+            match method {
+                "is_some" | "is_none" => {
+                    if !args.is_empty() {
+                        self.error(TypeCheckError::ArgumentCountMismatch {
+                            function: method.to_string(),
+                            expected: 0,
+                            found: args.len(),
+                            span,
+                        });
+                    }
+                    return HirType::Path(vec!["bool".to_string()]);
+                }
+                "unwrap" => {
+                    if !args.is_empty() {
+                        self.error(TypeCheckError::ArgumentCountMismatch {
+                            function: method.to_string(),
+                            expected: 0,
+                            found: args.len(),
+                            span,
+                        });
+                    }
+                    return i64_ty;
+                }
+                "unwrap_or" => {
+                    if args.len() != 1 {
+                        self.error(TypeCheckError::ArgumentCountMismatch {
+                            function: method.to_string(),
+                            expected: 1,
+                            found: args.len(),
+                            span,
+                        });
+                    }
+                    if let Some(arg) = args.first() {
+                        let arg_ty = self.check_expr(arg);
+                        if !is_assignable(&i64_ty, &arg_ty) {
+                            self.error(TypeCheckError::TypeMismatch {
+                                expected: i64_ty,
+                                found: arg_ty,
+                                span,
+                                context: "Option::unwrap_or argument".to_string(),
+                            });
+                        }
+                    }
+                    return HirType::Path(vec!["i64".to_string()]);
+                }
+                _ => {}
+            }
+        }
+        if receiver_name == "Result"
+            && matches!(method, "unwrap" | "unwrap_or" | "is_ok" | "is_err")
+        {
+            self.error(TypeCheckError::UnsupportedFeature {
+                feature: format!("Result::{method}"),
+                reference: "M2-2: Result methods are not implemented yet".to_string(),
+                span,
+            });
+            return HirType::Unknown;
+        }
         match method {
+            "is_empty" => {
+                if !args.is_empty() {
+                    self.error(TypeCheckError::ArgumentCountMismatch {
+                        function: method.to_string(),
+                        expected: 0,
+                        found: args.len(),
+                        span,
+                    });
+                }
+                self.container_element_type(&receiver_ty, span, "is_empty");
+                HirType::Path(vec!["bool".to_string()])
+            }
+            "clear" => {
+                if !args.is_empty() {
+                    self.error(TypeCheckError::ArgumentCountMismatch {
+                        function: method.to_string(),
+                        expected: 0,
+                        found: args.len(),
+                        span,
+                    });
+                }
+                self.container_element_type(&receiver_ty, span, "clear");
+                HirType::Unit
+            }
             "len" => {
                 if !args.is_empty() {
                     self.error(TypeCheckError::ArgumentCountMismatch {

@@ -166,6 +166,13 @@ pub enum MirInst {
     HeapStore,                   // 堆写：pop addr, pop value, heap[addr] = value
     HeapLoad,                    // 堆读：pop addr, push heap[addr]
 
+    // === 标准库 ===
+    Abs,                         // pop i64, push |x|
+    Min,                         // pop b, pop a, push min(a, b)
+    Max,                         // pop b, pop a, push max(a, b)
+    Unwrap { success_tag: i64 }, // pop enum, push payload; 失败时运行时错误
+    UnwrapOr { success_tag: i64 }, // pop default, pop enum; 成功 payload，否则 default
+
     // === I/O ===
     NumOut,
     NumIn,
@@ -266,6 +273,11 @@ impl std::fmt::Display for MirInst {
             MirInst::EnumTag { total_slots } => write!(f, "EnumTag(total_slots={total_slots})"),
             MirInst::HeapStore => write!(f, "HeapStore"),
             MirInst::HeapLoad => write!(f, "HeapLoad"),
+            MirInst::Abs => write!(f, "Abs"),
+            MirInst::Min => write!(f, "Min"),
+            MirInst::Max => write!(f, "Max"),
+            MirInst::Unwrap { success_tag } => write!(f, "Unwrap({success_tag})"),
+            MirInst::UnwrapOr { success_tag } => write!(f, "UnwrapOr({success_tag})"),
             MirInst::NumOut => write!(f, "NumOut"),
             MirInst::NumIn => write!(f, "NumIn"),
             MirInst::CharOut => write!(f, "CharOut"),

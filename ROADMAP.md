@@ -4,6 +4,7 @@
 > **M0 完成后基线**（2026-11-22）：`cargo test` = **204 unit + 61 integration** 全绿（新增 `tests/m0_test.rs` 28 项）；能力矩阵见 `STATUS.md`。
 > **M1 完成后基线**（2026-11-22）：`cargo test` = **201 unit + 84 integration** 全绿。
 > **M2-5/M2-6 后基线**（2026-11-23）：`cargo test` = **201 unit + 94 integration** 全绿（新增 `tests/m2_test.rs` 10 项）。
+> **M2-2/M2-7 后基线**（2026-11-23）：`cargo test` = **201 unit + 99 integration** 全绿（`tests/m2_test.rs` 15 项）。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 
@@ -142,19 +143,19 @@
 
 ---
 
-### M2 — 语言补全（P1，进行中：M2-5 基础完成、M2-6 除标签外完成）
+### M2 — 语言补全（P1，进行中：M2-5 基础完成、M2-6 除标签外完成、M2-2/M2-7 部分完成）
 
 **目标**：把 `readme.md` 中已经承诺、但当前缺失的核心语言能力补齐，并保持双后端一致。
 
 | ID | 工作项 | 验收标准 |
 |---|---|---|
 | M2-1 | 用户泛型 MVP：`struct`/`enum`/`fn` 的泛型参数，单态化生成 MIR；先支持类型参数，不做高阶类型 | `Pair<T>`、`Option<T>`、`fn id<T>(x: T) -> T` 可解析、检查、运行；单态化测试覆盖多实例 |
-| M2-2 | `Option`/`Result` 作为泛型枚举进入标准库，替代硬编码特例 | `Option::Some`/`None`、`Result::Ok`/`Err` 及基本 `unwrap`/`map` 可用；VM/Stardust 测试 |
+| M2-2 | `Option`/`Result` 作为泛型枚举进入标准库，替代硬编码特例 | `Option::Some`/`None`、`Result::Ok`/`Err` 及基本 `unwrap`/`map` 可用；VM/Stardust 测试 | 🟡 非泛型 i64 MVP：内建枚举 + 构造/match + Option 方法；Result 方法与泛型化待 M2-1 |
 | M2-3 | 模块与 `use`：至少支持文件级模块、`use path::item`、可见性检查；不引入完整包生态 | 多文件示例可编译运行；未解析路径报错；循环依赖有明确诊断 |
 | M2-4 | 函数指针：解析 `fn(A, B) -> C`，端到端支持 `Value::FnPtr`、间接调用、作为参数/返回值 | `let f: fn(i64) -> i64 = inc; f(1)` 在 VM/Stardust 上工作；错误签名报错 |
 | M2-5 | 完整模式匹配：嵌套模式、`or` 模式、`..` 剩余、守卫、穷尽性/不可达分支检查 | 模式矩阵测试；不可达分支警告；非穷尽 `match` 编译失败 | ✅ 基础完成：`..`/嵌套/`or`/守卫/穷尽性 + 重复与兜底后分支警告 |
 | M2-6 | 循环值语义：`loop` 产出 `break value`，`if let`/`while let`，可选标签 `break 'label` | 相关程序输出正确；M0 的临时拒绝被移除并替换为正向测试 | 🟡 `loop`/`break value`/`if let`/`while let` 完成；标签未实现 |
-| M2-7 | 标准库扩展：`Vec`/`String` 常用方法、字符/字符串转换、数学函数、格式化输出；不再依赖类型检查器特例 | 标准库 API 文档 + 集成测试；方法调用在 VM/Stardust 一致 |
+| M2-7 | 标准库扩展：`Vec`/`String` 常用方法、字符/字符串转换、数学函数、格式化输出；不再依赖类型检查器特例 | 标准库 API 文档 + 集成测试；方法调用在 VM/Stardust 一致 | 🟡 `abs`/`min`/`max` + Vec/String `is_empty`/`clear`；字符串解析/格式化待办 |
 | M2-8 | `unsafe` 与 `#id`：实现受控的原始栈/元素 ID 访问，明确安全边界；或从规范移除并改为显式不支持 | `#x`、`*(#x)` 至少在一个后端可用；越界/悬空 ID 有定义行为或明确报错 |
 | M2-9 | 用户定义方法与 `impl`（若决定纳入语言） | 单独 ADR；若纳入，则方法解析、借用检查、双后端测试齐全 |
 
