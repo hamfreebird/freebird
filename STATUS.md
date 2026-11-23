@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-23。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **201 unit + 115 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 31，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **201 unit + 119 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 33，`tests/differential_test.rs` 2）。
 
 ## 1. 语言与运行时
 
@@ -31,7 +31,7 @@
 | `print_*` / `read_*` / `read_line` | §9 | ✅ | 🟡 UTF-8/CRLF/非法字节一致；EOF 报 I/O 错误 | ❌ | 集成 + `m1_test` |
 | `Option` / `Result` 内建枚举（泛型载荷 `Option<T>` / `Result<T, E>`） | §9 | ✅ | ✅ | ❌ | `m2_test` |
 | `Option` 方法（is_some/is_none/unwrap/unwrap_or） | §9 | ✅ | ✅ | ❌ | `m2_test` |
-| `Option` / `Result` 方法（`is_some`/`is_none`/`unwrap`/`unwrap_or`、`is_ok`/`is_err`/`unwrap`/`unwrap_or`） | §9 | ✅ | ✅ | ❌ | `m2_test` |
+| `Option` / `Result` 方法（`is_some`/`is_none`/`unwrap`/`unwrap_or`、`is_ok`/`is_err`/`unwrap`/`unwrap_or`、`ok`/`err`/`ok_or`） | §9 | ✅ | ✅ | ❌ | `m2_test` |
 | 数学内建 `abs` / `min` / `max` | §9 | ✅ | ✅ | ❌ | `m2_test` |
 | Vec/String `is_empty` / `clear` | §9 | ✅ | ✅ | ❌ | `m2_test` |
 | 字符串解析 / 格式化输出 | §9 | ❌ 待办 | ❌ 待办 | ❌ | — |
@@ -95,5 +95,5 @@
 - **M2-4 函数指针（MVP）**：支持 `fn(A, B) -> C` 类型、函数名作值、作为参数/返回值与间接调用；Stardust 通过 FnId dispatch 模拟。间接调用目前要求恰好一个返回值。
 - **M2-1 泛型（类型擦除 MVP）**：支持 `struct Pair<T>`、`enum Maybe<T>`、`fn id<T>(x: T) -> T`；类型实参从结构体字段和函数实参推断并做替换检查；布局按基名复用，VM/Stardust 各生成一份代码。暂不支持约束、显式类型实参（turbofish）与按实例单态化，泛型函数体只能使用与具体类型无关的操作。
 - **M2-2 Option/Result（泛型枚举）**：内建 `Option<T>`/`Result<T, E>`，载荷类型从构造表达式推断并做替换检查；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`。类型检查把每个方法调用的成功/失败变体标签标注在 `Span → MethodVariantTags` 上交给 MIR 生成器，因此 `Option`（`Some`=1/`None`=0）与 `Result`（`Ok`=0/`Err`=1）共用同一套指令。`map`/`ok`/`err` 等组合子待办。
-- **M2-7 标准库（部分）**：新增 `abs`/`min`/`max` 数学内建，以及 `Vec`/`String` 的 `is_empty`/`clear`；`len`/`push`/`pop` 继续可用。字符串解析与格式化输出待办。
+- **M2-7 标准库（部分）**：新增 `abs`/`min`/`max` 数学内建，`Vec`/`String` 的 `is_empty`/`clear`，以及 `Option`/`Result` 转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`（新增 `EnumPayloadToOption`/`OptionToResult` 两条 MIR 指令）。`int_to_str`/`str_to_int` 与 `map` 等组合子待办。
 - **待实现**：M2-3 模块/`use`、M2-4 多返回值函数指针、M2-7 其余标准库（字符串解析/格式化、`Option`/`Result` 组合子）、M2-8 `unsafe`/`#id`、M2-9 `impl`。

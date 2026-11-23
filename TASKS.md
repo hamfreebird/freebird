@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 201 unit + 115 integration 全绿（2026-11-23；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 31 + `tests/differential_test.rs` 2）。
+> 当前：`cargo test` = 201 unit + 119 integration 全绿（2026-11-23；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 33 + `tests/differential_test.rs` 2）。
 > 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)，能力矩阵见 [`STATUS.md`](STATUS.md)；本表保留已完成项的历史记录。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
@@ -44,7 +44,7 @@
 | M2-6 | 循环值语义 | `if let`/`while let` 降级为 `match`/`loop`；`loop` 值 + `break value`；`while`/`for` 的 `break value` 拒绝；`'label` + `break`/`continue 'label` 支持 loop/while/for |
 | M2-4 | 函数指针 | `fn(A,B)->C` 类型、函数名作值、参数/返回值、间接调用；Stardust FnId dispatch；MVP 要求恰好一个返回值 |
 | M2-2 | Option/Result | 泛型枚举 `Option<T>`/`Result<T,E>`：载荷类型推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or`；`Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map` 等组合子待办 |
-| M2-7 | 标准库扩展 | `abs`/`min`/`max`；Vec/String `is_empty`/`clear`；字符串解析/格式化待办 |
+| M2-7 | 标准库扩展 | `abs`/`min`/`max`；Vec/String `is_empty`/`clear`；`Option`/`Result` 转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`；字符串解析/格式化（`int_to_str`/`str_to_int`）与 `map` 待办 |
 | M2-1 | 泛型 | `struct Pair<T>`/`enum Maybe<T>`/`fn id<T>(x: T) -> T` 声明与泛型实参类型；字段访问与函数实参推断 + 替换检查；布局/代码按基名共用一份（类型擦除 MVP，无约束/显式类型实参/单态化） |
 | 其余 | M2-3/8/9 | 待办 |
 
