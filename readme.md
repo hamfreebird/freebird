@@ -6,7 +6,7 @@
 >
 > 本规范是 Freebird 语言实现的权威参考文档。
 >
-> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如 LLVM 后端、`stardust!` 的 `Reverse`、字符串格式化输出与 Stardust FFI）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
+> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如 LLVM 后端、Stardust FFI、泛型约束与按实例单态化、`stardust!` 的自定义 `Ident` 指令）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
 
 ---
 

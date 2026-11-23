@@ -148,7 +148,7 @@
 
 ---
 
-### M2 — 语言补全（P1，已完成：M2-1～M2-9；M2-1 类型擦除 MVP、M2-7 除格式化输出）
+### M2 — 语言补全（P1，已完成：M2-1～M2-9；M2-1 类型擦除 MVP，格式化 API 规范未定义）
 
 **目标**：把 `readme.md` 中已经承诺、但当前缺失的核心语言能力补齐，并保持双后端一致。
 
@@ -160,7 +160,7 @@
 | M2-4 | 函数指针：解析 `fn(A, B) -> C`，端到端支持 `Value::FnPtr`、间接调用、作为参数/返回值 | `let f: fn(i64) -> i64 = inc; f(1)` 在 VM/Stardust 上工作；错误签名报错 | ✅ 零/单/多返回值间接调用均可用（Stardust FnId dispatch）；`fn(A) -> (B, C)` 的返回列表与函数声明一致，元数由类型检查标注供给 MIR |
 | M2-5 | 完整模式匹配：嵌套模式、`or` 模式、`..` 剩余、守卫、穷尽性/不可达分支检查 | 模式矩阵测试；不可达分支警告；非穷尽 `match` 编译失败 | ✅ 基础完成：`..`/嵌套/`or`/守卫/穷尽性 + 重复与兜底后分支警告 |
 | M2-6 | 循环值语义：`loop` 产出 `break value`，`if let`/`while let`，可选标签 `break 'label` | 相关程序输出正确；M0 的临时拒绝被移除并替换为正向测试 | ✅ `loop`/`break value`/`if let`/`while let`/`'label` + `break`/`continue 'label`（loop/while/for） |
-| M2-7 | 标准库扩展：`Vec`/`String` 常用方法、字符/字符串转换、数学函数、格式化输出；不再依赖类型检查器特例 | 标准库 API 文档 + 集成测试；方法调用在 VM/Stardust 一致 | 🟡 `abs`/`min`/`max` + Vec/String `is_empty`/`clear` + 转换组合子（`ok`/`err`/`ok_or`）+ `int_to_str`/`str_to_int`（双后端）与 `Option::map`/`Result::map`（双后端） |
+| M2-7 | 标准库扩展：`Vec`/`String` 常用方法、字符/字符串转换、数学函数、格式化输出；不再依赖类型检查器特例 | 标准库 API 文档 + 集成测试；方法调用在 VM/Stardust 一致 | 🟡 `abs`/`min`/`max` + Vec/String `is_empty`/`clear` + 转换组合子（`ok`/`err`/`ok_or`）+ `int_to_str`/`str_to_int`（双后端）与 `Option::map`/`Result::map`（双后端）；readme 未定义字符串格式化 API，暂以 `print`/`int_to_str` 组合替代 |
 | M2-8 | `unsafe` 与 `#id`：实现受控的原始栈/元素 ID 访问，明确安全边界；或从规范移除并改为显式不支持 | `#x`、`*(#x)` 至少在一个后端可用；越界/悬空 ID 有定义行为或明确报错 | ✅ 采用「从规范移除」：§4.3 改为「元素 ID 访问（不支持）」、§10.1 栈 ID 行改为编译期拒绝，类型检查保持显式诊断；unsafe 块内的 `push`/`pop`/`swap`/`dup`/`roll(n)` 已落地（ADR 0004，值栈按需扩容） |
 | M2-9 | 用户定义方法与 `impl`（若决定纳入语言） | 单独 ADR；若纳入，则方法解析、借用检查、双后端测试齐全 | ✅ ADR 0003 方案 C 全部落地：`impl` + 关联函数 + 值接收者 / `&self` / `&mut self` 方法在 VM/Stardust 均通过 |
 
@@ -181,7 +181,7 @@
 | M3-1 | LLVM MVP：整数/布尔/字符、算术、比较、`if`/`while`、函数调用、`print`/`read` | `freebird build --target llvm` 生成可编译 IR；一小组程序可执行且输出与 VM 一致 |
 | M3-2 | LLVM 复合类型：数组、结构体、枚举、引用；字符串/Vec/Box 采用与 VM 等价的运行时表示 | 分阶段启用；每阶段有 VM/LLVM 差分测试 |
 | M3-3 | Stardust FFI：`#[stardust(id = N)]`、`extern "stardust"` 调用、参数/返回值 ABI | 文档 10.4 的示例能生成真实 FFI 调用；调用不存在的 ID 有明确错误 |
-| M3-4 | `stardust!` 指令补全：`Reverse`、`Rotate`、`Store`/`Load` 等逐条对齐 Stardust 语义 | 每条指令至少一个单元/集成测试；不再有“注释替代指令” |
+| M3-4 | `stardust!` 指令补全：`Reverse`/`Rotate`/`Store`/`Load` 已实现；剩余自定义 `Ident` 指令与逐条语义测试 | 每条指令至少一个单元/集成测试；不再有“注释替代指令” |
 | M3-5 | 后端特性矩阵与差分：VM / Stardust / LLVM 三列，明确支持/不支持 | CI 按矩阵跑测试；不支持项在编译期报错，不生成错误代码 |
 | M3-6 | 目标选择与产物：`build` 默认目标、输出路径、优化级别、错误处理 | CLI 行为写入 `USAGE.md`；`--target llvm` 不再是 “not implemented” |
 
