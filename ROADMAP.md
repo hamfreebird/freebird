@@ -35,11 +35,13 @@
 - VM：数值/布尔/字符、变量与作用域、`if`/`while`/`loop`/`for`、函数与递归、多值返回、数组、结构体、枚举与 `match`、`Vec`/`String`/`Box`、元组解构、`&`/`&mut` 引用、借用检查、`print_*`/`read_*`、文件 I/O、`stardust!` 宏的大部分指令。
 - Stardust 后端：数值/字符、变量、控制流、调用/递归、I/O、`ret n`、标量 `as`、数组/结构体/枚举/字符串/Box/Vec、`&mut` 堆单元写回、`for`/`continue`、`file_read`/`file_write`。
 - 工具链：`run`、`check`、`build --target stardust`、`repl`；VS Code 扩展提供语法高亮。
-- 测试：204 个单元测试 + 33 个集成测试；Stardust 集成测试与 VM 输出逐字节对比。
+- 测试：201 个单元测试 + 136 个集成测试；Stardust 集成测试与 VM 输出逐字节对比，差分测试自动遍历 `tests/programs` 与 `examples`。
 
 ---
 
 ## 3. 已验证差距清单
+
+> 以下三张表是 2026-11-21 的实测快照，保留用于追溯；其中 M0–M2 已修复的项（如 `impl`、模块/`use`、`unsafe` 值栈、`Option`/`Result`、差分测试）以 §4 里程碑与 `STATUS.md` 的当前状态为准。
 
 ### 3.1 前端与语义
 
@@ -48,18 +50,18 @@
 | L-01 | `match` 的被匹配表达式只支持前缀表达式 | `match f(y) { ... }` 报 `expected {, found (`；`match a + b { ... }` 同样失败 | P0 |
 | L-02 | 用户泛型不可用 | `struct Pair<T> { ... }` 报 `expected {, found <`；`fn id<T>(x: T) -> T` 报 `expected (, found <` | P1 |
 | L-03 | 函数指针类型不可解析 | AST/HIR 有 `Type::FnPtr`、`Value::FnPtr`，但 `let f: fn(i64) -> i64 = inc;` 报 `expected type, found fn` | P1 |
-| L-04 | `impl`/`const`/闭包等语法不存在 | `if let`/`while let` 已实现（M2-6）；`impl` 仍报 `expected declaration, found impl`，`const`/闭包仍缺失 | P2 |
+| L-04 | `impl`/`const`/闭包等语法不存在 | `if let`/`while let` 已实现（M2-6）；`impl` 已实现（M2-9）；`const`/闭包仍缺失 | 部分修复 |
 | L-05 | `loop` 的值语义未实现 | 已实现（M2-6）：`let v = loop { break 42; };` 在 VM/Stardust 上输出 42；循环标签 `break 'label` 已支持 | 已修复 |
 | L-06 | 循环外的 `break`/`continue` 被静默接受 | 顶层 `break;` 编译并运行，无任何错误 | P0 |
 | L-07 | `ret` 非整数字面量静默变成 `Ret(0)` | `ret a;` 被解析为 `Ret(0)`，随后报“函数返回 1 个值，但 return 提供 0 个”这类误导性类型错误 | P0 |
 | L-08 | 模式绑定只覆盖很小子集 | `match p { P { x: 1, y } => ... }` 报 `undefined variable y`；MIR 只绑定 `Var` 和“变量元组”；结构体/字面量/嵌套枚举/or/引用模式多被当作通配 | P0 |
 | L-09 | `match` 不检查穷尽性 | 只写 `E::A` 一个分支、不写 `_` 也能编译运行；未匹配时直接落空继续执行 | P1 |
 | L-10 | `#id` / `ElementId` 只解析不执行 | `let id: ElementId = #x; print(*(id));` 报 `type mismatch in dereference: expected &?, found ElementId`；MIR 对相关表达式落 `TODO` 注释，`Value` 没有 `ElementId` 变体 | P1 |
-| L-11 | `use` 只解析不生效 | `use foo::bar;` 被接受，程序照常运行；没有模块解析、可见性或跨文件加载 | P1 |
+| L-11 | `use` 只解析不生效 | 已实现（M2-3）：文件级模块、`use` 别名与 `pub` 可见性检查 | 已修复 |
 | L-12 | 无函数体的函数调用返回栈上残留值 | `fn ext(a: i32) -> i32;` 后调用 `ext(7)` 输出 `7`；`extern "stardust"` 的 `sd_add(10, 31)` 输出 `31`，并没有生成 FFI 调用 | P0 |
 | L-13 | 属性语法与属性生效都有缺口 | `#[max_steps=100]` 报 `expected declaration, found =`；`#[stardust(id = 1)]` 因属性值要求标识符而报错；普通声明上的属性在 `parse_decl` 中被丢弃 | P1 |
-| L-14 | `unsafe` 只是普通块 | 类型检查、借用检查照常进入 `unsafe` 块；没有 `#id`、原始栈指令或类型栈逃逸的受控语义 | P2 |
-| L-15 | `Option`/`Result` 与标准库很小 | `Vec`/`String`/`Box` 是类型检查器中的特例；方法仅覆盖 `Vec`/`String` 的 `len`/`push`/`pop` 和 `Vec::new`/`String::new`/`Box::new` | P1 |
+| L-14 | `unsafe` 只是普通块 | 已实现（M2-8/ADR 0004）：独立值栈 `push`/`pop`/`swap`/`dup`/`roll(n)`，内建仅限 `unsafe` 块 | 已修复 |
+| L-15 | `Option`/`Result` 与标准库很小 | 已扩展（M2-2/M2-7）：泛型 `Option`/`Result`、组合子、`int_to_str`/`str_to_int`、`Vec`/`String` 方法 | 已修复 |
 | L-16 | 函数体为空的非 `extern` 函数未报错 | 与 L-12 同源：空体函数被当作可调用函数，返回栈顶残留值 | P0 |
 
 ### 3.2 运行时与后端
@@ -145,20 +147,20 @@
 
 ---
 
-### M2 — 语言补全（P1，进行中：M2-1/M2-2/M2-5/M2-6 完成，M2-4/M2-7 部分完成）
+### M2 — 语言补全（P1，已完成：M2-1～M2-9；M2-1 类型擦除 MVP、M2-7 除格式化输出）
 
 **目标**：把 `readme.md` 中已经承诺、但当前缺失的核心语言能力补齐，并保持双后端一致。
 
 | ID | 工作项 | 验收标准 |
 |---|---|---|
 | M2-1 | 用户泛型 MVP：`struct`/`enum`/`fn` 的泛型参数，单态化生成 MIR；先支持类型参数，不做高阶类型 | `Pair<T>`、`Option<T>`、`fn id<T>(x: T) -> T` 可解析、检查、运行；单态化测试覆盖多实例 | 🟡 类型擦除 MVP：泛型参数声明、字段访问/函数实参推断 + 替换检查；布局与代码按基名共用一份，未做单态化/约束/turbofish |
-| M2-2 | `Option`/`Result` 作为泛型枚举进入标准库，替代硬编码特例 | `Option::Some`/`None`、`Result::Ok`/`Err` 及基本 `unwrap`/`map` 可用；VM/Stardust 测试 | ✅ 泛型枚举：`Option<T>`/`Result<T, E>` 载荷推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or` 与 `Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map`/组合子待办 |
-| M2-3 | 模块与 `use`：至少支持文件级模块、`use path::item`、可见性检查；不引入完整包生态 | 多文件示例可编译运行；未解析路径报错；循环依赖有明确诊断 | ✅ 文件级模块闭环：`mod util;` 递归加载同目录 `util.fb`（顶层函数加 `util::` 前缀）、`use util::f;` 别名映射、循环依赖与未解析路径有明确诊断 |
+| M2-2 | `Option`/`Result` 作为泛型枚举进入标准库，替代硬编码特例 | `Option::Some`/`None`、`Result::Ok`/`Err` 及基本 `unwrap`/`map` 可用；VM/Stardust 测试 | ✅ 泛型枚举：`Option<T>`/`Result<T, E>` 载荷推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or` 与 `Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map`/`ok`/`err`/`ok_or` 组合子由 M2-7 补齐 |
+| M2-3 | 模块与 `use`：至少支持文件级模块、`use path::item`、可见性检查；不引入完整包生态 | 多文件示例可编译运行；未解析路径报错；循环依赖有明确诊断 | ✅ 文件级模块闭环：`mod util;` 递归加载同目录 `util.fb`（顶层函数加 `util::` 前缀）、`use util::f;` 别名映射、循环依赖与未解析路径有明确诊断；`pub` 可见性与模块内类型前缀（`util::Point`）已补齐 |
 | M2-4 | 函数指针：解析 `fn(A, B) -> C`，端到端支持 `Value::FnPtr`、间接调用、作为参数/返回值 | `let f: fn(i64) -> i64 = inc; f(1)` 在 VM/Stardust 上工作；错误签名报错 | ✅ 零/单/多返回值间接调用均可用（Stardust FnId dispatch）；`fn(A) -> (B, C)` 的返回列表与函数声明一致，元数由类型检查标注供给 MIR |
 | M2-5 | 完整模式匹配：嵌套模式、`or` 模式、`..` 剩余、守卫、穷尽性/不可达分支检查 | 模式矩阵测试；不可达分支警告；非穷尽 `match` 编译失败 | ✅ 基础完成：`..`/嵌套/`or`/守卫/穷尽性 + 重复与兜底后分支警告 |
 | M2-6 | 循环值语义：`loop` 产出 `break value`，`if let`/`while let`，可选标签 `break 'label` | 相关程序输出正确；M0 的临时拒绝被移除并替换为正向测试 | ✅ `loop`/`break value`/`if let`/`while let`/`'label` + `break`/`continue 'label`（loop/while/for） |
 | M2-7 | 标准库扩展：`Vec`/`String` 常用方法、字符/字符串转换、数学函数、格式化输出；不再依赖类型检查器特例 | 标准库 API 文档 + 集成测试；方法调用在 VM/Stardust 一致 | 🟡 `abs`/`min`/`max` + Vec/String `is_empty`/`clear` + 转换组合子（`ok`/`err`/`ok_or`）+ `int_to_str`/`str_to_int`（双后端）与 `Option::map`/`Result::map`（双后端） |
-| M2-8 | `unsafe` 与 `#id`：实现受控的原始栈/元素 ID 访问，明确安全边界；或从规范移除并改为显式不支持 | `#x`、`*(#x)` 至少在一个后端可用；越界/悬空 ID 有定义行为或明确报错 | ✅ 采用「从规范移除」：§4.3 改为「元素 ID 访问（不支持）」、§10.1 栈 ID 行改为编译期拒绝，类型检查保持显式诊断；unsafe 块内的低级栈内建仍待办 |
+| M2-8 | `unsafe` 与 `#id`：实现受控的原始栈/元素 ID 访问，明确安全边界；或从规范移除并改为显式不支持 | `#x`、`*(#x)` 至少在一个后端可用；越界/悬空 ID 有定义行为或明确报错 | ✅ 采用「从规范移除」：§4.3 改为「元素 ID 访问（不支持）」、§10.1 栈 ID 行改为编译期拒绝，类型检查保持显式诊断；unsafe 块内的 `push`/`pop`/`swap`/`dup`/`roll(n)` 已落地（ADR 0004，值栈按需扩容） |
 | M2-9 | 用户定义方法与 `impl`（若决定纳入语言） | 单独 ADR；若纳入，则方法解析、借用检查、双后端测试齐全 | ✅ ADR 0003 方案 C 全部落地：`impl` + 关联函数 + 值接收者 / `&self` / `&mut self` 方法在 VM/Stardust 均通过 |
 
 **M2 退出标准**
@@ -304,16 +306,16 @@ M0 语义收敛 ──→ M1 运行时一致性 ──→ M2 语言补全 ──
 
 按顺序拆成独立 PR，每项都带测试：
 
-- [ ] **1. 编译失败测试框架**：建立 `tests/compile_fail` 表驱动断言，先把 L-06/L-07/L-12 固定下来。
-- [ ] **2. `ret` 诊断**：非整数字面量报错，补 `ret 1;` 正向测试。
-- [ ] **3. 循环外 `break`/`continue` 报错**：覆盖顶层、函数体、`match` 分支中的错误位置。
-- [ ] **4. `match` 被匹配表达式**：改用完整表达式解析，补 `match f(x)`、`match a + b`、结构体字面量消歧测试。
-- [ ] **5. 模式绑定补全**：结构体字段、嵌套元组、字面量、嵌套枚举；同步修 L-08。
-- [ ] **6. 空体/`extern` 函数**：非 `extern` 空体报错；`extern` 未实现前调用报错，删除残留返回值路径。
-- [ ] **7. CLI `check` 接入借用检查**：复用 `check_source` 或统一流水线，补 use-after-move 的 `check` 测试。
-- [ ] **8. 属性解析对齐**：支持 `#[key=value]` 与 `#[stardust(id = 1)]`，属性挂到声明；未知属性不静默丢弃。
-- [ ] **9. `#id`/`use` 显式化**：先报 `unsupported feature`，或实现最小闭环；不允许“解析后忽略”。
-- [ ] **10. 差分测试骨架**：遍历 `tests/programs/*.fb` 与 `examples/*.fb`，比较 VM/Stardust 输出；接入 CI。
+- [x] **1. 编译失败测试框架**：建立 `tests/compile_fail` 表驱动断言，先把 L-06/L-07/L-12 固定下来。
+- [x] **2. `ret` 诊断**：非整数字面量报错，补 `ret 1;` 正向测试。
+- [x] **3. 循环外 `break`/`continue` 报错**：覆盖顶层、函数体、`match` 分支中的错误位置。
+- [x] **4. `match` 被匹配表达式**：改用完整表达式解析，补 `match f(x)`、`match a + b`、结构体字面量消歧测试。
+- [x] **5. 模式绑定补全**：结构体字段、嵌套元组、字面量、嵌套枚举；同步修 L-08。
+- [x] **6. 空体/`extern` 函数**：非 `extern` 空体报错；`extern` 未实现前调用报错，删除残留返回值路径。
+- [x] **7. CLI `check` 接入借用检查**：复用 `check_source` 或统一流水线，补 use-after-move 的 `check` 测试。
+- [x] **8. 属性解析对齐**：支持 `#[key=value]` 与 `#[stardust(id = 1)]`，属性挂到声明；未知属性不静默丢弃。
+- [x] **9. `#id`/`use` 显式化**：先报 `unsupported feature`，或实现最小闭环；不允许“解析后忽略”。
+- [x] **10. 差分测试骨架**：遍历 `tests/programs/*.fb` 与 `examples/*.fb`，比较 VM/Stardust 输出；接入 CI。
 
 完成这 10 项后，再进入 M1 的堆/远程栈/EOF 和 M2 的泛型/模块。
 

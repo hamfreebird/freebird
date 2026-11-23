@@ -21,7 +21,7 @@
 | M0-10 | 编译失败测试 | 新增 `tests/m0_test.rs`，28 个测试，其中 18 个负向诊断 |
 | M0-11 | 特性矩阵 | 新增 `STATUS.md`；同步 `USAGE.md`、`AGENTS.md`、`ROADMAP.md` |
 
-## M1 — 运行时一致性（进行中：7/8，2026-11-22）
+## M1 — 运行时一致性（已完成：8/8，2026-11-22）
 
 | ID | 项目 | 结果 |
 |---|---|---|
@@ -34,21 +34,21 @@
 | M1-7 | 资源限制 | VM 的 step/call-depth 测试；USAGE 明确 Stardust 无等价限制 |
 | M1-8 | 占位清理 | `src/codegen/stardust.rs` 中 `unsupported`/`TODO`/`placeholder` 已清零；`Reverse` 在矩阵中标红 |
 
-> 当前测试基线：`cargo test` = 201 unit + 115 integration（33 + 28 + 21 + 31 + 2）。
+> M1 完成时基线：`cargo test` = 201 unit + 84 integration。
 
-## M2 — 语言补全（进行中：M2-1/M2-2/M2-5/M2-6 完成，M2-4/M2-7 部分完成）
+## M2 — 语言补全（已完成：M2-1～M2-9；M2-1 为类型擦除 MVP、M2-7 除格式化输出）
 
 | ID | 项目 | 结果 |
 |---|---|---|
 | M2-5 | 模式匹配收尾 | `..` 结构体/元组剩余、嵌套/or/守卫/穷尽性；重复与兜底后分支警告（`check` JSON `warning_count`） |
 | M2-6 | 循环值语义 | `if let`/`while let` 降级为 `match`/`loop`；`loop` 值 + `break value`；`while`/`for` 的 `break value` 拒绝；`'label` + `break`/`continue 'label` 支持 loop/while/for |
 | M2-4 | 函数指针 | `fn(A,B)->C` 类型、函数名作值、参数/返回值、间接调用；Stardust FnId dispatch；零/单/多返回值间接调用均可用（返回元数由类型检查标注供给 MIR） |
-| M2-2 | Option/Result | 泛型枚举 `Option<T>`/`Result<T,E>`：载荷类型推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or`；`Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map` 等组合子待办 |
+| M2-2 | Option/Result | 泛型枚举 `Option<T>`/`Result<T,E>`：载荷类型推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or`；`Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map`/`ok`/`err`/`ok_or` 等组合子由 M2-7 补齐 |
 | M2-7 | 标准库扩展 | `abs`/`min`/`max`；Vec/String `is_empty`/`clear`；`Option`/`Result` 转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`；`int_to_str`/`str_to_int` 双后端；`Option::map`/`Result::map` 双后端 |
 | M2-1 | 泛型 | `struct Pair<T>`/`enum Maybe<T>`/`fn id<T>(x: T) -> T` 声明与泛型实参类型；字段访问与函数实参推断 + 替换检查；布局/代码按基名共用一份（类型擦除 MVP，无约束/显式类型实参/单态化） |
 | M2-9 | 用户方法与 `impl` | ADR 0003 方案 C：`impl Type { fn f(self) }` 与关联函数 `Type::f(...)` 已落地（名字扁平化、用户方法优先）；`&self` 只读方法与 `&mut self` 写方法均已支持（含 `FieldStoreRef` 引用写回） |
 | M2-8 | unsafe / `#id` | `#id` 与 `current_stack_id` 已从规范移除（§4.3 改为「元素 ID 访问（不支持）」、§10.1 栈 ID 行改为编译期拒绝）；unsafe 块内的 `push`/`pop`/`swap`/`dup`/`roll(n)` 已落地（ADR 0004），仅在 `unsafe` 块内可调用，Stardust 值栈按需翻倍扩容 |
-| M2-3 | 模块与 `use` | `mod name;` 递归加载同目录 `<name>.fb`，模块顶层函数注册为 `name::f`；`use name::f;` 在名称解析层做别名映射；循环依赖与未解析路径有明确诊断（暂不重命名模块内的结构体/枚举） |
+| M2-3 | 模块与 `use` | `mod name;` 递归加载同目录 `<name>.fb`，模块顶层函数注册为 `name::f`；`use name::f;` 在名称解析层做别名映射；循环依赖与未解析路径有明确诊断；模块内结构体/枚举同样加 `name::` 前缀，声明默认私有、需 `pub` |
 
 ## P0 — 基础正确性与可验证性
 
@@ -65,7 +65,7 @@
 | ENUM-2 | MIR / VM | `Match` 生成顺序与标签泄漏有已知问题 | 多分支 match 行为不可靠 | 已完成 |
 | VEC-1 | 前端 / 类型 / VM | `vec![...]` 未解析，数组是裸栈槽 | 宏直接 parse error；数组索引顺序错误 | 已完成 |
 | VEC-2 | 类型 / VM | `Vec` 方法（push/pop/len）、`String`、`Box<T>` 与远程栈未落地 | `v.push(4)`、`Box::new(42)` 等不可用 | 已完成（单槽 Tuple 表示） |
-| CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine UTF-8 解码与堆块扩容/NumIn/CharIn；`&mut` 引用堆单元支持跨函数写回；FileRead/FileWrite 与远程栈仍是占位） |
+| CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine UTF-8 解码与堆块扩容/NumIn/CharIn；`&mut` 引用堆单元支持跨函数写回；FileRead/FileWrite 已实现；远程栈收敛为全局堆块（ADR 0001）） |
 | CGEN-2 | LLVM 后端 | `--target llvm` 未实现 | 直接退出 “not implemented” | 暂缓 |
 | BORROW-1 | 借用检查 | `BorrowChecker` 未接入流水线 | 借用/移动错误无法在编译期发现 | 已完成 |
 | DROP-1 | MIR / 借用检查 | `collect_drop_vars` 恒空，`DropGen` 未调用 | 远程栈资源不会在作用域退出时释放 | 已完成 |

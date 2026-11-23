@@ -375,10 +375,10 @@ fn prefix_expr(expr: &mut crate::frontend::ast::Expr, rename: &impl Fn(&str) -> 
 /// 执行已解析的程序。
 fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<Vec<u8>, String> {
     let mut config = config;
-    // `mod name;` 需要文件级模块加载器（尚未实现），否则会被静默忽略。
+    // `mod name;` 需要从文件系统加载同目录模块；内存源码入口没有路径信息。
     if ast.decls.iter().any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. })) {
         return Err(
-            "Module declarations (`mod name;`) need the file-based module loader, which is not implemented yet (M2-3)."
+            "Module declarations (`mod name;`) require a file path; run or check the file from disk (e.g. `freebird run <file.fb>`) instead of in-memory source."
                 .to_string(),
         );
     }
@@ -496,7 +496,7 @@ pub fn check_source_with_warnings(source: &str) -> (Vec<String>, Vec<String>) {
         && ast.decls.iter().any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. }))
     {
         all_errors.push(
-            "Module declarations (`mod name;`) need the file-based module loader, which is not implemented yet (M2-3)."
+            "Module declarations (`mod name;`) require a file path; run or check the file from disk (e.g. `freebird run <file.fb>`) instead of in-memory source."
                 .to_string(),
         );
     }

@@ -6,7 +6,7 @@
 >
 > 本规范是 Freebird 语言实现的权威参考文档。
 >
-> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如 LLVM 后端与 Stardust 后端的远程栈）。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
+> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如 LLVM 后端、`stardust!` 的 `Reverse`、字符串格式化输出与 Stardust FFI）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
 
 ---
 
@@ -245,7 +245,7 @@ roll(-2):               将 b（栈顶）放到位置 2
 | `char` | Unicode 标量值 | 4 (存储为 i64) | Copy |
 | `()` | 单元类型，零大小 | 0 | Copy |
 | `!` | Never 类型（发散表达式） | — | — |
-| `ElementId` | 元素标识符 | 8 (u64) | Copy |
+| `ElementId` | 内部元素标识符（语言不暴露，见 §4.3） | 8 (u64) | Copy |
 
 **整数语义**：所有窄于 64 位的整数类型在栈上存储为完整的 i64，算术运算在编译期插入截断/扩展指令以确保语义正确。溢出行为：debug 模式下 panic，release 模式下 wrapping。
 
@@ -302,6 +302,38 @@ ID 栈:          [id0, id1, id2]
 - 栈操作指令（push, pop, dup, roll）会相应地更新类型栈。
 - Safe 代码中，编译器确保操作前后类型栈的局部一致性。
 - Unsafe 代码中，类型栈的维护责任交给程序员。
+
+### 5.5 用户泛型（类型擦除 MVP）
+
+结构体、枚举与函数可以声明类型参数：
+
+```freebird
+struct Pair<T> { first: T, second: T }
+enum Maybe<T> { Nothing, Just(T) }
+fn id<T>(x: T) -> T { x }
+```
+
+- 类型实参由结构体字段访问或函数调用实参推断，并在类型检查中做替换检查。
+- 布局与代码按基名共用一份（**类型擦除**，不按实例单态化）。
+- 暂不支持约束、显式类型实参（turbofish）与按实例单态化；泛型函数体只能使用与具体类型无关的操作。
+- `impl` 暂不接受类型参数（见 §5.6）。
+
+### 5.6 用户方法与 `impl`
+
+可以为结构体/枚举声明关联函数与方法：
+
+```freebird
+impl Rect {
+    fn square(side: i64) -> Rect { Rect { w: side, h: side } }  // 关联函数
+    fn area(&self) -> i64 { self.w * self.h }                    // 只读方法
+    fn grow(&mut self, by: i64) { self.w = self.w + by; }        // 写方法
+}
+```
+
+- 声明内的名字在编译期扁平化为 `Type::name`；关联函数用 `Type::f(...)` 调用。
+- 方法调用 `x.f(...)` 按接收者类型解析：用户方法优先，未命中才回落到内建方法（`Vec`/`String`/`Option`/`Result`）。
+- 接收者可为 `self`、`&self` 或 `&mut self`；`self.field` 自动按接收者解引用，`&mut self` 的字段写入会回写到调用方变量。
+- `impl` 暂不接受泛型参数。决策与实现边界见 `docs/adr/0003-user-impl-methods.md`。
 
 ---
 
@@ -670,7 +702,7 @@ fn borrow_mut(s: &mut String) { ... } // 独占借用
 | 栈操纵 | 编译器自动 roll/dup/roll(-pos) | 手动 `roll(3); swap();` |
 | 跨类型 | 不允许 | `unsafe { let x: i32 = pop(); }` |
 | 函数调用 | `divrem(10, 3)` | 动态确定 n/m 的调用 |
-| 返回 | `ret 3`（m 匹配签名） | `unsafe { ret n; }`（运行时 n） |
+| 返回 | `ret 3`（m 匹配签名） | 不提供：`ret` 只接受整数字面量（M0-1） |
 | 栈 ID | 不提供（编译期拒绝） | — |
 
 ### 10.2 Unsafe 块
@@ -745,16 +777,28 @@ unsafe {
 ### 11.1 顶层声明
 
 ```freebird
-// 函数声明
+// 函数声明（可带类型参数）
 fn name(params) -> ReturnType {
     statements...
     expression  // 尾表达式作为隐式返回值（当无显式 ret 时）
 }
+fn name<T>(params) -> ReturnType { ... }
 
 // 结构体声明
 struct Name {
     field: Type,
     ...
+}
+struct Name<T> {
+    field: T,
+    ...
+}
+
+// 用户关联函数与方法
+impl Type {
+    fn assoc(params) -> ReturnType { ... }   // Type::assoc(...)
+    fn method(&self) -> ReturnType { ... }   // x.method()
+    fn method_mut(&mut self) { ... }         // x.method_mut()
 }
 
 // 枚举声明

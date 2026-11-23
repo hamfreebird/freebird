@@ -1,6 +1,6 @@
 # ADR 0003：用户方法与 `impl` 是否纳入语言（M2-9）
 
-- 状态：待决策（2026-11-23）
+- 状态：已实施（2026-11-23，方案 C）
 - 相关：`readme.md` §5/§11、`src/hir/types.rs`、`src/typeck/checker.rs`、`src/mir/generator.rs`、`ROADMAP.md` M2-9
 
 ## 背景

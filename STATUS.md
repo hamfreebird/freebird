@@ -34,7 +34,8 @@
 | `Option` / `Result` 方法（`is_some`/`is_none`/`unwrap`/`unwrap_or`、`is_ok`/`is_err`/`unwrap`/`unwrap_or`、`ok`/`err`/`ok_or`/`map`） | §9 | ✅ | ✅ | ❌ | `m2_test` |
 | 数学内建 `abs` / `min` / `max` | §9 | ✅ | ✅ | ❌ | `m2_test` |
 | Vec/String `is_empty` / `clear` | §9 | ✅ | ✅ | ❌ | `m2_test` |
-| 字符串解析 / 格式化输出 | §9 | ❌ 待办 | ❌ 待办 | ❌ | — |
+| 字符串解析（`str_to_int`） | §9 | ✅ | ✅ | ❌ | `m2_test` |
+| 字符串格式化输出 | §9 | ❌ 待办 | ❌ 待办 | ❌ | — |
 | 用户 `impl`（关联函数 + `self` 方法） | §5 | ✅ | ✅ | ❌ | `m2_test` |
 | `&self` 接收者（只读方法） | §5 | ✅ | ✅ | ❌ | `m2_test` |
 | `&mut self` 接收者（写回） | §5 | ✅ | ✅ | ❌ | `m2_test` |
@@ -71,7 +72,7 @@
 | `extern "stardust"` 声明 | ✅ 解析 | ✅ 解析 | ❌ | `m0_test` |
 | `extern` 函数调用（FFI） | ❌ 编译期拒绝 | ❌ 编译期拒绝 | ❌ | `m0_test` |
 | `#id` / `ElementId` 表达式 | ❌ 已从规范移除（§4.3） | ❌ 同上 | ❌ | `m0_test` |
-| `use` / 模块 | ❌ 编译期拒绝 | ❌ 编译期拒绝 | ❌ | `m0_test` |
+| `use` / 文件级模块（`mod`、`pub`） | ✅ | ✅ | ❌ | `m2_test` |
 | `freebird check`（parse → resolve → type → borrow） | ✅ | ✅ | — | `m0_test`；JSON 含 `warning_count` |
 | `freebird build --target stardust` | — | ✅ | — | 集成 |
 | `freebird build --target llvm` | ❌ | ❌ | ❌ | CLI 直接报未实现 |
@@ -91,13 +92,13 @@
 - **保守边界**：数组/结构体等 Copy 类型的 COW 旧块、嵌套容器内层块、从未 push/pop 的 Vec/String 不回收（安全泄漏）；完整引用计数留待后续。
 - **已知后端差异**：`read_line` 在 EOF 时 Stardust 解释器的 `CharIn` 直接报 I/O 错误（VM 返回空字符串）；Stardust 越界用除零陷阱退出，错误消息与 VM 不同；`stardust!` 的 `Reverse` 仍不支持（M3-4）。
 
-## 6. M2 语言补全（进行中：M2-1/M2-2/M2-5/M2-6 完成，M2-4/M2-7 部分完成）
+## 6. M2 语言补全（已完成：M2-1～M2-9；M2-1 类型擦除、M2-7 除格式化输出）
 
 - **M2-5 模式匹配**：结构体/元组 `..` 剩余、嵌套模式、`or`、守卫与非穷尽检查已覆盖；新增重复/兜底后分支的不可达警告，`check` JSON 输出 `warning_count`。更复杂的覆盖分析（如 `or` 已覆盖的变体）仍有限。
 - **M2-6 循环值语义**：`if let` / `while let` 在 parser 层降级为 `match` / `loop`；值位置 `loop` 与 `break value` 通过隐藏结果变量实现，VM 与 Stardust 输出一致；`break value` 在 `while`/`for` 中被拒绝；循环标签 `'outer: loop` + `break 'outer` / `continue 'outer` 已支持（含 while/for）。
 - **M2-4 函数指针**：支持 `fn(A, B) -> C` 类型、函数名作值、作为参数/返回值与间接调用；零/单/多返回值间接调用在 VM/Stardust 均可用。`fn(A) -> (B, C)` 的返回列表与函数声明语义一致；间接调用的返回元数由类型检查以 `Span` 标注交给 MIR（生成阶段没有类型信息），元组解构直接绑定多槽结果。
 - **M2-1 泛型（类型擦除 MVP）**：支持 `struct Pair<T>`、`enum Maybe<T>`、`fn id<T>(x: T) -> T`；类型实参从结构体字段和函数实参推断并做替换检查；布局按基名复用，VM/Stardust 各生成一份代码。暂不支持约束、显式类型实参（turbofish）与按实例单态化，泛型函数体只能使用与具体类型无关的操作。
-- **M2-2 Option/Result（泛型枚举）**：内建 `Option<T>`/`Result<T, E>`，载荷类型从构造表达式推断并做替换检查；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`。类型检查把每个方法调用的成功/失败变体标签标注在 `Span → MethodVariantTags` 上交给 MIR 生成器，因此 `Option`（`Some`=1/`None`=0）与 `Result`（`Ok`=0/`Err`=1）共用同一套指令。`map`/`ok`/`err` 等组合子待办。
-- **M2-7 标准库（部分）**：`abs`/`min`/`max`、`Vec`/`String` 的 `is_empty`/`clear`、转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`（新增 `EnumPayloadToOption`/`OptionToResult` 指令）、`int_to_str`（双后端，堆块逐位写入）、`str_to_int`（双后端，堆块逐字符解析）与 `Option::map`/`Result::map`（MIR 用现有指令组合实现分支，双后端一致）。
+- **M2-2 Option/Result（泛型枚举）**：内建 `Option<T>`/`Result<T, E>`，载荷类型从构造表达式推断并做替换检查；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`。类型检查把每个方法调用的成功/失败变体标签标注在 `Span → MethodVariantTags` 上交给 MIR 生成器，因此 `Option`（`Some`=1/`None`=0）与 `Result`（`Ok`=0/`Err`=1）共用同一套指令。`map`/`ok`/`err` 等组合子由 M2-7 补齐。
+- **M2-7 标准库（除格式化输出外）**：`abs`/`min`/`max`、`Vec`/`String` 的 `is_empty`/`clear`、转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`（新增 `EnumPayloadToOption`/`OptionToResult` 指令）、`int_to_str`（双后端，堆块逐位写入）、`str_to_int`（双后端，堆块逐字符解析）与 `Option::map`/`Result::map`（MIR 用现有指令组合实现分支，双后端一致）。
 - **M2-9 impl/方法（方案 C 分期）**：`impl Type { fn f(self) }` 与关联函数 `Rect::square(3)` 已可用；名字扁平化为 `Type::f`，方法调用由类型检查解析（用户方法优先、内建方法兜底）并记录 `Span` 标注供 MIR 生成。`&self` 只读方法与 `&mut self` 写方法均已支持：调用点对具名变量取引用，方法体 `self.field` 自动解引用，`self.field = v` 走 `FieldStoreRef` 写回引用目标（VM 用 `find_ref_target` 跨帧定位，Stardust 按 cell 语义写回）。
 - **待实现**：M2-7 的字符串格式化输出等剩余小项。M2-8 的 unsafe 值栈已按 `docs/adr/0004-unsafe-raw-stack.md` 落地：`push`/`pop`/`swap`/`dup`/`roll(n)` 双后端一致，Stardust 侧按需翻倍扩容，`roll(n)` 支持正/零/负三向语义。

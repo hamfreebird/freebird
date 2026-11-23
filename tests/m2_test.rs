@@ -717,11 +717,11 @@ fn main() {
 }
 
 #[test]
-fn module_declaration_needs_file_loader() {
+fn module_declaration_needs_file_path() {
     let errors = check_source("mod foo;\nfn main() { print(1); }")
-        .expect_err("`mod` should be rejected until the module loader exists");
+        .expect_err("in-memory sources cannot load sibling modules");
     assert!(
-        errors.join("\n").contains("module loader"),
+        errors.join("\n").contains("require a file path"),
         "unexpected diagnostics: {errors:?}"
     );
 }
