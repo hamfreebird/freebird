@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::frontend::ast;
 use crate::frontend::token::Span;
 use crate::hir::resolver::{ResolveError, Resolver};
@@ -7,11 +9,17 @@ use crate::hir::types::*;
 pub struct Lowering {
     resolver: Resolver,
     errors: Vec<ResolveError>,
+    /// `use Type::item;` 的别名表：别名 → 限定名。
+    aliases: HashMap<String, String>,
 }
 
 impl Lowering {
     pub fn new() -> Self {
-        Self { resolver: Resolver::new(), errors: Vec::new() }
+        Self {
+            resolver: Resolver::new(),
+            errors: Vec::new(),
+            aliases: HashMap::new(),
+        }
     }
 
     pub fn errors(&self) -> &[ResolveError] {
@@ -20,6 +28,15 @@ impl Lowering {
 
     /// 降级整个程序
     pub fn lower_program(&mut self, ast_program: &ast::Program) -> HirProgram {
+        // 第 0 遍：`use Type::item;` 建立别名表（别名 → 限定名）。
+        for decl in &ast_program.decls {
+            if let ast::Decl::Use(path, _) = decl
+                && let Some(alias) = path.last()
+            {
+                self.aliases.insert(alias.clone(), path.join("::"));
+            }
+        }
+
         // 第一遍：收集所有函数签名
         self.collect_fn_signatures(ast_program);
 
@@ -327,11 +344,17 @@ impl Lowering {
                         span: *span,
                     })),
                     Err(e) => {
-                        // 函数名、类型名（首字母大写）或内建函数名不作为变量错误
+                        // 函数名、类型名（首字母大写）或内建函数名不作为变量错误；
+                        // `use` 别名在查函数表前先解析成限定名。
+                        let resolved_fn = self
+                            .aliases
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| name.clone());
                         let is_type_name = name.chars().next().is_some_and(|c| c.is_uppercase());
-                        if self.resolver.lookup_fn(name).is_some() || is_type_name || is_builtin_fn(name) {
+                        if self.resolver.lookup_fn(&resolved_fn).is_some() || is_type_name || is_builtin_fn(name) {
                             Some(HirExpr::Var(HirVarRef {
-                                name: name.clone(),
+                                name: resolved_fn,
                                 scope_depth: usize::MAX,
                                 span: *span,
                             }))
@@ -396,7 +419,15 @@ impl Lowering {
 
                 // 查找函数签名（包括内建函数）
                 let fn_sig = if let ast::Expr::Var(name, _) = func.as_ref() {
-                    self.resolver.lookup_fn(name).cloned()
+                    // `use` 别名：按限定名查签名，避免调用点拿不到返回元数。
+                    let lookup_name = self
+                        .aliases
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| name.clone());
+                    self.resolver
+                        .lookup_fn(&lookup_name)
+                        .cloned()
                         .or_else(|| builtin_fn_signature(name))
                 } else {
                     None

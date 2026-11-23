@@ -304,11 +304,11 @@ fn id_expression_is_explicitly_unsupported() {
 }
 
 #[test]
-fn use_declaration_is_explicitly_unsupported() {
-    assert_rejected(
-        "use declaration",
-        "use foo::bar; fn main() { }",
-        "unsupported feature: `use` declarations",
+fn use_declaration_is_accepted() {
+    // M2-3 起 `use` 由名称解析层处理：未解析的路径在调用处报未知函数。
+    assert!(
+        check_source("use foo::bar; fn main() { }").is_ok(),
+        "use declaration should be accepted"
     );
 }
 

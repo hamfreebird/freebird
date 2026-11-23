@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 
 use crate::borrowck::check_borrow;
@@ -14,15 +15,91 @@ use crate::vm::mir::MirInst;
 use crate::vm::Vm;
 
 /// 编译执行流水线：源码 → AST → HIR → MIR → VM 执行
+/// 编译执行源码：解析后交给 `run_ast`。
 pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String> {
-    let mut config = config;
-    // 1. 词法+语法解析
     let (ast, ast_errors) = parse(source);
     if !ast_errors.is_empty() {
         let msg: Vec<String> = ast_errors.iter().map(|e| e.to_string()).collect();
         return Err(format!("Parse errors:\n{}", msg.join("\n")));
     }
+    run_ast(ast, config)
+}
 
+/// 从文件加载并执行程序（支持 `mod name;` 递归加载同目录模块）。
+pub fn run_file(path: &Path, config: RuntimeConfig) -> Result<Vec<u8>, String> {
+    let ast = load_program(path)?;
+    run_ast(ast, config)
+}
+
+/// 递归加载模块：`mod foo;` 读取同目录 `foo.fb`，其顶层函数以 `foo::name` 注册。
+fn load_program(path: &Path) -> Result<crate::frontend::ast::Program, String> {
+    let mut loading: Vec<std::path::PathBuf> = Vec::new();
+    load_module(path, None, &mut loading)
+}
+
+fn load_module(
+    path: &Path,
+    prefix: Option<&str>,
+    loading: &mut Vec<std::path::PathBuf>,
+) -> Result<crate::frontend::ast::Program, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve module `{}`: {e}", path.display()))?;
+    if loading.contains(&canonical) {
+        return Err(format!(
+            "circular module dependency detected at `{}`",
+            path.display()
+        ));
+    }
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read module `{}`: {e}", path.display()))?;
+    let (mut parsed, errors) = parse(&source);
+    if !errors.is_empty() {
+        let msg: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+        return Err(format!(
+            "Parse errors in `{}`:\n{}",
+            path.display(),
+            msg.join("\n")
+        ));
+    }
+    loading.push(canonical);
+    let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let mut decls = Vec::new();
+    for decl in parsed.decls.drain(..) {
+        match decl {
+            crate::frontend::ast::Decl::Mod { name, span } => {
+                let sub_path = dir.join(format!("{name}.fb"));
+                let sub_prefix = match prefix {
+                    Some(p) => format!("{p}::{name}"),
+                    None => name.clone(),
+                };
+                let sub = load_module(&sub_path, Some(&sub_prefix), loading).map_err(|e| {
+                    format!("while loading module `{name}` (declared at {span}): {e}")
+                })?;
+                decls.extend(sub.decls);
+            }
+            other => decls.push(apply_prefix(other, prefix)),
+        }
+    }
+    loading.pop();
+    Ok(crate::frontend::ast::Program { decls })
+}
+
+/// 给模块内的顶层函数加上 `mod::` 前缀（MVP 只处理函数）。
+fn apply_prefix(decl: crate::frontend::ast::Decl, prefix: Option<&str>) -> crate::frontend::ast::Decl {
+    let Some(prefix) = prefix else { return decl };
+    match decl {
+        crate::frontend::ast::Decl::Fn(mut f) => {
+            f.name = format!("{prefix}::{}", f.name);
+            crate::frontend::ast::Decl::Fn(f)
+        }
+        other => other,
+    }
+}
+
+/// 执行已解析的程序。
+fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<Vec<u8>, String> {
+    let mut config = config;
     // `mod name;` 需要文件级模块加载器（尚未实现），否则会被静默忽略。
     if ast.decls.iter().any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. })) {
         return Err(
@@ -95,6 +172,7 @@ pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String
 
     Ok(vm.output)
 }
+
 
 /// 从 `main` 函数的属性读取运行时限制并覆盖配置。
 ///

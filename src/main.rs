@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use freebird::{build_stardust, run_source, RuntimeConfig};
+use freebird::{build_stardust, run_file, run_source, RuntimeConfig};
 use freebird::borrowck::check_borrow;
 use freebird::diagnostics;
 use freebird::frontend::parse;
@@ -57,18 +57,13 @@ fn main() {
 
     match cli.command {
         Some(Command::Run { file, debug }) => {
-            let source = fs::read_to_string(&file).unwrap_or_else(|e| {
-                eprintln!("Error reading {}: {e}", file.display());
-                process::exit(1);
-            });
-
             let config = if debug {
                 RuntimeConfig::debug()
             } else {
                 RuntimeConfig::default()
             };
 
-            match run_source(&source, config) {
+            match run_file(&file, config) {
                 Ok(output) => {
                     if !output.is_empty() {
                         print!("{}", String::from_utf8_lossy(&output));

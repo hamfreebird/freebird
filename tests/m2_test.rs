@@ -725,3 +725,36 @@ fn module_declaration_needs_file_loader() {
         "unexpected diagnostics: {errors:?}"
     );
 }
+
+#[test]
+fn module_loader_and_use_alias_match() {
+    let dir = std::env::temp_dir().join(format!("freebird_m23_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(dir.join("util.fb"), "fn double(x: i64) -> i64 { x * 2 }\n")
+        .expect("write module");
+    let main_path = dir.join("main.fb");
+    std::fs::write(
+        &main_path,
+        "mod util;\nuse util::double;\nfn main() { print(double(21)); }\n",
+    )
+    .expect("write main");
+    let out = freebird::run_file(&main_path, freebird::RuntimeConfig::test())
+        .expect("module program should run");
+    assert_eq!(String::from_utf8_lossy(&out), "42\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn circular_module_dependency_is_reported() {
+    let dir = std::env::temp_dir().join(format!("freebird_m23c_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(dir.join("a.fb"), "mod b;\nfn main() { print(1); }\n").expect("write a");
+    std::fs::write(dir.join("b.fb"), "mod a;\n").expect("write b");
+    let err = freebird::run_file(&dir.join("a.fb"), freebird::RuntimeConfig::test())
+        .expect_err("circular modules should be rejected");
+    assert!(
+        err.contains("circular module dependency"),
+        "unexpected error: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

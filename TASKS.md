@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 201 unit + 126 integration 全绿（2026-11-23；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 42 + `tests/differential_test.rs` 2）。
+> 当前：`cargo test` = 201 unit + 128 integration 全绿（2026-11-23；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 44 + `tests/differential_test.rs` 2）。
 > 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)，能力矩阵见 [`STATUS.md`](STATUS.md)；本表保留已完成项的历史记录。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
@@ -48,7 +48,7 @@
 | M2-1 | 泛型 | `struct Pair<T>`/`enum Maybe<T>`/`fn id<T>(x: T) -> T` 声明与泛型实参类型；字段访问与函数实参推断 + 替换检查；布局/代码按基名共用一份（类型擦除 MVP，无约束/显式类型实参/单态化） |
 | M2-9 | 用户方法与 `impl` | ADR 0003 方案 C：`impl Type { fn f(self) }` 与关联函数 `Type::f(...)` 已落地（名字扁平化、用户方法优先）；`&self` 只读方法与 `&mut self` 写方法均已支持（含 `FieldStoreRef` 引用写回） |
 | M2-8 | unsafe / `#id` | `#id` 与 `current_stack_id` 已从规范移除（§4.3 改为「元素 ID 访问（不支持）」、§10.1 栈 ID 行改为编译期拒绝），类型检查保持显式诊断；unsafe 块内的低级栈内建（push/swap 等）待办 |
-| M2-3 | 模块与 `use` | `mod name;` 已能解析，并在流水线给出明确诊断（文件级模块加载器尚未实现）；`use` 仍报未实现 |
+| M2-3 | 模块与 `use` | `mod name;` 递归加载同目录 `<name>.fb`，模块顶层函数注册为 `name::f`；`use name::f;` 在名称解析层做别名映射；循环依赖与未解析路径有明确诊断（暂不重命名模块内的结构体/枚举） |
 
 ## P0 — 基础正确性与可验证性
 

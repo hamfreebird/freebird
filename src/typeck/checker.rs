@@ -439,11 +439,8 @@ impl<'a> TypeChecker<'a> {
                 }
                 HirDecl::Struct(s) => self.validate_attributes(&s.attrs),
                 HirDecl::Enum(e) => self.validate_attributes(&e.attrs),
-                HirDecl::Use(_, span) => self.error(TypeCheckError::UnsupportedFeature {
-                    feature: "`use` declarations".to_string(),
-                    reference: "readme.md §10 (module loader is not implemented yet)".to_string(),
-                    span: *span,
-                }),
+                // `use` 已在 HIR 降级阶段解析为别名映射，这里无需处理。
+                HirDecl::Use(_, _) => {}
             }
         }
         (self.errors, self.warnings, self.method_variant_tags)
