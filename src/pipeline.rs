@@ -88,6 +88,7 @@ fn load_module(
     }
     loading.push(canonical);
     let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let mut own = Vec::new();
     let mut decls = Vec::new();
     for decl in parsed.decls.drain(..) {
         match decl {
@@ -102,12 +103,18 @@ fn load_module(
                 })?;
                 decls.extend(sub.decls);
             }
-            other => decls.push(apply_prefix(other, prefix, &local_types)),
+            other => own.push(other),
         }
     }
     loading.pop();
+    // 子模块已全部加载，`pub_names` 完整。先按本文件原始 AST 检查跨模块全名引用：
+    // `apply_prefix` 会给模块内名字加前缀，之后无法区分「模块内访问自己的私有项」
+    // 与「外部直接写全名访问」。
+    for decl in &own {
+        check_cross_module_refs(decl, pub_names)?;
+    }
     // 跨模块 `use mod::name;` 只能访问 `pub` 名字。
-    for decl in &decls {
+    for decl in &own {
         if let crate::frontend::ast::Decl::Use(path, span) = decl
             && path.len() >= 2
         {
@@ -122,7 +129,291 @@ fn load_module(
             }
         }
     }
+    for decl in own {
+        decls.push(apply_prefix(decl, prefix, &local_types));
+    }
     Ok(crate::frontend::ast::Program { decls })
+}
+
+type PubNames = std::collections::HashMap<String, std::collections::HashSet<String>>;
+
+/// 检查一份声明中的跨模块全名引用（`util::secret`、`util::Point`）是否可见。
+fn check_cross_module_refs(decl: &crate::frontend::ast::Decl, pub_names: &PubNames) -> Result<(), String> {
+    use crate::frontend::ast::Decl;
+    match decl {
+        Decl::Fn(f) => check_fn_refs(f, pub_names),
+        Decl::Struct(s) => {
+            for field in &s.fields {
+                check_type_refs(&field.ty, pub_names)?;
+            }
+            Ok(())
+        }
+        Decl::Enum(e) => {
+            for variant in &e.variants {
+                if let Some(data) = &variant.data {
+                    check_type_refs(data, pub_names)?;
+                }
+            }
+            Ok(())
+        }
+        Decl::Extern(block) => {
+            for item in &block.items {
+                let crate::frontend::ast::ExternItem::Fn(f) = item;
+                check_fn_refs(f, pub_names)?;
+            }
+            Ok(())
+        }
+        Decl::Impl(imp) => {
+            check_path_str(&imp.type_name, imp.span, pub_names)?;
+            for f in &imp.fns {
+                check_fn_refs(f, pub_names)?;
+            }
+            Ok(())
+        }
+        Decl::Use(..) | Decl::Mod { .. } => Ok(()),
+    }
+}
+
+fn check_fn_refs(f: &crate::frontend::ast::FnDecl, pub_names: &PubNames) -> Result<(), String> {
+    for p in &f.params {
+        check_type_refs(&p.ty, pub_names)?;
+    }
+    if let Some(ret) = &f.return_type {
+        check_type_refs(ret, pub_names)?;
+    }
+    if let Some(body) = &f.body {
+        check_block_refs(body, pub_names)?;
+    }
+    Ok(())
+}
+
+fn check_block_refs(block: &crate::frontend::ast::Block, pub_names: &PubNames) -> Result<(), String> {
+    use crate::frontend::ast::Stmt;
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let { pattern, ty, init, .. } => {
+                check_pattern_refs(pattern, pub_names)?;
+                if let Some(ty) = ty {
+                    check_type_refs(ty, pub_names)?;
+                }
+                if let Some(init) = init {
+                    check_expr_refs(init, pub_names)?;
+                }
+            }
+            Stmt::Expr(expr, _) => check_expr_refs(expr, pub_names)?,
+            Stmt::Assign { target, value, .. } => {
+                check_expr_refs(target, pub_names)?;
+                check_expr_refs(value, pub_names)?;
+            }
+        }
+    }
+    if let Some(tail) = &block.tail {
+        check_expr_refs(tail, pub_names)?;
+    }
+    Ok(())
+}
+
+fn check_expr_refs(expr: &crate::frontend::ast::Expr, pub_names: &PubNames) -> Result<(), String> {
+    use crate::frontend::ast::{CallArg, Expr};
+    match expr {
+        Expr::Var(name, span) => check_path_str(name, *span, pub_names),
+        Expr::Lit(..)
+        | Expr::IdRef(..)
+        | Expr::StardustMacro(..)
+        | Expr::Ret(..)
+        | Expr::Continue(..)
+        | Expr::ContinueLabel(..) => Ok(()),
+        Expr::Deref(inner, _) | Expr::Ref(inner, _, _) | Expr::Unary(_, inner, _) => {
+            check_expr_refs(inner, pub_names)
+        }
+        Expr::As(inner, ty, _) => {
+            check_expr_refs(inner, pub_names)?;
+            check_type_refs(ty, pub_names)
+        }
+        Expr::Binary(lhs, _, rhs, _) => {
+            check_expr_refs(lhs, pub_names)?;
+            check_expr_refs(rhs, pub_names)
+        }
+        Expr::Call { func, args, .. } => {
+            check_expr_refs(func, pub_names)?;
+            for arg in args {
+                let (CallArg::Pos(e, _) | CallArg::Named(_, e, _)) = arg;
+                check_expr_refs(e, pub_names)?;
+            }
+            Ok(())
+        }
+        Expr::FieldAccess(inner, _, _) => check_expr_refs(inner, pub_names),
+        Expr::Index(base, index, _) => {
+            check_expr_refs(base, pub_names)?;
+            check_expr_refs(index, pub_names)
+        }
+        Expr::Tuple(items, _) | Expr::Array(items, _) => {
+            for item in items {
+                check_expr_refs(item, pub_names)?;
+            }
+            Ok(())
+        }
+        Expr::Repeat(value, count, _) => {
+            check_expr_refs(value, pub_names)?;
+            check_expr_refs(count, pub_names)
+        }
+        Expr::StructLit { name, fields, span } => {
+            check_path_segments(name, *span, pub_names)?;
+            for (_, value) in fields {
+                check_expr_refs(value, pub_names)?;
+            }
+            Ok(())
+        }
+        Expr::EnumLit { name, variant, data, span } => {
+            // parser 把 `util::secret(1)` 也表示成 EnumLit（路径 + 最后一个段），
+            // 因此这里要检查「name + variant」构成完整路径。
+            let mut path = name.clone();
+            path.push(variant.clone());
+            check_path_segments(&path, *span, pub_names)?;
+            if let Some(data) = data {
+                check_expr_refs(data, pub_names)?;
+            }
+            Ok(())
+        }
+        Expr::If(cond, then, else_, _) => {
+            check_expr_refs(cond, pub_names)?;
+            check_block_refs(then, pub_names)?;
+            if let Some(else_) = else_ {
+                check_block_refs(else_, pub_names)?;
+            }
+            Ok(())
+        }
+        Expr::Match(scrutinee, arms, _) => {
+            check_expr_refs(scrutinee, pub_names)?;
+            for arm in arms {
+                check_pattern_refs(&arm.pattern, pub_names)?;
+                if let Some(guard) = &arm.guard {
+                    check_expr_refs(guard, pub_names)?;
+                }
+                check_expr_refs(&arm.body, pub_names)?;
+            }
+            Ok(())
+        }
+        Expr::Loop(body, _) => check_block_refs(body, pub_names),
+        Expr::While(cond, body, _) => {
+            check_expr_refs(cond, pub_names)?;
+            check_block_refs(body, pub_names)
+        }
+        Expr::For { pattern, iterable, body, .. } => {
+            check_pattern_refs(pattern, pub_names)?;
+            check_expr_refs(iterable, pub_names)?;
+            check_block_refs(body, pub_names)
+        }
+        Expr::Block(block, _) => check_block_refs(block, pub_names),
+        Expr::Labelled(_, inner, _) => check_expr_refs(inner, pub_names),
+        Expr::Break(value, _) | Expr::BreakLabel(_, value, _) => {
+            if let Some(value) = value {
+                check_expr_refs(value, pub_names)?;
+            }
+            Ok(())
+        }
+        Expr::Return(values, _) => {
+            for value in values {
+                check_expr_refs(value, pub_names)?;
+            }
+            Ok(())
+        }
+        Expr::Unsafe(block, _) => check_block_refs(block, pub_names),
+    }
+}
+
+fn check_pattern_refs(
+    pattern: &crate::frontend::ast::Pattern,
+    pub_names: &PubNames,
+) -> Result<(), String> {
+    use crate::frontend::ast::Pattern;
+    match pattern {
+        Pattern::Var(..) | Pattern::Lit(..) | Pattern::Wildcard(..) => Ok(()),
+        Pattern::Tuple(items, _, _) | Pattern::Or(items, _) => {
+            for item in items {
+                check_pattern_refs(item, pub_names)?;
+            }
+            Ok(())
+        }
+        Pattern::Struct { name, fields, span, .. } => {
+            check_path_segments(name, *span, pub_names)?;
+            for (_, field) in fields {
+                if let Some(field) = field {
+                    check_pattern_refs(field, pub_names)?;
+                }
+            }
+            Ok(())
+        }
+        Pattern::Enum { name, inner, span, .. } => {
+            check_path_segments(name, *span, pub_names)?;
+            if let Some(inner) = inner {
+                check_pattern_refs(inner, pub_names)?;
+            }
+            Ok(())
+        }
+        Pattern::Ref(inner, _, _) => check_pattern_refs(inner, pub_names),
+    }
+}
+
+fn check_type_refs(ty: &crate::frontend::ast::Type, pub_names: &PubNames) -> Result<(), String> {
+    use crate::frontend::ast::Type;
+    match ty {
+        Type::Path(segments, span) => check_path_segments(segments, *span, pub_names),
+        Type::Generic(base, args, _) => {
+            check_type_refs(base, pub_names)?;
+            for arg in args {
+                check_type_refs(arg, pub_names)?;
+            }
+            Ok(())
+        }
+        Type::Ref(inner, _, _) => check_type_refs(inner, pub_names),
+        Type::Tuple(items, _) => {
+            for item in items {
+                check_type_refs(item, pub_names)?;
+            }
+            Ok(())
+        }
+        Type::Array(inner, len, _) => {
+            check_type_refs(inner, pub_names)?;
+            check_expr_refs(len, pub_names)
+        }
+        Type::FnPtr(params, ret, _) => {
+            for param in params {
+                check_type_refs(param, pub_names)?;
+            }
+            if let Some(ret) = ret {
+                check_type_refs(ret, pub_names)?;
+            }
+            Ok(())
+        }
+        Type::Never(..) | Type::Wildcard(..) => Ok(()),
+    }
+}
+
+fn check_path_str(name: &str, span: crate::frontend::token::Span, pub_names: &PubNames) -> Result<(), String> {
+    let segments: Vec<String> = name.split("::").map(str::to_string).collect();
+    check_path_segments(&segments, span, pub_names)
+}
+
+/// 若路径以某个已注册模块开头，则模块后的第一个名字必须在 `pub` 集合中。
+fn check_path_segments(
+    segments: &[String],
+    span: crate::frontend::token::Span,
+    pub_names: &PubNames,
+) -> Result<(), String> {
+    for split in (1..segments.len()).rev() {
+        let module = segments[..split].join("::");
+        if let Some(visible) = pub_names.get(&module) {
+            let item = &segments[split];
+            if !visible.contains(item) {
+                return Err(format!(
+                    "`{module}::{item}` is not `pub` (used at {span}); declare it `pub` in `{module}`"
+                ));
+            }
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 /// 收集模块顶层声明的类型名。

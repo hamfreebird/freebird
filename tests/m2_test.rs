@@ -717,6 +717,34 @@ fn main() {
 }
 
 #[test]
+fn private_module_items_cannot_be_called_by_full_name() {
+    let dir = std::env::temp_dir().join(format!("freebird_m2_pubcall_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("util.fb"),
+        "pub fn double(x: i64) -> i64 { x * 2 }\nfn secret(x: i64) -> i64 { x }\n",
+    )
+    .expect("write module");
+
+    // 不经过 `use`、直接写全名也受可见性约束。
+    let main_path = dir.join("main.fb");
+    std::fs::write(&main_path, "mod util;\nfn main() { print(util::secret(1)); }\n")
+        .expect("write main");
+    let err = freebird::run_file(&main_path, freebird::RuntimeConfig::test())
+        .expect_err("private item must not be callable by full name");
+    assert!(err.contains("is not `pub`"), "unexpected error: {err}");
+
+    // `pub` 名字的全名调用仍然可用。
+    let ok_path = dir.join("ok.fb");
+    std::fs::write(&ok_path, "mod util;\nfn main() { print(util::double(2)); }\n")
+        .expect("write ok");
+    let out = freebird::run_file(&ok_path, freebird::RuntimeConfig::test())
+        .expect("pub item should be callable by full name");
+    assert_eq!(String::from_utf8_lossy(&out), "4\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn module_declaration_needs_file_path() {
     let errors = check_source("mod foo;\nfn main() { print(1); }")
         .expect_err("in-memory sources cannot load sibling modules");
