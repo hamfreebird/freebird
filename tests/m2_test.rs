@@ -791,6 +791,76 @@ fn main() {
 }
 
 #[test]
+fn unsafe_raw_roll_matches() {
+    let source = r#"
+fn main() {
+    unsafe {
+        // roll(+n)：把从栈顶数位置 n 的元素提到栈顶。
+        push(1); push(2); push(3); push(4);
+        roll(2);
+        print(pop());
+        print(pop());
+        print(pop());
+        print(pop());
+        // roll(n) 与 roll(-n) 互逆（readme §4.2.3）。
+        push(1); push(2); push(3); push(4);
+        roll(2);
+        roll(-2);
+        print(pop());
+        print(pop());
+        print(pop());
+        print(pop());
+        // roll(0) 是 no-op。
+        push(7);
+        roll(0);
+        print(pop());
+    }
+}
+"#;
+    assert_same_output(source, "raw_roll", b"");
+}
+
+#[test]
+fn unsafe_raw_stack_grows_matches() {
+    let source = r#"
+fn main() {
+    let mut i = 0;
+    unsafe {
+        while i < 100 {
+            push(i);
+            i = i + 1;
+        }
+        // 栈（底→顶）为 0..99：跨过初始容量 64 后仍可 roll。
+        roll(99);
+        print(pop());
+        roll(-98);
+        print(pop());
+        print(pop());
+    }
+}
+"#;
+    assert_same_output(source, "raw_grow", b"");
+}
+
+#[test]
+fn unsafe_raw_roll_out_of_range() {
+    let source = r#"
+fn main() {
+    unsafe {
+        push(1);
+        roll(1);
+    }
+}
+"#;
+    match run_vm(source, b"") {
+        Run::Failed(error) => {
+            assert!(error.contains("out of range"), "unexpected error: {error}")
+        }
+        Run::Ok(_) => panic!("roll beyond the raw stack must fail"),
+    }
+}
+
+#[test]
 fn raw_stack_builtins_require_unsafe() {
     let errors = check_source("fn main() { push(1); }")
         .expect_err("raw stack builtins should require an unsafe block");

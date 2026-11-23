@@ -831,6 +831,35 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
+            MirInst::RawRoll => {
+                let mut frame = self.pop_frame()?;
+                let (_, n) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let n = n.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: n.type_name().to_string(),
+                })?;
+                // readme §4.2.3：n == 0 为 no-op；n > 0 把从栈顶数位置 n
+                // 的元素提到栈顶；n < 0 把栈顶元素放到位置 |n|。
+                if n != 0 {
+                    let len = self.raw_stack.len();
+                    let depth = n.unsigned_abs() as usize;
+                    if depth >= len {
+                        return Err(VmError::AssertionFailed(format!(
+                            "roll({n}) out of range on raw stack of length {len}"
+                        )));
+                    }
+                    if n > 0 {
+                        let value = self.raw_stack.remove(len - 1 - depth);
+                        self.raw_stack.push(value);
+                    } else {
+                        let value = self.raw_stack.pop().expect("raw stack is non-empty");
+                        let target = self.raw_stack.len() - depth;
+                        self.raw_stack.insert(target, value);
+                    }
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
             MirInst::RawDup => {
                 let value = self.raw_stack.last().cloned().ok_or_else(|| {
                     VmError::AssertionFailed("dup on empty raw stack".to_string())

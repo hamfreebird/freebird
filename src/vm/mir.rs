@@ -169,6 +169,7 @@ pub enum MirInst {
     RawPop,  // 把值栈顶移回求值栈
     RawSwap, // 交换值栈顶两个元素
     RawDup,  // 复制值栈顶
+    RawRoll, // pop n；把值栈顶元素移动 n 个位置
 
     // === 堆操作（stardust! 的 store/load）===
     HeapStore,                   // 堆写：pop addr, pop value, heap[addr] = value
@@ -305,6 +306,7 @@ impl std::fmt::Display for MirInst {
             MirInst::RawPop => write!(f, "RawPop"),
             MirInst::RawSwap => write!(f, "RawSwap"),
             MirInst::RawDup => write!(f, "RawDup"),
+            MirInst::RawRoll => write!(f, "RawRoll"),
             MirInst::HeapStore => write!(f, "HeapStore"),
             MirInst::HeapLoad => write!(f, "HeapLoad"),
             MirInst::Abs => write!(f, "Abs"),

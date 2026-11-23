@@ -6,6 +6,7 @@
 > **M2-5/M2-6 后基线**（2026-11-23）：`cargo test` = **201 unit + 94 integration** 全绿（新增 `tests/m2_test.rs` 10 项）。
 > **M2-2/M2-7 后基线**（2026-11-23）：`cargo test` = **201 unit + 99 integration** 全绿（`tests/m2_test.rs` 15 项）。
 > **M2-4 零返回值指针后基线**（2026-11-23）：`cargo test` = **201 unit + 133 integration** 全绿（`tests/m2_test.rs` 49 项）。
+> **unsafe 值栈扩容与 roll(n) 后基线**（2026-11-23）：`cargo test` = **201 unit + 136 integration** 全绿（`tests/m2_test.rs` 52 项）。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 

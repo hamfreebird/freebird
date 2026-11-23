@@ -2180,6 +2180,10 @@ impl MirGen {
             "dup" => {
                 self.mir.push(MirInst::RawDup);
             }
+            "roll" => {
+                self.mir.push(MirInst::RawRoll);
+                self.stack.pop();
+            }
             "int_to_str" => {
                 self.mir.push(MirInst::IntToStr);
                 self.stack.pop();

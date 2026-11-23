@@ -743,6 +743,10 @@ impl StardustGen {
             MirInst::RawDup => {
                 self.gen_raw_dup();
             }
+            MirInst::RawRoll => {
+                self.gen_raw_roll();
+                self.stack.pop();
+            }
 
             // ─── 堆操作（stardust! 的 store/load）───
             MirInst::HeapStore => {
@@ -2101,6 +2105,180 @@ impl StardustGen {
         self.raw_inst(done, '`');
     }
 
+    /// `roll(n)`：按 readme §4.2.3 旋转值栈。
+    ///
+    /// - `n > 0`：把从栈顶数位置 `n` 的元素提到栈顶；
+    /// - `n == 0`：no-op；
+    /// - `n < 0`：把栈顶元素放到从栈顶数位置 `|n|`。
+    ///
+    /// `|n| >= len` 时除零陷阱（空栈只有 `n == 0` 合法）。
+    fn gen_raw_roll(&mut self) {
+        self.ensure_raw_stack();
+        self.emit_store_scratch(HEAP_INDEX); // n
+        let done = self.fresh_helper_label();
+        // n == 0 → no-op
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0);
+        self.raw_inst(0, '='); // n == 0
+        self.raw_inst(done, '\'');
+        // 方向：0 < n ?
+        let positive = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(0);
+        self.emit_swap(); // [0, n]
+        self.emit_lt(); // 0 < n
+        self.raw_inst(positive, '\'');
+
+        // ─── 负分支：t = -n，把栈顶放到位置 t ───
+        self.emit_push_int(0);
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_SIZE); // t
+        let neg_ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_lt(); // t < len
+        self.raw_inst(neg_ok, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(neg_ok, '`');
+        // e = block[len-1]
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_VALUE);
+        // i = len-1；while i >= len-t: block[i] = block[i-1]; i--
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_COUNTER);
+        let neg_loop = self.fresh_helper_label();
+        let neg_body = self.fresh_helper_label();
+        let neg_done = self.fresh_helper_label();
+        self.raw_inst(neg_loop, '`');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_sub(); // len - t
+        self.emit_ge(); // i >= len-t
+        self.raw_inst(neg_body, '\'');
+        self.raw_inst(neg_done, '~');
+        self.raw_inst(neg_body, '`');
+        // block[i] = block[i-1]
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.raw_inst(1, '-');
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.raw_inst(neg_loop, '~');
+        self.raw_inst(neg_done, '`');
+        // block[len-1-t] = e
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_sub();
+        self.raw_inst(0, '-');
+        self.raw_inst(done, '~');
+
+        // ─── 正分支：t = n，把位置 t 的元素提到栈顶 ───
+        self.raw_inst(positive, '`');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_store_scratch(HEAP_SIZE); // t
+        let pos_ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_lt(); // t < len（t > 0 已成立）
+        self.raw_inst(pos_ok, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(pos_ok, '`');
+        // e = block[len-1-t]
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_sub();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_VALUE);
+        // i = len-1-t；while i < len-1: block[i] = block[i+1]; i++
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_COUNTER);
+        let pos_loop = self.fresh_helper_label();
+        let pos_body = self.fresh_helper_label();
+        let pos_done = self.fresh_helper_label();
+        self.raw_inst(pos_loop, '`');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_lt(); // i < len-1
+        self.raw_inst(pos_body, '\'');
+        self.raw_inst(pos_done, '~');
+        self.raw_inst(pos_body, '`');
+        // block[i] = block[i+1]
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.raw_inst(pos_loop, '~');
+        self.raw_inst(pos_done, '`');
+        // block[len-1] = e
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.raw_inst(0, '-');
+        self.raw_inst(done, '`');
+    }
+
     /// 惰性分配 unsafe 值栈块（`[len, cap, elems...]`）。
     fn ensure_raw_stack(&mut self) {
         let ready = self.fresh_helper_label();
@@ -2116,22 +2294,74 @@ impl StardustGen {
         self.raw_inst(ready, '`');
     }
 
-    /// 容量检查：已满则除零陷阱。
-    fn raw_capacity_guard(&mut self) {
-        let ok = self.fresh_helper_label();
+    /// 容量不足时把值栈翻倍扩容（`[len, cap, elems...]`）。
+    fn raw_grow_if_needed(&mut self) {
+        let enough = self.fresh_helper_label();
         self.emit_load_scratch(HEAP_RAW_LEN);
-        self.emit_push_int(RAW_CAP + 1);
-        self.emit_lt(); // len < cap+1 ⇔ 未满
-        self.raw_inst(ok, '\'');
-        self.emit_bounds_trap();
-        self.raw_inst(ok, '`');
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-'); // cap
+        self.emit_lt(); // len < cap
+        self.raw_inst(enough, '\'');
+        // cap2 = cap * 2（存 HEAP_CAP：分配器会覆盖 HEAP_SIZE）
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_push_int(2);
+        self.raw_inst(2, '*'); // Mul
+        self.emit_store_scratch(HEAP_CAP);
+        // 分配新块并写头
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_alloc_from_stack();
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_write_header_slot(HEAP_INDEX, 0, HEAP_RAW_LEN);
+        self.emit_write_header_slot(HEAP_INDEX, 1, HEAP_CAP);
+        // 拷贝 len 个元素
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_COUNTER);
+        let loop_start = self.fresh_helper_label();
+        let body = self.fresh_helper_label();
+        let done = self.fresh_helper_label();
+        self.raw_inst(loop_start, '`');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_lt(); // i < len
+        self.raw_inst(body, '\'');
+        self.raw_inst(done, '~');
+        self.raw_inst(body, '`');
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.raw_inst(loop_start, '~');
+        self.raw_inst(done, '`');
+        // 换到新块
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_store_scratch(HEAP_RAW_BLOCK);
+        self.raw_inst(enough, '`');
     }
 
     /// `[value]` → `[]`：把求值栈顶压入 unsafe 值栈。
     fn gen_raw_push(&mut self) {
         self.emit_store_scratch(HEAP_VALUE);
         self.ensure_raw_stack();
-        self.raw_capacity_guard();
+        self.raw_grow_if_needed();
         self.emit_load_scratch(HEAP_RAW_BLOCK);
         self.emit_push_int(BLOCK_HEADER);
         self.emit_add();
@@ -2222,7 +2452,7 @@ impl StardustGen {
     /// `[]` → `[]`：复制 unsafe 值栈顶（空栈触发陷阱）。
     fn gen_raw_dup(&mut self) {
         self.ensure_raw_stack();
-        self.raw_capacity_guard();
+        self.raw_grow_if_needed();
         let ok = self.fresh_helper_label();
         self.emit_load_scratch(HEAP_RAW_LEN);
         self.emit_push_int(0);

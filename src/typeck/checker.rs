@@ -1265,7 +1265,7 @@ impl<'a> TypeChecker<'a> {
         // 值栈内建属于 unsafe 语义：必须出现在 unsafe 块内。
         if self.unsafe_depth == 0
             && let HirExpr::Var(var) = func
-            && matches!(var.name.as_str(), "push" | "pop" | "swap" | "dup")
+            && matches!(var.name.as_str(), "push" | "pop" | "swap" | "dup" | "roll")
         {
             self.error(TypeCheckError::UnsupportedFeature {
                 feature: format!("`{}` outside an `unsafe` block", var.name),

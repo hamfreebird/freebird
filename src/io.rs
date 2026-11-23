@@ -40,6 +40,7 @@ pub const BUILTINS: &[BuiltinDef] = &[
     BuiltinDef { name: "pop", params: &[], returns: &["i64"] },
     BuiltinDef { name: "swap", params: &[], returns: &[] },
     BuiltinDef { name: "dup", params: &[], returns: &[] },
+    BuiltinDef { name: "roll", params: &["i64"], returns: &[] },
     BuiltinDef { name: "min", params: &["i64", "i64"], returns: &["i64"] },
     BuiltinDef { name: "max", params: &["i64", "i64"], returns: &["i64"] },
 ];
