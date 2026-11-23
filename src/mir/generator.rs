@@ -769,6 +769,45 @@ impl MirGen {
                         self.stack.pop();
                         self.stack.push_temp();
                     }
+                    // `Result::ok()` / `Result::err()` → `Option`。
+                    "ok" | "err" => {
+                        self.gen_expr(receiver, fn_sig);
+                        let match_tag = if method == "ok" {
+                            tags.success
+                        } else {
+                            tags.failure
+                        };
+                        let some_tag =
+                            self.type_table.variant_tag("Option", "Some").unwrap_or(1) as i64;
+                        let none_tag =
+                            self.type_table.variant_tag("Option", "None").unwrap_or(0) as i64;
+                        self.mir.push(MirInst::EnumPayloadToOption {
+                            match_tag,
+                            some_tag,
+                            none_tag,
+                        });
+                        self.stack.pop();
+                        self.stack.push_temp();
+                    }
+                    // `Option::ok_or(default)` → `Result`。
+                    "ok_or" => {
+                        self.gen_expr(receiver, fn_sig);
+                        if let Some(arg) = args.first() {
+                            self.gen_expr(arg, fn_sig);
+                        }
+                        let ok_tag =
+                            self.type_table.variant_tag("Result", "Ok").unwrap_or(0) as i64;
+                        let err_tag =
+                            self.type_table.variant_tag("Result", "Err").unwrap_or(1) as i64;
+                        self.mir.push(MirInst::OptionToResult {
+                            some_tag: tags.success,
+                            ok_tag,
+                            err_tag,
+                        });
+                        self.stack.pop();
+                        self.stack.pop();
+                        self.stack.push_temp();
+                    }
                     "is_empty" => {
                         self.gen_expr(receiver, fn_sig);
                         self.mir.push(MirInst::ContainerLen);

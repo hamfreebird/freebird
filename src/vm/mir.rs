@@ -173,6 +173,20 @@ pub enum MirInst {
     Max,                         // pop b, pop a, push max(a, b)
     Unwrap { success_tag: i64 }, // pop enum, push payload; 失败时运行时错误
     UnwrapOr { success_tag: i64 }, // pop default, pop enum; 成功 payload，否则 default
+    /// `Result::ok()`/`Result::err()`：pop 枚举，push Option
+    /// （源 tag == `match_tag` 时取 payload 组成 `[some_tag, payload]`，否则 `[none_tag]`）。
+    EnumPayloadToOption {
+        match_tag: i64,
+        some_tag: i64,
+        none_tag: i64,
+    },
+    /// `Option::ok_or(default)`：pop default、pop Option，push Result
+    /// （源 tag == `some_tag` 时组成 `[ok_tag, payload]`，否则 `[err_tag, default]`）。
+    OptionToResult {
+        some_tag: i64,
+        ok_tag: i64,
+        err_tag: i64,
+    },
 
     // === I/O ===
     NumOut,
@@ -282,6 +296,22 @@ impl std::fmt::Display for MirInst {
             MirInst::Max => write!(f, "Max"),
             MirInst::Unwrap { success_tag } => write!(f, "Unwrap({success_tag})"),
             MirInst::UnwrapOr { success_tag } => write!(f, "UnwrapOr({success_tag})"),
+            MirInst::EnumPayloadToOption {
+                match_tag,
+                some_tag,
+                none_tag,
+            } => write!(
+                f,
+                "EnumPayloadToOption(match_tag={match_tag}, some_tag={some_tag}, none_tag={none_tag})"
+            ),
+            MirInst::OptionToResult {
+                some_tag,
+                ok_tag,
+                err_tag,
+            } => write!(
+                f,
+                "OptionToResult(some_tag={some_tag}, ok_tag={ok_tag}, err_tag={err_tag})"
+            ),
             MirInst::NumOut => write!(f, "NumOut"),
             MirInst::NumIn => write!(f, "NumIn"),
             MirInst::CharOut => write!(f, "CharOut"),

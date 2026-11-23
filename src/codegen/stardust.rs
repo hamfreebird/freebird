@@ -827,6 +827,117 @@ impl StardustGen {
                 self.stack.pop();
                 self.stack.push(Slot::unknown());
             }
+            MirInst::EnumPayloadToOption {
+                match_tag,
+                some_tag,
+                none_tag,
+            } => {
+                // [enum] -> [option]：源 tag 等于 match_tag 时携带 payload。
+                let some_end = self.fresh_helper_label();
+                let end = self.fresh_helper_label();
+                self.emit_store_scratch(HEAP_HANDLE); // 源枚举
+                self.emit_load_scratch(HEAP_HANDLE);
+                self.emit_push_int(BLOCK_HEADER);
+                self.emit_add();
+                self.raw_inst(1, '-');
+                self.emit_push_int(*match_tag);
+                self.raw_inst(0, '=');
+                self.raw_inst(some_end, '\'');
+                // None：单槽块。
+                self.emit_alloc_const(BLOCK_HEADER as usize + 1);
+                self.emit_store_scratch(HEAP_VALUE);
+                self.emit_write_header_const(HEAP_VALUE, 0, 1);
+                self.emit_write_header_const(HEAP_VALUE, 1, 1);
+                self.emit_push_int(*none_tag);
+                self.emit_load_scratch(HEAP_VALUE);
+                self.emit_push_int(BLOCK_HEADER);
+                self.emit_add();
+                self.raw_inst(0, '-');
+                self.emit_load_scratch(HEAP_VALUE);
+                self.raw_inst(end, '~');
+                // Some：标签 + payload。
+                self.raw_inst(some_end, '`');
+                self.emit_alloc_const(BLOCK_HEADER as usize + 2);
+                self.emit_store_scratch(HEAP_VALUE);
+                self.emit_write_header_const(HEAP_VALUE, 0, 2);
+                self.emit_write_header_const(HEAP_VALUE, 1, 2);
+                self.emit_push_int(*some_tag);
+                self.emit_load_scratch(HEAP_VALUE);
+                self.emit_push_int(BLOCK_HEADER);
+                self.emit_add();
+                self.raw_inst(0, '-');
+                self.emit_load_scratch(HEAP_HANDLE);
+                self.emit_push_int(BLOCK_HEADER + 1);
+                self.emit_add();
+                self.raw_inst(1, '-');
+                self.emit_load_scratch(HEAP_VALUE);
+                self.emit_push_int(BLOCK_HEADER + 1);
+                self.emit_add();
+                self.raw_inst(0, '-');
+                self.emit_load_scratch(HEAP_VALUE);
+                self.raw_inst(end, '`');
+                self.stack.pop();
+                self.stack.push(Slot::unknown());
+            }
+            MirInst::OptionToResult {
+                some_tag,
+                ok_tag,
+                err_tag,
+            } => {
+                // [option, default] -> [result]
+                let some_end = self.fresh_helper_label();
+                let end = self.fresh_helper_label();
+                self.emit_store_scratch(HEAP_VALUE); // default
+                self.emit_store_scratch(HEAP_HANDLE); // option
+                self.emit_load_scratch(HEAP_HANDLE);
+                self.emit_push_int(BLOCK_HEADER);
+                self.emit_add();
+                self.raw_inst(1, '-');
+                self.emit_push_int(*some_tag);
+                self.raw_inst(0, '=');
+                self.raw_inst(some_end, '\'');
+                // Err：标签 + default。
+                self.emit_alloc_const(BLOCK_HEADER as usize + 2);
+                self.emit_store_scratch(HEAP_INDEX);
+                self.emit_write_header_const(HEAP_INDEX, 0, 2);
+                self.emit_write_header_const(HEAP_INDEX, 1, 2);
+                self.emit_push_int(*err_tag);
+                self.emit_load_scratch(HEAP_INDEX);
+                self.emit_push_int(BLOCK_HEADER);
+                self.emit_add();
+                self.raw_inst(0, '-');
+                self.emit_load_scratch(HEAP_VALUE);
+                self.emit_load_scratch(HEAP_INDEX);
+                self.emit_push_int(BLOCK_HEADER + 1);
+                self.emit_add();
+                self.raw_inst(0, '-');
+                self.emit_load_scratch(HEAP_INDEX);
+                self.raw_inst(end, '~');
+                // Ok：标签 + payload。
+                self.raw_inst(some_end, '`');
+                self.emit_alloc_const(BLOCK_HEADER as usize + 2);
+                self.emit_store_scratch(HEAP_INDEX);
+                self.emit_write_header_const(HEAP_INDEX, 0, 2);
+                self.emit_write_header_const(HEAP_INDEX, 1, 2);
+                self.emit_push_int(*ok_tag);
+                self.emit_load_scratch(HEAP_INDEX);
+                self.emit_push_int(BLOCK_HEADER);
+                self.emit_add();
+                self.raw_inst(0, '-');
+                self.emit_load_scratch(HEAP_HANDLE);
+                self.emit_push_int(BLOCK_HEADER + 1);
+                self.emit_add();
+                self.raw_inst(1, '-');
+                self.emit_load_scratch(HEAP_INDEX);
+                self.emit_push_int(BLOCK_HEADER + 1);
+                self.emit_add();
+                self.raw_inst(0, '-');
+                self.emit_load_scratch(HEAP_INDEX);
+                self.raw_inst(end, '`');
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push(Slot::unknown());
+            }
 
             // ─── I/O ───
             MirInst::NumOut => {

@@ -1486,10 +1486,11 @@ impl<'a> TypeChecker<'a> {
             "Result" => ("Ok", "Err"),
             _ => return None,
         };
-        if !matches!(
-            method,
-            "is_some" | "is_none" | "is_ok" | "is_err" | "unwrap" | "unwrap_or"
-        ) {
+        let allowed: &[&str] = match enum_name {
+            "Option" => &["is_some", "is_none", "unwrap", "unwrap_or", "ok_or"],
+            _ => &["is_ok", "is_err", "unwrap", "unwrap_or", "ok", "err"],
+        };
+        if !allowed.contains(&method) {
             return None;
         }
         let (Some(success), Some(failure)) = (
@@ -1532,6 +1533,31 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 Some(payload_ty)
+            }
+            // `Result::ok()` → `Option<T>`，`Result::err()` → `Option<E>`。
+            "ok" | "err" => {
+                self.check_method_arity(method, 0, args.len(), span);
+                let inner = if method == "ok" {
+                    payload_ty
+                } else {
+                    enum_args.get(1).cloned().unwrap_or(HirType::Unknown)
+                };
+                Some(HirType::Generic(
+                    Box::new(HirType::Path(vec!["Option".to_string()])),
+                    vec![inner],
+                ))
+            }
+            // `Option::ok_or(err)` → `Result<T, E>`。
+            "ok_or" => {
+                self.check_method_arity(method, 1, args.len(), span);
+                let err_ty = args
+                    .first()
+                    .map(|arg| self.check_expr(arg))
+                    .unwrap_or(HirType::Unknown);
+                Some(HirType::Generic(
+                    Box::new(HirType::Path(vec!["Result".to_string()])),
+                    vec![payload_ty, err_ty],
+                ))
             }
             _ => None,
         }

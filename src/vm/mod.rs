@@ -881,6 +881,64 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
+            MirInst::EnumPayloadToOption {
+                match_tag,
+                some_tag,
+                none_tag,
+            } => {
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let converted = match &value {
+                    Value::Tuple(values) => {
+                        let tag = values
+                            .first()
+                            .and_then(Value::as_i64)
+                            .unwrap_or(i64::MIN);
+                        if tag == *match_tag {
+                            Value::Tuple(vec![
+                                Value::I32(*some_tag),
+                                values.get(1).cloned().unwrap_or(Value::Unit),
+                            ])
+                        } else {
+                            Value::Tuple(vec![Value::I32(*none_tag)])
+                        }
+                    }
+                    other => {
+                        return Err(VmError::TypeMismatch {
+                            expected: "enum".to_string(),
+                            found: other.type_name().to_string(),
+                        });
+                    }
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, converted);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::OptionToResult {
+                some_tag,
+                ok_tag,
+                err_tag,
+            } => {
+                let mut frame = self.pop_frame()?;
+                let (_, default) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let converted = match &value {
+                    Value::Tuple(values)
+                        if values.first().and_then(Value::as_i64) == Some(*some_tag) =>
+                    {
+                        Value::Tuple(vec![
+                            Value::I32(*ok_tag),
+                            values.get(1).cloned().unwrap_or(Value::Unit),
+                        ])
+                    }
+                    _ => Value::Tuple(vec![Value::I32(*err_tag), default.clone()]),
+                };
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, converted);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
 
             // === I/O ===
             MirInst::NumOut => {

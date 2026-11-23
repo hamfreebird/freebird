@@ -525,3 +525,43 @@ fn main() {
     );
 }
 
+
+#[test]
+fn option_result_conversions_match() {
+    let source = r#"
+fn main() {
+    let ok: Result<i64, bool> = Result::Ok(7);
+    let o = ok.ok();
+    print(o.is_some() as i64);
+    print(o.unwrap());
+
+    let bad: Result<i64, bool> = Result::Err(true);
+    let e = bad.err();
+    print(e.is_some() as i64);
+    print(e.unwrap() as i64);
+
+    let none: Option<i64> = Option::None;
+    let r = none.ok_or(5);
+    print(r.is_err() as i64);
+    print(r.unwrap_or(9));
+
+    let some: Option<i64> = Option::Some(3);
+    let r2 = some.ok_or(5);
+    print(r2.is_ok() as i64);
+    print(r2.unwrap());
+}
+"#;
+    assert_same_output(source, "option_result_conversions", b"");
+}
+
+#[test]
+fn ok_or_argument_type_is_checked() {
+    let errors = check_source(
+        "fn main() { let o: Option<i64> = Option::None; let r: Result<i64, bool> = o.ok_or(1); }",
+    )
+    .expect_err("ok_or with mismatched error type should be rejected");
+    assert!(
+        errors.join("\n").contains("type mismatch"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}
