@@ -1273,11 +1273,11 @@ impl<'a> TypeChecker<'a> {
                 }
                 _ => {
                     if let HirType::FnPtr(params, rets) = &func_ty {
-                        if rets.len() != 1 {
+                        // 多返回值间接调用仍待实现（MIR 的元组解构按单返回值假设）。
+                        if rets.len() > 1 {
                             self.error(TypeCheckError::UnsupportedFeature {
-                                feature: "function pointer calls with a non-single return"
-                                    .to_string(),
-                                reference: "M2-4 MVP: indirect calls return exactly one value"
+                                feature: "indirect calls with multiple return values".to_string(),
+                                reference: "M2-4: multiple returns via function pointers are pending"
                                     .to_string(),
                                 span,
                             });

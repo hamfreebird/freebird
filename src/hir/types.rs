@@ -258,8 +258,14 @@ impl HirType {
             }
             ast::Type::FnPtr(params, ret, _) => {
                 let p: Vec<HirType> = params.iter().map(HirType::from_ast_type).collect();
+                // 返回类型列表与函数声明保持一致：`-> (A, B)` 表示两个返回值。
                 let r = match ret {
-                    Some(rt) => vec![HirType::from_ast_type(rt)],
+                    Some(rt) => match rt.as_ref() {
+                        ast::Type::Tuple(types, _) => {
+                            types.iter().map(HirType::from_ast_type).collect()
+                        }
+                        other => vec![HirType::from_ast_type(other)],
+                    },
                     None => vec![],
                 };
                 HirType::FnPtr(p, r)

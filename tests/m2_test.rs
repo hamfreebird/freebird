@@ -649,3 +649,27 @@ fn reference_receiver_is_explicitly_unsupported() {
         "unexpected diagnostics: {errors:?}"
     );
 }
+
+#[test]
+fn zero_return_function_pointer_matches() {
+    let source = r#"
+fn noop(x: i64) { print(x); }
+fn main() {
+    let g: fn(i64) = noop;
+    g(7);
+}
+"#;
+    assert_same_output(source, "fnptr_zero_return", b"");
+}
+
+#[test]
+fn multi_return_function_pointer_is_explicitly_unsupported() {
+    let errors = check_source(
+        "fn pair() -> (i64, i64) { (3, 4) }\nfn main() {\n    let h: fn() -> (i64, i64) = pair;\n    let (a, b) = h();\n    print(a);\n}",
+    )
+    .expect_err("multi-return indirect call should be rejected explicitly");
+    assert!(
+        errors.join("\n").contains("multiple return values"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}

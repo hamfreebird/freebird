@@ -940,15 +940,18 @@ impl MirGen {
                     if !self.reachable {
                         return;
                     }
+                    let ret_count = call_sig.as_ref().map_or(0, |s| s.m);
                     self.mir.push(MirInst::CallIndirect {
                         argc: args.len() as u32,
-                        return_arity: 1,
+                        return_arity: ret_count,
                     });
                     self.stack.pop(); // fnptr
                     for _ in 0..args.len() {
                         self.stack.pop();
                     }
-                    self.stack.push_temp(); // MVP: 间接调用固定一个返回值
+                    for _ in 0..ret_count {
+                        self.stack.push_temp();
+                    }
                     return;
                 }
 
