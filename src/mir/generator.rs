@@ -2165,6 +2165,21 @@ impl MirGen {
                 self.stack.pop();
                 self.stack.push_temp();
             }
+            // unsafe 值栈内建（ADR 0004）。
+            "push" => {
+                self.mir.push(MirInst::RawPush);
+                self.stack.pop();
+            }
+            "pop" => {
+                self.mir.push(MirInst::RawPop);
+                self.stack.push_temp();
+            }
+            "swap" => {
+                self.mir.push(MirInst::RawSwap);
+            }
+            "dup" => {
+                self.mir.push(MirInst::RawDup);
+            }
             "int_to_str" => {
                 self.mir.push(MirInst::IntToStr);
                 self.stack.pop();

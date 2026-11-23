@@ -35,6 +35,11 @@ pub const BUILTINS: &[BuiltinDef] = &[
     BuiltinDef { name: "abs", params: &["i64"], returns: &["i64"] },
     BuiltinDef { name: "int_to_str", params: &["i64"], returns: &["String"] },
     BuiltinDef { name: "str_to_int", params: &["String"], returns: &["Option<i64>"] },
+    // unsafe 块的低级栈内建（ADR 0004）。
+    BuiltinDef { name: "push", params: &["i64"], returns: &[] },
+    BuiltinDef { name: "pop", params: &[], returns: &["i64"] },
+    BuiltinDef { name: "swap", params: &[], returns: &[] },
+    BuiltinDef { name: "dup", params: &[], returns: &[] },
     BuiltinDef { name: "min", params: &["i64", "i64"], returns: &["i64"] },
     BuiltinDef { name: "max", params: &["i64", "i64"], returns: &["i64"] },
 ];

@@ -39,6 +39,8 @@ pub struct Vm {
     pub fn_table: FnTable,
     /// 输出缓冲区
     pub output: Vec<u8>,
+    /// unsafe 值栈（ADR 0004）：跨函数调用保留。
+    raw_stack: Vec<Value>,
     /// 预置的标准输入缓冲（优先于真实 stdin）
     input: Vec<u8>,
     /// 输入缓冲读取位置
@@ -64,6 +66,7 @@ impl Vm {
             step_count: 0,
             fn_table: HashMap::new(),
             output: Vec::new(),
+            raw_stack: Vec::new(),
             input,
             input_pos: 0,
             heap: HashMap::new(),
@@ -798,6 +801,46 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
+            // === unsafe 值栈（ADR 0004）===
+            MirInst::RawPush => {
+                let mut frame = self.pop_frame()?;
+                let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+                self.raw_stack.push(value);
+            }
+            MirInst::RawPop => {
+                let value = self.raw_stack.pop().ok_or_else(|| {
+                    VmError::AssertionFailed("pop on empty raw stack".to_string())
+                })?;
+                let new_id = self.id_alloc.alloc_element();
+                let mut frame = self.pop_frame()?;
+                frame.data.push(new_id, value);
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RawSwap => {
+                let len = self.raw_stack.len();
+                if len < 2 {
+                    return Err(VmError::AssertionFailed(
+                        "swap requires at least 2 elements on the raw stack".to_string(),
+                    ));
+                }
+                self.raw_stack.swap(len - 1, len - 2);
+                let mut frame = self.pop_frame()?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RawDup => {
+                let value = self.raw_stack.last().cloned().ok_or_else(|| {
+                    VmError::AssertionFailed("dup on empty raw stack".to_string())
+                })?;
+                self.raw_stack.push(value);
+                let mut frame = self.pop_frame()?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+
             // === 堆操作（stardust! 的 store/load）===
             MirInst::HeapStore => {
                 // 栈布局：[value, addr]；Store 弹出地址，再弹出值。

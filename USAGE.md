@@ -47,6 +47,7 @@ freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 ## 当前实现状态
 
 - VM 已支持数值/字符/布尔、变量与作用域、控制流、函数调用/递归、数组、结构体、枚举匹配、`Vec`、`Box`、字符串、元组解构以及 `read_*`/`print_*`/文件 I/O。
+- unsafe 值栈：`unsafe` 块内可用 `push(x)`/`pop()`/`swap()`/`dup()` 操作一个独立的值栈（跨函数调用保留，容量 64；空栈 pop、不足两个元素的 swap/dup 会报运行时错误）。详见 `docs/adr/0004-unsafe-raw-stack.md`。
 - 模块：`mod util;` 加载同目录 `util.fb`（其顶层函数注册为 `util::f`），`use util::f;` 引入别名；循环依赖会报错。模块内的结构体/枚举暂不加前缀。
 - 标准库（MVP）：内建 `Option<T>` / `Result<T, E>` 泛型枚举；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`/`ok_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`/`ok`/`err`；数学内建 `abs`/`min`/`max`；`Vec`/`String` 支持 `len`/`push`/`pop`/`is_empty`/`clear`。用户可为结构体/枚举声明 `impl Type { fn f(self) -> T { ... } }`：关联函数用 `Type::f(...)` 调用，值接收者方法用 `x.f(...)` 调用（`self.field` 访问字段）。`&self` 只读方法（`fn area(&self)`）与 `&mut self` 写方法（`fn grow(&mut self)`，`self.field = v` 会写回调用方的变量）均已支持。字符串转换提供 `int_to_str(i64) -> String`（双后端）与 `str_to_int(String) -> Option<i64>`（双后端）。`Option::map` / `Result::map` 也已可用（双后端）。
 - 运行前会执行名称解析、类型检查和借用/移动检查；`check` 与 `run` 报告同一组前端错误。

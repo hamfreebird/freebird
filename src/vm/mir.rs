@@ -164,6 +164,12 @@ pub enum MirInst {
     MakeEnum { variant: usize, data_slots: u32 },
     EnumTag { total_slots: u32 }, // 读取枚举标签（total_slots = 1 + max_data_slots）
 
+    // === unsafe 值栈（ADR 0004）===
+    RawPush, // 把求值栈顶移入值栈
+    RawPop,  // 把值栈顶移回求值栈
+    RawSwap, // 交换值栈顶两个元素
+    RawDup,  // 复制值栈顶
+
     // === 堆操作（stardust! 的 store/load）===
     HeapStore,                   // 堆写：pop addr, pop value, heap[addr] = value
     HeapLoad,                    // 堆读：pop addr, push heap[addr]
@@ -295,6 +301,10 @@ impl std::fmt::Display for MirInst {
                 data_slots,
             } => write!(f, "MakeEnum(variant={variant}, data_slots={data_slots})"),
             MirInst::EnumTag { total_slots } => write!(f, "EnumTag(total_slots={total_slots})"),
+            MirInst::RawPush => write!(f, "RawPush"),
+            MirInst::RawPop => write!(f, "RawPop"),
+            MirInst::RawSwap => write!(f, "RawSwap"),
+            MirInst::RawDup => write!(f, "RawDup"),
             MirInst::HeapStore => write!(f, "HeapStore"),
             MirInst::HeapLoad => write!(f, "HeapLoad"),
             MirInst::Abs => write!(f, "Abs"),

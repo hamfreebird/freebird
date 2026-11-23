@@ -758,3 +758,34 @@ fn circular_module_dependency_is_reported() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn unsafe_raw_stack_matches() {
+    let source = r#"
+fn main() {
+    unsafe {
+        push(1);
+        push(2);
+        swap();
+        print(pop());
+        print(pop());
+    }
+}
+"#;
+    assert_same_output(source, "raw_stack", b"");
+}
+
+#[test]
+fn unsafe_raw_dup_matches() {
+    let source = r#"
+fn main() {
+    unsafe {
+        push(7);
+        dup();
+        print(pop());
+        print(pop());
+    }
+}
+"#;
+    assert_same_output(source, "raw_dup", b"");
+}

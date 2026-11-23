@@ -50,6 +50,13 @@ const HEAP_FREE_LIST: usize = 10;
 const HEAP_ALLOC_CURSOR: usize = 11;
 /// `Vec` 扩容时保存新容量（避免被分配器覆盖 `HEAP_SIZE`）。
 const HEAP_CAP: usize = 12;
+/// unsafe 值栈的元素个数。
+const HEAP_RAW_LEN: usize = 14;
+/// unsafe 值栈的块句柄（0 = 尚未分配）。
+const HEAP_RAW_BLOCK: usize = 15;
+/// unsafe 值栈的初始容量。
+const RAW_CAP: i64 = 64;
+
 /// 第一个可分配的堆块地址。
 const HEAP_BASE: i64 = 16;
 /// 堆块头部长度：`[len, cap, elems...]`。
@@ -719,6 +726,22 @@ impl StardustGen {
             MirInst::EnumTag { .. } => {
                 self.gen_enum_tag();
                 self.stack.push(Slot::unknown());
+            }
+
+            // ─── unsafe 值栈（ADR 0004）───
+            MirInst::RawPush => {
+                self.gen_raw_push();
+                self.stack.pop();
+            }
+            MirInst::RawPop => {
+                self.gen_raw_pop();
+                self.stack.push(Slot::unknown());
+            }
+            MirInst::RawSwap => {
+                self.gen_raw_swap();
+            }
+            MirInst::RawDup => {
+                self.gen_raw_dup();
             }
 
             // ─── 堆操作（stardust! 的 store/load）───
@@ -2076,6 +2099,160 @@ impl StardustGen {
         self.raw_inst(none_path, '`');
         self.gen_push_empty_enum(none_tag);
         self.raw_inst(done, '`');
+    }
+
+    /// 惰性分配 unsafe 值栈块（`[len, cap, elems...]`）。
+    fn ensure_raw_stack(&mut self) {
+        let ready = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(0);
+        self.emit_swap();
+        self.emit_lt(); // 0 < block ⇔ 已分配
+        self.raw_inst(ready, '\'');
+        self.emit_alloc_const(BLOCK_HEADER as usize + RAW_CAP as usize);
+        self.emit_store_scratch(HEAP_RAW_BLOCK);
+        self.emit_write_header_const(HEAP_RAW_BLOCK, 0, 0);
+        self.emit_write_header_const(HEAP_RAW_BLOCK, 1, RAW_CAP);
+        self.raw_inst(ready, '`');
+    }
+
+    /// 容量检查：已满则除零陷阱。
+    fn raw_capacity_guard(&mut self) {
+        let ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(RAW_CAP + 1);
+        self.emit_lt(); // len < cap+1 ⇔ 未满
+        self.raw_inst(ok, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(ok, '`');
+    }
+
+    /// `[value]` → `[]`：把求值栈顶压入 unsafe 值栈。
+    fn gen_raw_push(&mut self) {
+        self.emit_store_scratch(HEAP_VALUE);
+        self.ensure_raw_stack();
+        self.raw_capacity_guard();
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_swap();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_RAW_LEN);
+    }
+
+    /// `[]` → `[value]`：弹出 unsafe 值栈顶（空栈触发陷阱）。
+    fn gen_raw_pop(&mut self) {
+        self.ensure_raw_stack();
+        let ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(0);
+        self.emit_swap();
+        self.emit_lt(); // 0 < len
+        self.raw_inst(ok, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(ok, '`');
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.emit_store_scratch(HEAP_RAW_LEN);
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.raw_inst(1, '-');
+    }
+
+    /// `[]` → `[]`：交换 unsafe 值栈顶两个（不足两个触发陷阱）。
+    fn gen_raw_swap(&mut self) {
+        self.ensure_raw_stack();
+        let ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(1);
+        self.emit_swap();
+        self.emit_lt(); // 1 < len ⇔ len >= 2
+        self.raw_inst(ok, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(ok, '`');
+        // tmp = block[len-1]
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_VALUE);
+        // block[len-1] = block[len-2]
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(2);
+        self.emit_sub();
+        self.raw_inst(1, '-');
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.raw_inst(0, '-');
+        // block[len-2] = tmp
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(2);
+        self.emit_sub();
+        self.raw_inst(0, '-');
+    }
+
+    /// `[]` → `[]`：复制 unsafe 值栈顶（空栈触发陷阱）。
+    fn gen_raw_dup(&mut self) {
+        self.ensure_raw_stack();
+        self.raw_capacity_guard();
+        let ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(0);
+        self.emit_swap();
+        self.emit_lt(); // 0 < len
+        self.raw_inst(ok, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(ok, '`');
+        // tmp = block[len-1]
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.emit_push_int(1);
+        self.emit_sub();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_VALUE);
+        // block[len] = tmp
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_load_scratch(HEAP_RAW_BLOCK);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_add();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_RAW_LEN);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_RAW_LEN);
     }
 
     fn gen_enum_tag(&mut self) {
