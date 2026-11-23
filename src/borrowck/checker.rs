@@ -590,6 +590,10 @@ impl BorrowChecker {
         match expr {
             HirExpr::Lit(_, _) | HirExpr::Ret(_, _) => {}
             HirExpr::Var(var) => {
+                if var.scope_depth == usize::MAX {
+                    // 函数名/类型名不是变量，借用检查忽略。
+                    return;
+                }
                 let result = self.check_read(&var.name, var.span);
                 self.record(result);
                 self.note_use(&var.name);
@@ -769,6 +773,13 @@ impl BorrowChecker {
                 self.exit_scope();
             }
             HirExpr::Block(block, _) => self.check_block(block),
+            HirExpr::Labelled(_, inner, _) => self.check_expr(inner),
+            HirExpr::BreakLabel(_, value, _) => {
+                if let Some(e) = value {
+                    self.check_expr(e);
+                }
+            }
+            HirExpr::ContinueLabel(_, _) => {}
             HirExpr::Break(value, _) => {
                 if let Some(e) = value {
                     self.check_expr(e);
@@ -891,12 +902,18 @@ fn count_uses_stmt(stmt: &HirStmt, uses: &mut HashMap<String, usize>) {
 fn count_uses_expr(expr: &HirExpr, uses: &mut HashMap<String, usize>) {
     match expr {
         HirExpr::Var(var) => {
-            *uses.entry(var.name.clone()).or_insert(0) += 1;
+            if var.scope_depth != usize::MAX {
+                *uses.entry(var.name.clone()).or_insert(0) += 1;
+            }
         }
         HirExpr::IdRef(name, _) => {
             *uses.entry(name.clone()).or_insert(0) += 1;
         }
-        HirExpr::Lit(_, _) | HirExpr::Ret(_, _) | HirExpr::Continue(_) | HirExpr::StardustMacro(_, _) => {}
+        HirExpr::Lit(_, _)
+        | HirExpr::Ret(_, _)
+        | HirExpr::Continue(_)
+        | HirExpr::ContinueLabel(_, _)
+        | HirExpr::StardustMacro(_, _) => {}
         HirExpr::Deref(inner, _)
         | HirExpr::Unary(_, inner, _)
         | HirExpr::FieldAccess(inner, _, _)
@@ -961,6 +978,12 @@ fn count_uses_expr(expr: &HirExpr, uses: &mut HashMap<String, usize>) {
         }
         HirExpr::Loop(block, _) | HirExpr::Unsafe(block, _) | HirExpr::Block(block, _) => {
             count_uses_block(block, uses);
+        }
+        HirExpr::Labelled(_, inner, _) => count_uses_expr(inner, uses),
+        HirExpr::BreakLabel(_, value, _) => {
+            if let Some(e) = value {
+                count_uses_expr(e, uses);
+            }
         }
         HirExpr::While(cond, block, _) => {
             count_uses_expr(cond, uses);

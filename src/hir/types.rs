@@ -124,8 +124,14 @@ pub enum HirExpr {
         span: Span,
     },
     Block(HirBlock, Span),
+    /// 带标签的循环: 'outer: loop { ... }
+    Labelled(String, Box<HirExpr>, Span),
     Break(Option<Box<HirExpr>>, Span),
+    /// break 'label [value]
+    BreakLabel(String, Option<Box<HirExpr>>, Span),
     Continue(Span),
+    /// continue 'label
+    ContinueLabel(String, Span),
     Return(Vec<HirExpr>, Span),
     Ret(i32, Span),
     Unsafe(HirBlock, Span),

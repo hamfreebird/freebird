@@ -362,6 +362,12 @@ impl StardustGen {
 
             // ─── 栈操作 ───
             MirInst::Push { value, .. } => {
+                if let Value::FnPtr(id) = value {
+                    // 函数指针用 FnId 整数表示，间接调用由 dispatch 解析。
+                    self.emit_push_int(id.0 as i64);
+                    self.stack.push(Slot::unknown());
+                    return;
+                }
                 let (constant, call_element) = classify_value(value);
                 if let Value::Tuple(elems) = value {
                     // 字符串字面量与元组字面量都建成堆上的定长块。
@@ -522,6 +528,9 @@ impl StardustGen {
                 self.reachable = false;
             }
             MirInst::Call { fn_id, .. } => self.gen_call(*fn_id),
+            MirInst::CallIndirect { argc, return_arity } => {
+                self.gen_call_indirect(*argc, *return_arity);
+            }
             MirInst::Ret { argc } => {
                 self.emit_return(*argc);
             }
@@ -992,8 +1001,52 @@ impl StardustGen {
 
     // ─── 函数调用 / 返回 ───
 
-    fn gen_call(&mut self, fn_id: FnId) {
-        let info = self.fn_info.get(&fn_id).cloned();
+    /// 间接调用：栈布局 `[args..., fnptr]`。
+    ///
+    /// Stardust 没有间接调用原语，这里按 FnId 生成一组比较 + 直接调用。
+    fn gen_call_indirect(&mut self, argc: u32, return_arity: u32) {
+        let end = self.fresh_helper_label();
+        let mut targets: Vec<(FnId, FnInfo)> = self
+            .fn_info
+            .iter()
+            .filter(|(_, info)| info.params == argc && info.returns == return_arity)
+            .map(|(id, info)| (*id, info.clone()))
+            .collect();
+        targets.sort_by_key(|(id, _)| id.0);
+
+        let mut labels = Vec::with_capacity(targets.len());
+        for (id, info) in targets {
+            let label = self.fresh_helper_label();
+            self.emit_dup();
+            self.emit_push_int(id.0 as i64);
+            self.raw_inst(0, '='); // Eq
+            self.raw_inst(label, '\'');
+            labels.push((id, info, label));
+        }
+        // 没有匹配的 FnId：运行时陷阱。
+        self.emit_bounds_trap();
+
+        for (id, info, label) in labels {
+            self.raw_inst(label, '`');
+            self.emit_pop(); // fnptr
+            self.emit_push_int(info.params as i64); // CallElement
+            // 只把 CallElement 下移到参数下方，不能越过调用者的变量槽。
+            self.emit_roll(-(argc as i32));
+            self.emit_call(id, info.params + 1);
+            self.raw_inst(end, '~');
+        }
+        self.raw_inst(end, '`');
+
+        for _ in 0..argc {
+            self.stack.pop();
+        }
+        self.stack.pop(); // fnptr
+        for _ in 0..return_arity {
+            self.stack.push(Slot::unknown());
+        }
+    }
+
+    fn gen_call(&mut self, fn_id: FnId) {        let info = self.fn_info.get(&fn_id).cloned();
         if info.is_none() || fn_id.0 == 0 {
             self.emit_comment(&format!(
                 "ERROR: call to unknown FnId({}); call skipped",

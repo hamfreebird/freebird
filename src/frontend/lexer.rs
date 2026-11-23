@@ -547,6 +547,34 @@ impl Lexer {
             return Token::new(TokenKind::Error("unterminated char".to_string()), start_span);
         }
 
+        // 循环标签：`'outer`。若紧跟单个标识符字符和闭合引号，则仍是字符字面量。
+        if self.current_char().is_ascii_alphabetic() || self.current_char() == '_' {
+            let mut name = String::new();
+            while !self.is_eof()
+                && (self.current_char().is_ascii_alphanumeric() || self.current_char() == '_')
+            {
+                name.push(self.current_char());
+                self.advance();
+            }
+            if !self.is_eof() && self.current_char() == '\'' {
+                if name.chars().count() == 1 {
+                    self.advance(); // skip closing '
+                    let ch = name.chars().next().unwrap() as u32;
+                    return Token::new(TokenKind::CharLiteral(ch), start_span);
+                }
+                self.errors.push(FrontendError::new(
+                    FrontendErrorKind::UnterminatedChar,
+                    start_span,
+                ));
+                self.advance();
+                return Token::new(
+                    TokenKind::Error("invalid char literal".to_string()),
+                    start_span,
+                );
+            }
+            return Token::new(TokenKind::Label(name), start_span);
+        }
+
         let ch_val = if self.current_char() == '\\' {
             self.advance();
             match self.lex_escape() {

@@ -70,6 +70,11 @@ pub enum TypeCheckError {
         keyword: &'static str,
         span: Span,
     },
+    /// `break 'label` / `continue 'label` 找不到对应标签。
+    UnknownLoopLabel {
+        label: String,
+        span: Span,
+    },
     /// M0 尚未实现 `break value`；必须显式拒绝，不能按 unit 静默处理。
     BreakWithValue {
         span: Span,
@@ -137,6 +142,7 @@ impl TypeCheckError {
             | TypeCheckError::ArgumentCountMismatch { span, .. }
             | TypeCheckError::ReturnArityMismatch { span, .. }
             | TypeCheckError::LoopControlOutsideLoop { span, .. }
+            | TypeCheckError::UnknownLoopLabel { span, .. }
             | TypeCheckError::BreakWithValue { span }
             | TypeCheckError::LoopUsedAsValue { span }
             | TypeCheckError::NonExhaustiveMatch { span, .. }
@@ -213,6 +219,9 @@ impl std::fmt::Display for TypeCheckError {
             TypeCheckError::LoopControlOutsideLoop { keyword, span } => {
                 write!(f, "{span}: `{keyword}` can only be used inside a loop")
             }
+            TypeCheckError::UnknownLoopLabel { label, span } => {
+                write!(f, "{span}: unknown loop label `'{label}`")
+            }
             TypeCheckError::BreakWithValue { span } => write!(
                 f,
                 "{span}: `break value` is only supported inside `loop`; use `break` without a value"
@@ -274,6 +283,8 @@ struct LoopCheckContext {
     is_loop: bool,
     /// 所有 `break` 值合并出的结果类型。
     result_ty: Option<HirType>,
+    /// 可选的循环标签。
+    label: Option<String>,
 }
 
 /// 基础类型检查器
@@ -288,6 +299,8 @@ pub struct TypeChecker<'a> {
     loop_depth: usize,
     /// 循环上下文栈：记录最近循环是否为 `loop` 以及 `break` 值类型。
     loop_contexts: Vec<LoopCheckContext>,
+    /// 下一个循环表达式要使用的标签（由 `Labelled` 设置）。
+    pending_loop_label: Option<String>,
     errors: Vec<TypeCheckError>,
     warnings: Vec<TypeCheckWarning>,
 }
@@ -316,6 +329,7 @@ impl<'a> TypeChecker<'a> {
             fn_stack: Vec::new(),
             loop_depth: 0,
             loop_contexts: Vec::new(),
+            pending_loop_label: None,
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -626,8 +640,15 @@ impl<'a> TypeChecker<'a> {
             HirExpr::Lit(lit, _) => literal_type(lit),
             HirExpr::Var(var) => {
                 if var.scope_depth == usize::MAX {
-                    // 函数名/类型名占位，仅作为调用目标等场景使用
-                    HirType::Unknown
+                    // 函数名作为值：暴露为函数指针类型；类型名仍是 Unknown。
+                    if let Some(sig) = self.functions.get(&var.name) {
+                        HirType::FnPtr(
+                            sig.params.iter().map(|(_, ty)| ty.clone()).collect(),
+                            sig.return_types.clone(),
+                        )
+                    } else {
+                        HirType::Unknown
+                    }
                 } else {
                     self.lookup(&var.name).cloned().unwrap_or(HirType::Unknown)
                 }
@@ -846,6 +867,7 @@ impl<'a> TypeChecker<'a> {
                 self.loop_contexts.push(LoopCheckContext {
                     is_loop: true,
                     result_ty: None,
+                    label: self.pending_loop_label.take(),
                 });
                 self.check_block(body);
                 let ctx = self.loop_contexts.pop().expect("loop context");
@@ -859,6 +881,7 @@ impl<'a> TypeChecker<'a> {
                 self.loop_contexts.push(LoopCheckContext {
                     is_loop: false,
                     result_ty: None,
+                    label: self.pending_loop_label.take(),
                 });
                 self.check_block(body);
                 self.loop_contexts.pop();
@@ -874,6 +897,7 @@ impl<'a> TypeChecker<'a> {
                 self.loop_contexts.push(LoopCheckContext {
                     is_loop: false,
                     result_ty: None,
+                    label: self.pending_loop_label.take(),
                 });
                 self.check_block(body);
                 self.loop_contexts.pop();
@@ -882,6 +906,90 @@ impl<'a> TypeChecker<'a> {
                 HirType::Unit
             }
             HirExpr::Block(block, _) => self.check_block(block),
+            HirExpr::Labelled(label, inner, span) => {
+                if !matches!(
+                    inner.as_ref(),
+                    HirExpr::Loop(..) | HirExpr::While(..) | HirExpr::For { .. }
+                ) {
+                    self.error(TypeCheckError::UnsupportedFeature {
+                        feature: "loop label on a non-loop expression".to_string(),
+                        reference: "M2-6: labels apply to loop/while/for".to_string(),
+                        span: *span,
+                    });
+                }
+                let previous = self.pending_loop_label.replace(label.clone());
+                let ty = self.check_expr(inner);
+                self.pending_loop_label = previous;
+                ty
+            }
+            HirExpr::BreakLabel(label, value, span) => {
+                let Some(idx) = self
+                    .loop_contexts
+                    .iter()
+                    .rposition(|ctx| ctx.label.as_deref() == Some(label.as_str()))
+                else {
+                    if let Some(value) = value {
+                        self.check_expr(value);
+                    }
+                    self.error(TypeCheckError::UnknownLoopLabel {
+                        label: label.clone(),
+                        span: *span,
+                    });
+                    return HirType::Never;
+                };
+                let is_loop = self.loop_contexts[idx].is_loop;
+                if let Some(value) = value {
+                    let value_ty = self.check_expr(value);
+                    if !is_loop {
+                        self.error(TypeCheckError::BreakWithValue { span: *span });
+                    } else {
+                        let expected = self.loop_contexts[idx].result_ty.clone();
+                        match expected {
+                            None => self.loop_contexts[idx].result_ty = Some(value_ty),
+                            Some(expected) => {
+                                if !is_assignable(&expected, &value_ty)
+                                    && !is_assignable(&value_ty, &expected)
+                                {
+                                    self.error(TypeCheckError::TypeMismatch {
+                                        expected,
+                                        found: value_ty,
+                                        span: *span,
+                                        context: "break value".to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                } else if is_loop {
+                    let expected = self.loop_contexts[idx].result_ty.clone();
+                    match expected {
+                        None => self.loop_contexts[idx].result_ty = Some(HirType::Unit),
+                        Some(expected) if expected != HirType::Unit => {
+                            self.error(TypeCheckError::TypeMismatch {
+                                expected,
+                                found: HirType::Unit,
+                                span: *span,
+                                context: "break value".to_string(),
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                HirType::Never
+            }
+            HirExpr::ContinueLabel(label, span) => {
+                if self
+                    .loop_contexts
+                    .iter()
+                    .all(|ctx| ctx.label.as_deref() != Some(label.as_str()))
+                {
+                    self.error(TypeCheckError::UnknownLoopLabel {
+                        label: label.clone(),
+                        span: *span,
+                    });
+                }
+                HirType::Never
+            }
             HirExpr::Break(value, span) => {
                 if self.loop_depth == 0 {
                     if let Some(value) = value {
@@ -1097,13 +1205,37 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 _ => {
-                    if !is_unknown(&func_ty) {
-                        self.error(TypeCheckError::NotCallable {
-                            found: func_ty,
+                    if let HirType::FnPtr(params, rets) = &func_ty {
+                        if rets.len() != 1 {
+                            self.error(TypeCheckError::UnsupportedFeature {
+                                feature: "function pointer calls with a non-single return"
+                                    .to_string(),
+                                reference: "M2-4 MVP: indirect calls return exactly one value"
+                                    .to_string(),
+                                span,
+                            });
+                        }
+                        Some(FnSignature {
+                            name: "<fn>".to_string(),
+                            n: params.len() as u32,
+                            m: rets.len() as u32,
+                            params: params
+                                .iter()
+                                .enumerate()
+                                .map(|(i, ty)| (format!("arg{i}"), ty.clone()))
+                                .collect(),
+                            return_types: rets.clone(),
                             span,
-                        });
+                        })
+                    } else {
+                        if !is_unknown(&func_ty) {
+                            self.error(TypeCheckError::NotCallable {
+                                found: func_ty,
+                                span,
+                            });
+                        }
+                        None
                     }
-                    None
                 }
             },
         };
@@ -2247,6 +2379,18 @@ fn is_assignable(expected: &HirType, found: &HirType) -> bool {
         (HirType::Tuple(e), HirType::Tuple(f)) => {
             e.len() == f.len() && e.iter().zip(f.iter()).all(|(a, b)| is_assignable(a, b))
         }
+        (HirType::FnPtr(e_params, e_rets), HirType::FnPtr(f_params, f_rets)) => {
+            e_params.len() == f_params.len()
+                && e_rets.len() == f_rets.len()
+                && e_params
+                    .iter()
+                    .zip(f_params.iter())
+                    .all(|(a, b)| is_assignable(a, b))
+                && e_rets
+                    .iter()
+                    .zip(f_rets.iter())
+                    .all(|(a, b)| is_assignable(a, b))
+        }
         _ => false,
     }
 }
@@ -2313,8 +2457,11 @@ fn expr_span(expr: &HirExpr) -> Span {
         | HirExpr::While(_, _, span)
         | HirExpr::For { span, .. }
         | HirExpr::Block(_, span)
+        | HirExpr::Labelled(_, _, span)
         | HirExpr::Break(_, span)
+        | HirExpr::BreakLabel(_, _, span)
         | HirExpr::Continue(span)
+        | HirExpr::ContinueLabel(_, span)
         | HirExpr::Return(_, span)
         | HirExpr::Ret(_, span)
         | HirExpr::Unsafe(_, span)

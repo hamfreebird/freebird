@@ -32,6 +32,8 @@ pub enum TokenKind {
 
     // === 标识符 ===
     Ident(String),
+    /// 循环标签: `'outer`
+    Label(String),
 
     // === 关键字 ===
     Fn,
@@ -188,6 +190,7 @@ impl fmt::Display for TokenKind {
                     write!(f, "'\\u{{{c}}}'")
                 }
             }
+            TokenKind::Label(name) => write!(f, "'{name}"),
             TokenKind::StringLiteral(s) => write!(f, "\"{s}\""),
             TokenKind::Ident(s) => write!(f, "{s}"),
             TokenKind::Fn => write!(f, "fn"),

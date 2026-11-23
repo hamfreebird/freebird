@@ -5,6 +5,7 @@
 > **M1 完成后基线**（2026-11-22）：`cargo test` = **201 unit + 84 integration** 全绿。
 > **M2-5/M2-6 后基线**（2026-11-23）：`cargo test` = **201 unit + 94 integration** 全绿（新增 `tests/m2_test.rs` 10 项）。
 > **M2-2/M2-7 后基线**（2026-11-23）：`cargo test` = **201 unit + 99 integration** 全绿（`tests/m2_test.rs` 15 项）。
+> **M2-4/M2-6 后基线**（2026-11-23）：`cargo test` = **201 unit + 106 integration** 全绿（`tests/m2_test.rs` 22 项）。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 
@@ -47,7 +48,7 @@
 | L-02 | 用户泛型不可用 | `struct Pair<T> { ... }` 报 `expected {, found <`；`fn id<T>(x: T) -> T` 报 `expected (, found <` | P1 |
 | L-03 | 函数指针类型不可解析 | AST/HIR 有 `Type::FnPtr`、`Value::FnPtr`，但 `let f: fn(i64) -> i64 = inc;` 报 `expected type, found fn` | P1 |
 | L-04 | `impl`/`const`/闭包等语法不存在 | `if let`/`while let` 已实现（M2-6）；`impl` 仍报 `expected declaration, found impl`，`const`/闭包仍缺失 | P2 |
-| L-05 | `loop` 的值语义未实现 | 已实现（M2-6）：`let v = loop { break 42; };` 在 VM/Stardust 上输出 42；循环标签 `break 'label` 仍未实现 | 已修复（标签除外） |
+| L-05 | `loop` 的值语义未实现 | 已实现（M2-6）：`let v = loop { break 42; };` 在 VM/Stardust 上输出 42；循环标签 `break 'label` 已支持 | 已修复 |
 | L-06 | 循环外的 `break`/`continue` 被静默接受 | 顶层 `break;` 编译并运行，无任何错误 | P0 |
 | L-07 | `ret` 非整数字面量静默变成 `Ret(0)` | `ret a;` 被解析为 `Ret(0)`，随后报“函数返回 1 个值，但 return 提供 0 个”这类误导性类型错误 | P0 |
 | L-08 | 模式绑定只覆盖很小子集 | `match p { P { x: 1, y } => ... }` 报 `undefined variable y`；MIR 只绑定 `Var` 和“变量元组”；结构体/字面量/嵌套枚举/or/引用模式多被当作通配 | P0 |
@@ -143,7 +144,7 @@
 
 ---
 
-### M2 — 语言补全（P1，进行中：M2-5 基础完成、M2-6 除标签外完成、M2-2/M2-7 部分完成）
+### M2 — 语言补全（P1，进行中：M2-5/M2-6 完成，M2-2/M2-4/M2-7 部分完成）
 
 **目标**：把 `readme.md` 中已经承诺、但当前缺失的核心语言能力补齐，并保持双后端一致。
 
@@ -152,9 +153,9 @@
 | M2-1 | 用户泛型 MVP：`struct`/`enum`/`fn` 的泛型参数，单态化生成 MIR；先支持类型参数，不做高阶类型 | `Pair<T>`、`Option<T>`、`fn id<T>(x: T) -> T` 可解析、检查、运行；单态化测试覆盖多实例 |
 | M2-2 | `Option`/`Result` 作为泛型枚举进入标准库，替代硬编码特例 | `Option::Some`/`None`、`Result::Ok`/`Err` 及基本 `unwrap`/`map` 可用；VM/Stardust 测试 | 🟡 非泛型 i64 MVP：内建枚举 + 构造/match + Option 方法；Result 方法与泛型化待 M2-1 |
 | M2-3 | 模块与 `use`：至少支持文件级模块、`use path::item`、可见性检查；不引入完整包生态 | 多文件示例可编译运行；未解析路径报错；循环依赖有明确诊断 |
-| M2-4 | 函数指针：解析 `fn(A, B) -> C`，端到端支持 `Value::FnPtr`、间接调用、作为参数/返回值 | `let f: fn(i64) -> i64 = inc; f(1)` 在 VM/Stardust 上工作；错误签名报错 |
+| M2-4 | 函数指针：解析 `fn(A, B) -> C`，端到端支持 `Value::FnPtr`、间接调用、作为参数/返回值 | `let f: fn(i64) -> i64 = inc; f(1)` 在 VM/Stardust 上工作；错误签名报错 | 🟡 单返回值 MVP：类型/函数值/参数/返回/间接调用完成；Stardust FnId dispatch |
 | M2-5 | 完整模式匹配：嵌套模式、`or` 模式、`..` 剩余、守卫、穷尽性/不可达分支检查 | 模式矩阵测试；不可达分支警告；非穷尽 `match` 编译失败 | ✅ 基础完成：`..`/嵌套/`or`/守卫/穷尽性 + 重复与兜底后分支警告 |
-| M2-6 | 循环值语义：`loop` 产出 `break value`，`if let`/`while let`，可选标签 `break 'label` | 相关程序输出正确；M0 的临时拒绝被移除并替换为正向测试 | 🟡 `loop`/`break value`/`if let`/`while let` 完成；标签未实现 |
+| M2-6 | 循环值语义：`loop` 产出 `break value`，`if let`/`while let`，可选标签 `break 'label` | 相关程序输出正确；M0 的临时拒绝被移除并替换为正向测试 | ✅ `loop`/`break value`/`if let`/`while let`/`'label` + `break`/`continue 'label`（loop/while/for） |
 | M2-7 | 标准库扩展：`Vec`/`String` 常用方法、字符/字符串转换、数学函数、格式化输出；不再依赖类型检查器特例 | 标准库 API 文档 + 集成测试；方法调用在 VM/Stardust 一致 | 🟡 `abs`/`min`/`max` + Vec/String `is_empty`/`clear`；字符串解析/格式化待办 |
 | M2-8 | `unsafe` 与 `#id`：实现受控的原始栈/元素 ID 访问，明确安全边界；或从规范移除并改为显式不支持 | `#x`、`*(#x)` 至少在一个后端可用；越界/悬空 ID 有定义行为或明确报错 |
 | M2-9 | 用户定义方法与 `impl`（若决定纳入语言） | 单独 ADR；若纳入，则方法解析、借用检查、双后端测试齐全 |
@@ -282,7 +283,7 @@ M0 语义收敛 ──→ M1 运行时一致性 ──→ M2 语言补全 ──
 | 模块解析 | 规范只写了 `use`，没有完整模块语法 | 先做文件级模块 + `use path::item`；不引入 `mod` 树，除非明确需要 |
 | 远程栈模型 | 规范描述独立远程栈，Stardust 目前用堆块模拟 | 二选一：实现真实远程栈，或把规范改为“逻辑远程栈，后端可用堆块实现”；不要长期两套说法 |
 | `#id` 语义 | 直接暴露 ElementId 与安全边界冲突 | 要么在 `unsafe` 中实现并定义失效行为，要么从规范移除；不能保持“解析但 TODO” |
-| 循环值 | `break value` 需要类型合并和栈布局 | M2-6 已用隐藏结果变量实现；循环标签尚未实现 |
+| 循环值 | `break value` 需要类型合并和栈布局 | M2-6 已用隐藏结果变量实现；循环标签已支持 |
 | `unsafe` 边界 | 当前只是普通块 | 明确“检查仍然执行”还是“跳过部分检查”；写入规范并测试 |
 | LLVM 范围 | 完整后端工作量远大于 MVP | 先标量/控制流/函数，再复合类型；每阶段设退出标准 |
 | Stardust VM 限制 | 外部解释器没有远程栈/资源限制原语 | 用堆块模拟并在文档标注差异；或在生成代码中插入检查 |

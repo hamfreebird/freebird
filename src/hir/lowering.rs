@@ -533,6 +533,17 @@ impl Lowering {
                 let hir_block = self.lower_block(block);
                 Some(HirExpr::Block(hir_block, *span))
             }
+            ast::Expr::Labelled(label, inner, span) => {
+                let hir_inner = self.lower_expr(inner)?;
+                Some(HirExpr::Labelled(label.clone(), Box::new(hir_inner), *span))
+            }
+            ast::Expr::BreakLabel(label, value, span) => {
+                let hir_value = value.as_ref().and_then(|e| self.lower_expr(e).map(Box::new));
+                Some(HirExpr::BreakLabel(label.clone(), hir_value, *span))
+            }
+            ast::Expr::ContinueLabel(label, span) => {
+                Some(HirExpr::ContinueLabel(label.clone(), *span))
+            }
             ast::Expr::Break(value, span) => {
                 let hir_value = value.as_ref().and_then(|e| self.lower_expr(e).map(Box::new));
                 Some(HirExpr::Break(hir_value, *span))

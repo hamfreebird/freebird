@@ -133,6 +133,7 @@ pub enum MirInst {
     Jump(usize),           // 条件跳转（pop cond, if cond≠0 jump）
     UncondJump(usize),     // 无条件跳转
     Call { fn_id: FnId, return_arity: u32 }, // 函数调用（argc从CallElement获取, return_arity从签名获取）
+    CallIndirect { argc: u32, return_arity: u32 }, // 间接调用：栈布局 [args..., fnptr]
     Ret { argc: u32 },     // 返回
 
     // === 变量与作用域 ===
@@ -241,6 +242,9 @@ impl std::fmt::Display for MirInst {
             MirInst::Jump(n) => write!(f, "Jump({n})"),
             MirInst::UncondJump(n) => write!(f, "UncondJump({n})"),
             MirInst::Call { fn_id, return_arity } => write!(f, "Call({fn_id:?}, ret={return_arity})"),
+            MirInst::CallIndirect { argc, return_arity } => {
+                write!(f, "CallIndirect(argc={argc}, ret={return_arity})")
+            }
             MirInst::Ret { argc } => write!(f, "Ret({argc})"),
             MirInst::EnterScope => write!(f, "EnterScope"),
             MirInst::ExitScope => write!(f, "ExitScope"),

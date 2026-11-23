@@ -129,6 +129,126 @@ fn main() {
 }
 
 #[test]
+fn loop_labels_break_continue_match() {
+    let source = r#"
+fn main() {
+    let mut i = 0;
+    let mut sum = 0;
+    'outer: loop {
+        i = i + 1;
+        let mut j = 0;
+        loop {
+            j = j + 1;
+            if i >= 3 { break 'outer; }
+            if j > 2 { continue 'outer; }
+            sum = sum + 1;
+        }
+    }
+    print(sum);
+}
+"#;
+    assert_same_output(source, "loop_labels", b"");
+}
+
+#[test]
+fn loop_label_break_value_matches() {
+    let source = r#"
+fn main() {
+    let mut i = 0;
+    let v = 'outer: loop {
+        i = i + 1;
+        loop { break 'outer i * 10; }
+    };
+    print(v);
+}
+"#;
+    assert_same_output(source, "loop_label_value", b"");
+}
+
+#[test]
+fn unknown_loop_label_is_rejected() {
+    let errors = check_source("fn main() { loop { break 'missing; } }")
+        .expect_err("unknown label should be rejected");
+    assert!(
+        errors.join("\n").contains("unknown loop label"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}
+
+#[test]
+fn loop_labels_on_while_and_for_match() {
+    let source = r#"
+fn main() {
+    let mut sum = 0;
+    'outer: for x in [1, 2, 3] {
+        if x == 2 { continue 'outer; }
+        sum = sum + x;
+    }
+    let mut i = 0;
+    'w: while i < 3 {
+        i = i + 1;
+        if i == 2 { continue 'w; }
+        sum = sum + i;
+    }
+    print(sum);
+}
+"#;
+    assert_same_output(source, "loop_labels_while_for", b"");
+}
+
+#[test]
+fn function_pointer_values_match() {
+    let source = r#"
+fn inc(x: i64) -> i64 { x + 1 }
+fn dec(x: i64) -> i64 { x - 1 }
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn getval() -> i64 { 42 }
+fn main() {
+    let f = inc;
+    print(f(1));
+    let g: fn(i64) -> i64 = dec;
+    print(g(10));
+    let h = add;
+    print(h(1, 2));
+    let z = getval;
+    print(z());
+}
+"#;
+    assert_same_output(source, "fn_pointer_values", b"");
+}
+
+#[test]
+fn function_pointer_parameter_and_return_match() {
+    let source = r#"
+fn inc(x: i64) -> i64 { x + 1 }
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+fn get() -> fn(i64) -> i64 { inc }
+fn main() {
+    print(apply(inc, 41));
+    let f = get();
+    print(f(1));
+}
+"#;
+    assert_same_output(source, "fn_pointer_param_return", b"");
+}
+
+#[test]
+fn function_pointer_signature_mismatch_is_rejected() {
+    let source = r#"
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn main() {
+    let f: fn(i64) -> i64 = add;
+    print(f(1));
+}
+"#;
+    let errors = check_source(source).expect_err("signature mismatch should be rejected");
+    assert!(
+        errors.join("\n").contains("type mismatch"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}
+
+#[test]
 fn option_methods_match() {
     let source = r#"
 fn main() {

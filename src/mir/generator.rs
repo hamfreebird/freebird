@@ -163,6 +163,8 @@ struct LoopContext {
     saw_continue: bool,
     /// 值 `loop` 的隐藏结果变量；while/for 为 None。
     result_var: Option<String>,
+    /// 可选的循环标签。
+    label: Option<String>,
 }
 
 /// 模式取值路径：从被匹配值出发逐层取出子值。
@@ -198,6 +200,8 @@ pub struct MirGen {
     next_hidden: usize,
     /// 当前路径是否可达（用于避免在 break/continue/return 之后生成汇合跳转）。
     reachable: bool,
+    /// 下一个循环表达式要使用的标签（由 `Labelled` 设置）。
+    pending_loop_label: Option<String>,
     /// 当前函数中活跃的变量名（用于去重）
     #[allow(dead_code)]
     active_vars: Vec<HashMap<String, usize>>,
@@ -215,6 +219,7 @@ impl MirGen {
             scope_depth: 0,
             next_hidden: 0,
             reachable: true,
+            pending_loop_label: None,
             active_vars: Vec::new(),
         }
     }
@@ -350,6 +355,7 @@ impl MirGen {
         continue_target: usize,
         body_base: StackTracker,
         result_var: Option<String>,
+        label: Option<String>,
     ) {
         self.loop_contexts.push(LoopContext {
             break_target,
@@ -359,6 +365,7 @@ impl MirGen {
             saw_break: false,
             saw_continue: false,
             result_var,
+            label,
         });
     }
 
@@ -371,20 +378,32 @@ impl MirGen {
     /// 同时为每个被跳出的运行时作用域生成 `ExitScope`，避免变量绑定泄漏。
     fn unwind_loop(&mut self) -> Option<LoopContext> {
         let ctx = self.loop_contexts.last()?.clone();
-        let target = ctx.body_base.len();
+        self.unwind_to(&ctx);
+        Some(ctx)
+    }
 
+    /// 回退到指定标签对应的循环上下文。
+    fn unwind_loop_to(&mut self, label: &str) -> Option<(LoopContext, usize)> {
+        let idx = self
+            .loop_contexts
+            .iter()
+            .rposition(|ctx| ctx.label.as_deref() == Some(label))?;
+        let ctx = self.loop_contexts[idx].clone();
+        self.unwind_to(&ctx);
+        Some((ctx, idx))
+    }
+
+    fn unwind_to(&mut self, ctx: &LoopContext) {
+        let target = ctx.body_base.len();
         while self.stack.len() > target {
             self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
             self.stack.pop();
         }
         self.stack = ctx.body_base.clone();
-
         while self.scope_depth > ctx.scope_depth {
             self.mir.push(MirInst::ExitScope);
             self.scope_depth -= 1;
         }
-
-        Some(ctx)
     }
 
     /// 移除一个命名变量的栈槽（变量可能不在栈顶）。
@@ -656,6 +675,13 @@ impl MirGen {
                 if var_ref.scope_depth != usize::MAX {
                     self.mir.push(MirInst::ReadVar { name: var_ref.name.clone() });
                     self.stack.push_temp();
+                } else if let Some(fn_id) = self.name_to_id.get(&var_ref.name).copied() {
+                    // 函数名作为值：压入 FnId。
+                    self.mir.push(MirInst::Push {
+                        value: Value::FnPtr(fn_id),
+                        ty: TypeId::FnPtr,
+                    });
+                    self.stack.push_temp();
                 }
                 // 类型名不生成代码（在 StructLit/EnumLit 中使用）
             }
@@ -805,6 +831,35 @@ impl MirGen {
                 }
             }
             HirExpr::Call { func, args, stack_pass, fn_sig: call_sig, .. } => {
+                // 间接调用：调用目标不是静态函数名，而是持有 FnPtr 的表达式。
+                let indirect = !matches!(
+                    func.as_ref(),
+                    HirExpr::Var(var_ref) if var_ref.scope_depth == usize::MAX
+                );
+                if indirect {
+                    for arg in args {
+                        match arg {
+                            HirCallArg::Pos(e, _) | HirCallArg::Named(_, e, _) => {
+                                self.gen_expr(e, fn_sig);
+                            }
+                        }
+                    }
+                    self.gen_expr(func, fn_sig);
+                    if !self.reachable {
+                        return;
+                    }
+                    self.mir.push(MirInst::CallIndirect {
+                        argc: args.len() as u32,
+                        return_arity: 1,
+                    });
+                    self.stack.pop(); // fnptr
+                    for _ in 0..args.len() {
+                        self.stack.pop();
+                    }
+                    self.stack.push_temp(); // MVP: 间接调用固定一个返回值
+                    return;
+                }
+
                 // 获取函数名（用于内建函数检测）
                 let fn_name = match func.as_ref() {
                     HirExpr::Var(var_ref) => var_ref.name.clone(),
@@ -948,6 +1003,11 @@ impl MirGen {
                     self.stack = branch_base;
                 }
             }
+            HirExpr::Labelled(label, inner, _) => {
+                let previous = self.pending_loop_label.replace(label.clone());
+                self.gen_expr(inner, fn_sig);
+                self.pending_loop_label = previous;
+            }
             HirExpr::While(cond, body, _) => {
                 let loop_start = self.labels.fresh();
                 let loop_end = self.labels.fresh();
@@ -962,7 +1022,8 @@ impl MirGen {
                 self.stack.pop();
 
                 let body_base = self.stack.clone();
-                self.push_loop(loop_end, loop_start, body_base.clone(), None);
+                let label = self.pending_loop_label.take();
+                self.push_loop(loop_end, loop_start, body_base.clone(), None, label);
                 self.gen_block(body, fn_sig);
                 self.pop_loop();
 
@@ -1000,11 +1061,13 @@ impl MirGen {
 
                 self.mir.push(MirInst::Mark(loop_start));
                 let body_base = self.stack.clone();
+                let label = self.pending_loop_label.take();
                 self.push_loop(
                     loop_end,
                     loop_start,
                     body_base.clone(),
                     Some(result_name.clone()),
+                    label,
                 );
                 self.gen_block(body, fn_sig);
                 let ctx = self.pop_loop();
@@ -1083,7 +1146,8 @@ impl MirGen {
                 self.mir.push(MirInst::Jump(loop_end));
                 self.stack.pop();
 
-                self.push_loop(loop_end, continue_label, body_base.clone(), None);
+                let label = self.pending_loop_label.take();
+                self.push_loop(loop_end, continue_label, body_base.clone(), None, label);
 
                 self.enter_scope();
                 self.mir.push(MirInst::ReadVar { name: iter_name.clone() });
@@ -1217,6 +1281,44 @@ impl MirGen {
                     self.reachable = false;
                 } else {
                     self.mir.push(MirInst::Comment("continue outside loop".to_string()));
+                }
+            }
+            HirExpr::BreakLabel(label, value, _) => {
+                let result_var = self
+                    .loop_contexts
+                    .iter()
+                    .rposition(|ctx| ctx.label.as_deref() == Some(label.as_str()))
+                    .and_then(|idx| self.loop_contexts[idx].result_var.clone());
+                if let Some(val) = value {
+                    self.gen_expr(val, fn_sig);
+                    if !self.reachable {
+                        return;
+                    }
+                    if let Some(result_var) = result_var {
+                        self.mir.push(MirInst::WriteVar { name: result_var });
+                        self.stack.pop();
+                    } else {
+                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.stack.pop();
+                    }
+                }
+                if let Some((ctx, idx)) = self.unwind_loop_to(label) {
+                    self.loop_contexts[idx].saw_break = true;
+                    self.mir.push(MirInst::UncondJump(ctx.break_target));
+                    self.reachable = false;
+                } else {
+                    self.mir.push(MirInst::Comment("break label outside loop".to_string()));
+                }
+            }
+            HirExpr::ContinueLabel(label, _) => {
+                if let Some((ctx, idx)) = self.unwind_loop_to(label) {
+                    self.loop_contexts[idx].saw_continue = true;
+                    self.mir.push(MirInst::UncondJump(ctx.continue_target));
+                    self.reachable = false;
+                } else {
+                    self.mir.push(MirInst::Comment(
+                        "continue label outside loop".to_string(),
+                    ));
                 }
             }
             HirExpr::Ref(inner, mutable, _) => {

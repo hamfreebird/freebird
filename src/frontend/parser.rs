@@ -559,6 +559,13 @@ impl Parser {
                 let body = self.parse_block()?;
                 Ok(Expr::Loop(body, span))
             }
+            TokenKind::Label(name) => {
+                let label = name.clone();
+                self.advance();
+                self.expect(TokenKind::Colon)?;
+                let inner = self.parse_expr_prefix()?;
+                Ok(Expr::Labelled(label, Box::new(inner), span))
+            }
             TokenKind::While => {
                 self.advance();
                 if self.eat(TokenKind::Let) {
@@ -640,16 +647,36 @@ impl Parser {
             }
             TokenKind::Break => {
                 self.advance();
+                let label = if let TokenKind::Label(name) = self.peek() {
+                    let name = name.clone();
+                    self.advance();
+                    Some(name)
+                } else {
+                    None
+                };
                 let value = if !self.check(TokenKind::Semicolon) && !self.check(TokenKind::RBrace) {
                     Some(Box::new(self.parse_expr(0)?))
                 } else {
                     None
                 };
-                Ok(Expr::Break(value, span))
+                Ok(match label {
+                    Some(label) => Expr::BreakLabel(label, value, span),
+                    None => Expr::Break(value, span),
+                })
             }
             TokenKind::Continue => {
                 self.advance();
-                Ok(Expr::Continue(span))
+                let label = if let TokenKind::Label(name) = self.peek() {
+                    let name = name.clone();
+                    self.advance();
+                    Some(name)
+                } else {
+                    None
+                };
+                Ok(match label {
+                    Some(label) => Expr::ContinueLabel(label, span),
+                    None => Expr::Continue(span),
+                })
             }
             TokenKind::Unsafe => {
                 self.advance();
@@ -1050,6 +1077,27 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<Type, FrontendError> {
         match self.peek() {
+            TokenKind::Fn => {
+                let span = self.peek_span();
+                self.advance();
+                self.expect(TokenKind::LParen)?;
+                let mut params = Vec::new();
+                if !self.eat(TokenKind::RParen) {
+                    loop {
+                        params.push(self.parse_type()?);
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::RParen)?;
+                }
+                let ret = if self.eat(TokenKind::Arrow) {
+                    Some(Box::new(self.parse_type()?))
+                } else {
+                    None
+                };
+                Ok(Type::FnPtr(params, ret, span))
+            }
             TokenKind::And => {
                 let span = self.peek_span();
                 self.advance();
@@ -1609,8 +1657,11 @@ fn expr_span_of(expr: &Expr) -> Span {
         | Expr::While(_, _, span)
         | Expr::For { span, .. }
         | Expr::Block(_, span)
+        | Expr::Labelled(_, _, span)
         | Expr::Break(_, span)
+        | Expr::BreakLabel(_, _, span)
         | Expr::Continue(span)
+        | Expr::ContinueLabel(_, span)
         | Expr::Return(_, span)
         | Expr::Ret(_, span)
         | Expr::Unsafe(_, span)

@@ -145,10 +145,16 @@ pub enum Expr {
     },
     /// 块表达式: { ... }
     Block(Block, Span),
+    /// 带标签的循环: 'outer: loop { ... }
+    Labelled(String, Box<Expr>, Span),
     /// break 表达式
     Break(Option<Box<Expr>>, Span),
+    /// break 'label [value]
+    BreakLabel(String, Option<Box<Expr>>, Span),
     /// continue 表达式
     Continue(Span),
+    /// continue 'label
+    ContinueLabel(String, Span),
     /// return 表达式: return expr1, expr2, ...
     Return(Vec<Expr>, Span),
     /// ret n 指令（低级）

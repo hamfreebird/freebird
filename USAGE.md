@@ -50,7 +50,8 @@ freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 - 标准库（MVP）：内建 `Option` / `Result` 枚举（i64 载荷）；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`；数学内建 `abs`/`min`/`max`；`Vec`/`String` 支持 `len`/`push`/`pop`/`is_empty`/`clear`。`Result` 方法、字符串解析/格式化与泛型 Option/Result 尚未实现。
 - 运行前会执行名称解析、类型检查和借用/移动检查；`check` 与 `run` 报告同一组前端错误。
 - `match` 支持结构体、枚举（含嵌套载荷）、元组、字面量、`or`、引用、`..` 剩余和 `_` 模式，并在类型检查阶段拒绝非穷尽匹配；重复分支或兜底分支之后的分支会产生 `warning` 级诊断。`let` 支持变量、元组和结构体解构；可失败模式（如枚举变体）必须改用 `match`。
-- `ret n` 的 `n` 必须是整数字面量；`loop` 支持值语义与 `break value`，`if let` / `while let` 已支持（VM/Stardust 输出一致）；`while`/`for` 中的 `break value` 会在编译期报错；循环标签 `break 'label` 尚未实现。
+- `ret n` 的 `n` 必须是整数字面量；`loop` 支持值语义与 `break value`，`if let` / `while let` 已支持（VM/Stardust 输出一致）；`while`/`for` 中的 `break value` 会在编译期报错；循环标签 `'outer: loop` + `break 'outer` / `continue 'outer` 已支持。
+- 函数指针：支持 `fn(A, B) -> C` 类型、函数名作值、作为参数/返回值以及间接调用；Stardust 通过 FnId dispatch 实现。当前 MVP 要求间接调用恰好返回一个值。
 - `#id`、`use` 和 `extern` 函数调用尚未实现：声明可以解析，但使用处会报 `unsupported feature`，不会静默返回栈上残留值。
 - Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆块上（逻辑远程栈，见 `docs/adr/0001-logical-remote-stack.md`）。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 文本处理，非 UTF-8/二进制内容不在支持范围内。
 - `read_line` 与 VM 的 `String::from_utf8_lossy` 对齐：CRLF、UTF-8、非法首字节/续字节、overlong/surrogate/越界码点都逐字节一致。**已知差异**：输入 EOF 时 Stardust 解释器的 `CharIn` 直接报 I/O 错误（VM 返回空字符串），生成代码无法捕获。

@@ -119,6 +119,9 @@ pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
             TypeCheckError::UnknownFunction { name, .. } => {
                 Some(format!("declare function `{name}` or fix the spelling"))
             }
+            TypeCheckError::UnknownLoopLabel { label, .. } => {
+                Some(format!("declare the loop label `'{label}` or fix the spelling"))
+            }
             TypeCheckError::UnknownField { .. } => {
                 Some("check the field name and the struct type".to_string())
             }

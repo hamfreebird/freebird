@@ -350,6 +350,9 @@ impl Vm {
             MirInst::Call { fn_id, return_arity } => {
                 self.execute_call(*fn_id, *return_arity)?;
             }
+            MirInst::CallIndirect { argc, return_arity } => {
+                self.execute_call_indirect(*argc, *return_arity)?;
+            }
             MirInst::Ret { argc } => {
                 self.execute_ret(*argc)?;
             }
@@ -1156,9 +1159,58 @@ impl Vm {
         Ok(())
     }
 
+    /// 间接调用：栈布局 `[args..., fnptr]`，FnPtr 携带目标 FnId。
+    fn execute_call_indirect(&mut self, argc: u32, return_arity: u32) -> Result<(), VmError> {
+        let (fn_id, mut params, ret_pc) = {
+            let mut frame = self.pop_frame()?;
+            let (_, fptr) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+            let fn_id = match fptr {
+                Value::FnPtr(id) => id,
+                other => {
+                    return Err(VmError::TypeMismatch {
+                        expected: "function pointer".to_string(),
+                        found: other.type_name().to_string(),
+                    });
+                }
+            };
+            let mut params = Vec::with_capacity(argc as usize);
+            for _ in 0..argc {
+                params.push(frame.data.pop().ok_or(VmError::StackUnderflow)?);
+            }
+            params.reverse();
+            let ret_pc = frame.pc + 1;
+            self.call_stack.push(frame);
+            (fn_id, params, ret_pc)
+        };
+
+        let callee = self.fn_table.get(&fn_id).cloned().ok_or_else(|| {
+            VmError::AssertionFailed(format!("function {fn_id:?} not found in fn_table"))
+        })?;
+
+        self.id_alloc.bump_recursion();
+        let call_element_id = self.id_alloc.alloc_element();
+        let callee_stack_id = self.id_alloc.derive_stack(call_element_id);
+
+        let mut new_frame = CallFrame::new_call(
+            callee_stack_id,
+            callee,
+            ret_pc,
+            return_arity,
+            None,
+        );
+        new_frame.data.push(
+            self.id_alloc.alloc_element(),
+            Value::CallElement { argc },
+        );
+        for (id, val) in params.drain(..) {
+            new_frame.data.push(id, val);
+        }
+        self.call_stack.push(new_frame);
+        Ok(())
+    }
+
     /// 执行返回
-    fn execute_ret(&mut self, argc: u32) -> Result<(), VmError> {
-        if self.call_stack.len() < 2 {
+    fn execute_ret(&mut self, argc: u32) -> Result<(), VmError> {        if self.call_stack.len() < 2 {
             // 主程序返回：保留栈顶 argc 个元素
             let mut frame = self.pop_frame()?;
             let keep_start = frame.data.len().saturating_sub(argc as usize);
