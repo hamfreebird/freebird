@@ -392,11 +392,92 @@ fn main() {
 }
 
 #[test]
-fn result_unwrap_is_explicitly_unsupported() {
-    let errors = check_source("fn main() { let r = Result::Ok(1); print(r.unwrap()); }")
-        .expect_err("Result::unwrap should be rejected");
+fn result_methods_match() {
+    let source = r#"
+fn main() {
+    let ok: Result<i64, bool> = Result::Ok(7);
+    print(ok.is_ok() as i64);
+    print(ok.is_err() as i64);
+    print(ok.unwrap());
+    print(ok.unwrap_or(0));
+
+    let bad: Result<i64, bool> = Result::Err(true);
+    print(bad.is_ok() as i64);
+    print(bad.is_err() as i64);
+    print(bad.unwrap_or(11));
+}
+"#;
+    assert_same_output(source, "result_methods", b"");
+}
+
+#[test]
+fn result_unwrap_err_fails_on_both_backends() {
+    let source = r#"
+fn main() {
+    let bad: Result<i64, bool> = Result::Err(true);
+    print(bad.unwrap());
+}
+"#;
     assert!(
-        errors.join("\n").contains("Result::unwrap"),
+        matches!(run_vm(source, b""), Run::Failed(_)),
+        "VM should reject unwrap on Err"
+    );
+    assert!(
+        matches!(run_stardust(source, "result_unwrap_err", b""), Run::Failed(_)),
+        "Stardust should reject unwrap on Err"
+    );
+}
+
+#[test]
+fn generic_option_payloads_match() {
+    let source = r#"
+struct Pair { a: i64, b: i64 }
+fn main() {
+    let c: Option<char> = Option::Some('z');
+    print(c.unwrap() as i64);
+
+    let s: Option<String> = Option::Some(String::new());
+    match s {
+        Option::Some(v) => print(v.len()),
+        Option::None => print(0),
+    }
+
+    let p = Pair { a: 1, b: 2 };
+    let op: Option<Pair> = Option::Some(p);
+    match op {
+        Option::Some(q) => print(q.a + q.b),
+        Option::None => print(0),
+    }
+
+    let inner: Option<i64> = Option::Some(4);
+    let outer: Option<Option<i64>> = Option::Some(inner);
+    match outer {
+        Option::Some(x) => print(x.unwrap()),
+        Option::None => print(0),
+    }
+}
+"#;
+    assert_same_output(source, "generic_option_payloads", b"");
+}
+
+#[test]
+fn option_unwrap_or_type_mismatch_is_rejected() {
+    let errors = check_source(
+        "fn main() { let o: Option<i64> = Option::Some(1); print(o.unwrap_or(true)); }",
+    )
+    .expect_err("unwrap_or with mismatched payload should be rejected");
+    assert!(
+        errors.join("\n").contains("type mismatch"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}
+
+#[test]
+fn result_payload_type_mismatch_is_rejected() {
+    let errors = check_source("fn main() { let r: Result<i64, bool> = Result::Ok(true); }")
+        .expect_err("mismatched Ok payload should be rejected");
+    assert!(
+        errors.join("\n").contains("type mismatch"),
         "unexpected diagnostics: {errors:?}"
     );
 }

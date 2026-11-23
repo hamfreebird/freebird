@@ -305,9 +305,23 @@ pub struct TypeChecker<'a> {
     generic_structs: HashMap<String, Vec<String>>,
     generic_enums: HashMap<String, Vec<String>>,
     generic_fns: HashMap<String, Vec<String>>,
+    /// `Option`/`Result` 方法调用解析出的成功/失败变体标签（按调用点 span）。
+    method_variant_tags: MethodTagMap,
     errors: Vec<TypeCheckError>,
     warnings: Vec<TypeCheckWarning>,
 }
+
+/// `Option`/`Result` 方法调用所需的内建变体标签。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MethodVariantTags {
+    /// 成功变体（`Some`/`Ok`）的标签。
+    pub success: i64,
+    /// 失败变体（`None`/`Err`）的标签。
+    pub failure: i64,
+}
+
+/// 方法调用 span → 内建枚举变体标签，供 MIR 生成器消费。
+pub type MethodTagMap = HashMap<Span, MethodVariantTags>;
 
 impl<'a> TypeChecker<'a> {
     pub fn new(program: &HirProgram, type_table: &'a TypeTable) -> Self {
@@ -320,6 +334,12 @@ impl<'a> TypeChecker<'a> {
         let mut generic_structs = HashMap::new();
         let mut generic_enums = HashMap::new();
         let mut generic_fns = HashMap::new();
+        // 内建 `Option<T>`/`Result<T, E>` 是泛型枚举；同名用户声明会在下面覆盖。
+        generic_enums.insert("Option".to_string(), vec!["T".to_string()]);
+        generic_enums.insert(
+            "Result".to_string(),
+            vec!["T".to_string(), "E".to_string()],
+        );
         for decl in &program.decls {
             match decl {
                 HirDecl::Extern(ext) => {
@@ -333,6 +353,10 @@ impl<'a> TypeChecker<'a> {
                 }
                 HirDecl::Enum(e) if !e.generics.is_empty() => {
                     generic_enums.insert(e.name.clone(), e.generics.clone());
+                }
+                // 同名非泛型用户声明覆盖内建 `Option`/`Result`。
+                HirDecl::Enum(e) => {
+                    generic_enums.remove(&e.name);
                 }
                 HirDecl::Fn(f) if !f.generics.is_empty() => {
                     generic_fns.insert(f.name.clone(), f.generics.clone());
@@ -352,6 +376,7 @@ impl<'a> TypeChecker<'a> {
             generic_structs,
             generic_enums,
             generic_fns,
+            method_variant_tags: HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -367,6 +392,15 @@ impl<'a> TypeChecker<'a> {
         mut self,
         program: &HirProgram,
     ) -> (Vec<TypeCheckError>, Vec<TypeCheckWarning>) {
+        let (errors, warnings, _tags) = self.check_program_detailed(program);
+        (errors, warnings)
+    }
+
+    /// 检查整个程序，返回类型错误、警告与内建枚举方法标签标注。
+    pub fn check_program_detailed(
+        mut self,
+        program: &HirProgram,
+    ) -> (Vec<TypeCheckError>, Vec<TypeCheckWarning>, MethodTagMap) {
         for decl in &program.decls {
             match decl {
                 HirDecl::Fn(f) => {
@@ -397,7 +431,7 @@ impl<'a> TypeChecker<'a> {
                 }),
             }
         }
-        (self.errors, self.warnings)
+        (self.errors, self.warnings, self.method_variant_tags)
     }
 
     /// 校验属性的语法与已知名称；未识别属性必须报错，不能静默丢弃。
@@ -1436,6 +1470,85 @@ impl<'a> TypeChecker<'a> {
         }
     }
 
+    /// 内建 `Option`/`Result` 方法：返回 `Some(类型)` 表示该方法已处理。
+    ///
+    /// 同时记录成功/失败变体的标签，供 MIR 生成 `unwrap`/`is_ok` 等指令使用。
+    fn check_option_result_method(
+        &mut self,
+        enum_name: &str,
+        enum_args: &[HirType],
+        method: &str,
+        args: &[HirExpr],
+        span: Span,
+    ) -> Option<HirType> {
+        let (success_variant, failure_variant) = match enum_name {
+            "Option" => ("Some", "None"),
+            "Result" => ("Ok", "Err"),
+            _ => return None,
+        };
+        if !matches!(
+            method,
+            "is_some" | "is_none" | "is_ok" | "is_err" | "unwrap" | "unwrap_or"
+        ) {
+            return None;
+        }
+        let (Some(success), Some(failure)) = (
+            self.type_table.variant_tag(enum_name, success_variant),
+            self.type_table.variant_tag(enum_name, failure_variant),
+        ) else {
+            // 内建枚举被同名用户声明覆盖时，按普通用户类型处理。
+            return None;
+        };
+        self.method_variant_tags.insert(
+            span,
+            MethodVariantTags {
+                success: success as i64,
+                failure: failure as i64,
+            },
+        );
+
+        // 载荷类型来自接收者的类型实参；未知实参保持 `Unknown`，避免级联误报。
+        let payload_ty = enum_args.first().cloned().unwrap_or(HirType::Unknown);
+        match method {
+            "is_some" | "is_none" | "is_ok" | "is_err" => {
+                self.check_method_arity(method, 0, args.len(), span);
+                Some(HirType::Path(vec!["bool".to_string()]))
+            }
+            "unwrap" => {
+                self.check_method_arity(method, 0, args.len(), span);
+                Some(payload_ty)
+            }
+            "unwrap_or" => {
+                self.check_method_arity(method, 1, args.len(), span);
+                if let Some(arg) = args.first() {
+                    let found = self.check_expr(arg);
+                    if !is_assignable(&payload_ty, &found) {
+                        self.error(TypeCheckError::TypeMismatch {
+                            expected: payload_ty.clone(),
+                            found,
+                            span,
+                            context: format!("{enum_name}::unwrap_or argument"),
+                        });
+                    }
+                }
+                Some(payload_ty)
+            }
+            _ => None,
+        }
+    }
+
+    /// 校验方法调用实参个数。
+    fn check_method_arity(&mut self, function: &str, expected: usize, found: usize, span: Span) {
+        if found != expected {
+            self.error(TypeCheckError::ArgumentCountMismatch {
+                function: function.to_string(),
+                expected,
+                found,
+                span,
+            });
+        }
+    }
+
     /// 方法调用类型检查（Vec/String 的 len/push/pop）。
     fn check_method_call(
         &mut self,
@@ -1445,69 +1558,21 @@ impl<'a> TypeChecker<'a> {
         span: Span,
     ) -> HirType {
         let receiver_ty = self.check_expr(receiver);
-        let receiver_name = match &receiver_ty {
-            HirType::Path(segments) => segments.last().cloned().unwrap_or_default(),
-            _ => String::new(),
-        };
-        if receiver_name == "Option" {
-            let i64_ty = HirType::Path(vec!["i64".to_string()]);
-            match method {
-                "is_some" | "is_none" => {
-                    if !args.is_empty() {
-                        self.error(TypeCheckError::ArgumentCountMismatch {
-                            function: method.to_string(),
-                            expected: 0,
-                            found: args.len(),
-                            span,
-                        });
-                    }
-                    return HirType::Path(vec!["bool".to_string()]);
-                }
-                "unwrap" => {
-                    if !args.is_empty() {
-                        self.error(TypeCheckError::ArgumentCountMismatch {
-                            function: method.to_string(),
-                            expected: 0,
-                            found: args.len(),
-                            span,
-                        });
-                    }
-                    return i64_ty;
-                }
-                "unwrap_or" => {
-                    if args.len() != 1 {
-                        self.error(TypeCheckError::ArgumentCountMismatch {
-                            function: method.to_string(),
-                            expected: 1,
-                            found: args.len(),
-                            span,
-                        });
-                    }
-                    if let Some(arg) = args.first() {
-                        let arg_ty = self.check_expr(arg);
-                        if !is_assignable(&i64_ty, &arg_ty) {
-                            self.error(TypeCheckError::TypeMismatch {
-                                expected: i64_ty,
-                                found: arg_ty,
-                                span,
-                                context: "Option::unwrap_or argument".to_string(),
-                            });
-                        }
-                    }
-                    return HirType::Path(vec!["i64".to_string()]);
-                }
-                _ => {}
+        let (receiver_name, receiver_args) = match &receiver_ty {
+            HirType::Path(segments) => (segments.last().cloned().unwrap_or_default(), Vec::new()),
+            HirType::Generic(base, args) => {
+                let name = match base.as_ref() {
+                    HirType::Path(segments) => segments.last().cloned().unwrap_or_default(),
+                    _ => String::new(),
+                };
+                (name, args.clone())
             }
-        }
-        if receiver_name == "Result"
-            && matches!(method, "unwrap" | "unwrap_or" | "is_ok" | "is_err")
+            _ => (String::new(), Vec::new()),
+        };
+        if let Some(ty) =
+            self.check_option_result_method(&receiver_name, &receiver_args, method, args, span)
         {
-            self.error(TypeCheckError::UnsupportedFeature {
-                feature: format!("Result::{method}"),
-                reference: "M2-2: Result methods are not implemented yet".to_string(),
-                span,
-            });
-            return HirType::Unknown;
+            return ty;
         }
         match method {
             "is_empty" => {
@@ -2769,6 +2834,16 @@ pub fn check_program_with_warnings(
     type_table: &TypeTable,
 ) -> (Vec<TypeCheckError>, Vec<TypeCheckWarning>) {
     TypeChecker::new(program, type_table).check_program_with_warnings(program)
+}
+
+/// 便捷入口：检查整个 HIR 程序，返回错误与内建枚举方法标签标注。
+pub fn check_program_with_tags(
+    program: &HirProgram,
+    type_table: &TypeTable,
+) -> (Vec<TypeCheckError>, MethodTagMap) {
+    let (errors, _warnings, tags) =
+        TypeChecker::new(program, type_table).check_program_detailed(program);
+    (errors, tags)
 }
 
 #[cfg(test)]

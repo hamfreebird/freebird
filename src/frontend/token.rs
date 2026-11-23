@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// 源码位置
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub line: usize,   // 1-based
     pub column: usize, // 1-based

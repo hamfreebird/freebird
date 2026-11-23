@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::{self, BinOp, Literal, UnOp};
+use crate::frontend::token::Span;
 use crate::hir::types::*;
-use crate::typeck::TypeTable;
+use crate::typeck::{MethodVariantTags, TypeTable};
 use crate::vm::id::FnId;
 use crate::vm::mir::{MirInst, TypeId};
 use crate::vm::value::Value;
@@ -205,6 +206,8 @@ pub struct MirGen {
     /// 当前函数中活跃的变量名（用于去重）
     #[allow(dead_code)]
     active_vars: Vec<HashMap<String, usize>>,
+    /// 类型检查标注的内建枚举变体标签（`Option`/`Result` 方法调用）。
+    method_variant_tags: HashMap<Span, MethodVariantTags>,
 }
 
 impl MirGen {
@@ -221,6 +224,7 @@ impl MirGen {
             reachable: true,
             pending_loop_label: None,
             active_vars: Vec::new(),
+            method_variant_tags: HashMap::new(),
         }
     }
 
@@ -233,6 +237,12 @@ impl MirGen {
     /// 设置类型表
     pub fn with_type_table(mut self, table: TypeTable) -> Self {
         self.type_table = table;
+        self
+    }
+
+    /// 设置类型检查标注的内建枚举变体标签
+    pub fn with_method_variant_tags(mut self, tags: HashMap<Span, MethodVariantTags>) -> Self {
+        self.method_variant_tags = tags;
         self
     }
 
@@ -710,13 +720,24 @@ impl MirGen {
                 }
                 // unary 操作 pop 1, push 1: 栈深度不变
             }
-            HirExpr::MethodCall { receiver, method, args, .. } => {
+            HirExpr::MethodCall { receiver, method, args, span } => {
+                // 类型检查记录了 `Option`/`Result` 的成功/失败变体标签；
+                // 缺少标注时按内建 `Option`（None=0 / Some=1）处理。
+                let tags = self
+                    .method_variant_tags
+                    .get(span)
+                    .copied()
+                    .unwrap_or(MethodVariantTags { success: 1, failure: 0 });
                 match method.as_str() {
-                    "is_some" | "is_none" => {
+                    "is_some" | "is_none" | "is_ok" | "is_err" => {
                         self.gen_expr(receiver, fn_sig);
                         self.mir.push(MirInst::EnumTag { total_slots: 2 });
                         self.stack.push_temp();
-                        let expected = if method == "is_some" { 1 } else { 0 };
+                        let expected = if matches!(method.as_str(), "is_some" | "is_ok") {
+                            tags.success
+                        } else {
+                            tags.failure
+                        };
                         self.mir.push(MirInst::Push {
                             value: Value::I64(expected),
                             ty: TypeId::I64,
@@ -734,7 +755,7 @@ impl MirGen {
                     }
                     "unwrap" => {
                         self.gen_expr(receiver, fn_sig);
-                        self.mir.push(MirInst::Unwrap { success_tag: 1 });
+                        self.mir.push(MirInst::Unwrap { success_tag: tags.success });
                         self.stack.pop();
                         self.stack.push_temp();
                     }
@@ -743,7 +764,7 @@ impl MirGen {
                         if let Some(arg) = args.first() {
                             self.gen_expr(arg, fn_sig);
                         }
-                        self.mir.push(MirInst::UnwrapOr { success_tag: 1 });
+                        self.mir.push(MirInst::UnwrapOr { success_tag: tags.success });
                         self.stack.pop();
                         self.stack.pop();
                         self.stack.push_temp();

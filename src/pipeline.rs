@@ -7,7 +7,7 @@ use crate::codegen::{optimize_mir, StardustGen};
 use crate::frontend::parse;
 use crate::hir::lower;
 use crate::mir::MirGen;
-use crate::typeck::{check_program, check_program_with_warnings, TypeTable};
+use crate::typeck::{check_program_with_tags, check_program_with_warnings, TypeTable};
 use crate::vm::config::RuntimeConfig;
 use crate::vm::id::FnId;
 use crate::vm::mir::MirInst;
@@ -33,8 +33,8 @@ pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String
         return Err(format!("Resolve errors:\n{}", msg.join("\n")));
     }
 
-    // 2.5 基础类型检查
-    let type_errors = check_program(&hir, &type_table);
+    // 2.5 基础类型检查（同时取出内建枚举方法标签标注，供 MIR 生成使用）
+    let (type_errors, method_tags) = check_program_with_tags(&hir, &type_table);
     if !type_errors.is_empty() {
         let msg: Vec<String> = type_errors.iter().map(|e| e.to_string()).collect();
         return Err(format!("Type errors:\n{}", msg.join("\n")));
@@ -51,7 +51,9 @@ pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String
     apply_runtime_attributes(&hir, &mut config);
 
     // 3. MIR 生成
-    let mut generator = MirGen::new().with_type_table(type_table);
+    let mut generator = MirGen::new()
+        .with_type_table(type_table)
+        .with_method_variant_tags(method_tags);
     let functions = generator.gen_program(&hir);
 
     if functions.is_empty() {
@@ -164,7 +166,7 @@ pub fn build_stardust(source: &str) -> Result<String, String> {
         return Err(format!("Resolve errors:\n{}", msg.join("\n")));
     }
 
-    let type_errors = check_program(&hir, &type_table);
+    let (type_errors, method_tags) = check_program_with_tags(&hir, &type_table);
     if !type_errors.is_empty() {
         let msg: Vec<String> = type_errors.iter().map(|e| e.to_string()).collect();
         return Err(format!("Type errors:\n{}", msg.join("\n")));
@@ -176,7 +178,9 @@ pub fn build_stardust(source: &str) -> Result<String, String> {
         return Err(format!("Borrow errors:\n{}", msg.join("\n")));
     }
 
-    let mut generator = MirGen::new().with_type_table(type_table);
+    let mut generator = MirGen::new()
+        .with_type_table(type_table)
+        .with_method_variant_tags(method_tags);
     let functions = generator.gen_program(&hir);
     if functions.is_empty() {
         return Err("No functions generated".to_string());

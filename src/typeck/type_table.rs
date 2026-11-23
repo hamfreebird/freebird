@@ -56,19 +56,19 @@ pub struct VariantDef {
 impl TypeTable {
     pub fn new() -> Self {
         let mut table = Self { types: HashMap::new() };
-        // 标准库枚举（非泛型 MVP：i64 载荷）。用户声明同名枚举会覆盖。
+        // 标准库枚举（泛型载荷：`Option<T>`、`Result<T, E>`）。用户声明同名枚举会覆盖。
         table.register_enum(
             "Option",
             vec![
                 ("None".to_string(), None),
-                ("Some".to_string(), Some("i64".to_string())),
+                ("Some".to_string(), Some("T".to_string())),
             ],
         );
         table.register_enum(
             "Result",
             vec![
-                ("Ok".to_string(), Some("i64".to_string())),
-                ("Err".to_string(), Some("i64".to_string())),
+                ("Ok".to_string(), Some("T".to_string())),
+                ("Err".to_string(), Some("E".to_string())),
             ],
         );
         table
