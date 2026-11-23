@@ -301,6 +301,8 @@ pub enum Decl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplDecl {
     pub type_name: String,
+    /// impl 的类型参数（`impl<T> Pair<T>`；MVP 仅类型参数）。
+    pub generics: Vec<String>,
     pub fns: Vec<FnDecl>,
     pub span: Span,
 }

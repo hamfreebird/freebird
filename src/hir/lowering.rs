@@ -857,42 +857,63 @@ mod tests {
 /// 把 `impl Type { fn ... }` 展开为名字扁平化（`Type::name`）的函数声明，
 /// 并把接收者/参数类型中的 `Self` 替换为具体类型。
 fn expand_impl_decls(decl: &ast::ImplDecl) -> Vec<ast::FnDecl> {
+    // `Self` 在泛型 impl 中表示 `Type<A, B>`；非泛型 impl 保持 `Type`。
+    let self_ty = if decl.generics.is_empty() {
+        ast::Type::Path(vec![decl.type_name.clone()], decl.span)
+    } else {
+        ast::Type::Generic(
+            Box::new(ast::Type::Path(vec![decl.type_name.clone()], decl.span)),
+            decl.generics
+                .iter()
+                .map(|g| ast::Type::Path(vec![g.clone()], decl.span))
+                .collect(),
+            decl.span,
+        )
+    };
     decl.fns
         .iter()
         .map(|f| {
             let mut f = f.clone();
             f.name = format!("{}::{}", decl.type_name, f.name);
+            // impl 的类型参数并入方法自身的泛型参数，供类型检查做实参推断与替换。
+            let mut generics = decl.generics.clone();
+            for g in &f.generics {
+                if !generics.contains(g) {
+                    generics.push(g.clone());
+                }
+            }
+            f.generics = generics;
             for param in &mut f.params {
-                param.ty = replace_self_type(&param.ty, &decl.type_name);
+                param.ty = replace_self_type(&param.ty, &self_ty);
             }
             if let Some(ret) = &mut f.return_type {
-                *ret = replace_self_type(ret, &decl.type_name);
+                *ret = replace_self_type(ret, &self_ty);
             }
             f
         })
         .collect()
 }
 
-/// 把类型中的 `Self` 替换为 impl 目标类型。
-fn replace_self_type(ty: &ast::Type, type_name: &str) -> ast::Type {
+/// 把类型中的 `Self` 替换为 impl 目标类型（泛型 impl 为 `Type<T...>`）。
+fn replace_self_type(ty: &ast::Type, self_ty: &ast::Type) -> ast::Type {
     match ty {
-        ast::Type::Path(segments, span)
+        ast::Type::Path(segments, _)
             if segments.len() == 1 && segments[0] == "Self" =>
         {
-            ast::Type::Path(vec![type_name.to_string()], *span)
+            self_ty.clone()
         }
         ast::Type::Ref(inner, mutable, span) => ast::Type::Ref(
-            Box::new(replace_self_type(inner, type_name)),
+            Box::new(replace_self_type(inner, self_ty)),
             *mutable,
             *span,
         ),
         ast::Type::Generic(base, args, span) => ast::Type::Generic(
-            Box::new(replace_self_type(base, type_name)),
-            args.iter().map(|a| replace_self_type(a, type_name)).collect(),
+            Box::new(replace_self_type(base, self_ty)),
+            args.iter().map(|a| replace_self_type(a, self_ty)).collect(),
             *span,
         ),
         ast::Type::Tuple(types, span) => ast::Type::Tuple(
-            types.iter().map(|t| replace_self_type(t, type_name)).collect(),
+            types.iter().map(|t| replace_self_type(t, self_ty)).collect(),
             *span,
         ),
         other => other.clone(),

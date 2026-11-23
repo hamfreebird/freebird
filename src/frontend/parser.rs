@@ -195,7 +195,19 @@ impl Parser {
     /// 解析 `impl Type { fn ... }` 块；方法名在降级时扁平化为 `Type::name`。
     fn parse_impl(&mut self) -> Result<ImplDecl, FrontendError> {
         let span = self.expect(TokenKind::Impl)?.span;
+        let generics = self.parse_generic_params()?;
         let type_name = self.expect_ident("impl target type")?;
+        // 可选的目标类型实参：`impl<T> Pair<T>`。类型擦除 MVP 下实参只用于语法，
+        // 语义由方法签名上的泛型参数承担。
+        if self.eat(TokenKind::Lt) {
+            while !self.check(TokenKind::Gt) && !self.check(TokenKind::Eof) {
+                let _ = self.parse_type()?;
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::Gt)?;
+        }
         self.expect(TokenKind::LBrace)?;
         let mut fns = Vec::new();
         while !self.check(TokenKind::RBrace) && !self.check(TokenKind::Eof) {
@@ -203,7 +215,7 @@ impl Parser {
             fns.push(self.parse_fn(attrs)?);
         }
         self.expect(TokenKind::RBrace)?;
-        Ok(ImplDecl { type_name, fns, span })
+        Ok(ImplDecl { type_name, generics, fns, span })
     }
 
     // ─── 结构体声明 ───

@@ -174,6 +174,24 @@ fn main() {
 }
 
 #[test]
+fn generic_impl_methods_match() {
+    let source = r#"
+struct Pair<T> { a: T, b: T }
+impl<T> Pair<T> {
+    fn new(a: T, b: T) -> Pair<T> { Pair { a: a, b: b } }
+    fn first(&self) -> T { self.a }
+    fn second(self) -> T { self.b }
+}
+fn main() {
+    let p = Pair::new(3, 4);
+    print(p.first());
+    print(p.second());
+}
+"#;
+    assert_same_output(source, "generic_impl", b"");
+}
+
+#[test]
 fn generic_function_with_generic_struct_matches() {
     let source = r#"
 struct Pair<T> { a: T, b: T }
