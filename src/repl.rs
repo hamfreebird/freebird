@@ -15,7 +15,6 @@ use crate::vm::Vm;
 pub struct Repl {
     vm: Vm,
     line_count: usize,
-    fn_counter: u64,
     /// 累积的函数声明
     accumulated_decls: String,
 }
@@ -25,7 +24,6 @@ impl Repl {
         Self {
             vm: Vm::with_config(RuntimeConfig::test()),
             line_count: 0,
-            fn_counter: 1,
             accumulated_decls: String::new(),
         }
     }

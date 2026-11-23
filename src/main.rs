@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use freebird::{build_stardust, run_file, run_source, RuntimeConfig};
+use freebird::{build_stardust, run_file, RuntimeConfig};
 use freebird::borrowck::check_borrow;
 use freebird::diagnostics;
 use freebird::frontend::parse;

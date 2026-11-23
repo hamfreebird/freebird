@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::{self, BinOp, Literal, UnOp};
-use crate::frontend::token::Span;
 use crate::hir::types::*;
 use crate::typeck::{MethodTagMap, MethodVariantTags, TypeTable};
 use crate::vm::id::FnId;

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::frontend::ast;
 use crate::frontend::token::Span;
@@ -78,8 +78,6 @@ pub struct BorrowChecker {
     scope_vars: Vec<Vec<String>>,
     /// 错误列表
     pub errors: Vec<BorrowError>,
-    /// 已知的 Move 类型名
-    move_types: HashSet<String>,
     /// 引用变量名 → 各层同名绑定的被借用变量名
     /// （最后一个元素为当前可见绑定；`None` 表示该层借用已释放）
     ref_targets: HashMap<String, Vec<Option<String>>>,
@@ -91,18 +89,11 @@ pub struct BorrowChecker {
 
 impl BorrowChecker {
     pub fn new() -> Self {
-        let mut move_types = HashSet::new();
-        move_types.insert("Vec".to_string());
-        move_types.insert("String".to_string());
-        move_types.insert("Box".to_string());
-        move_types.insert("StackHandle".to_string());
-
         Self {
             vars: HashMap::new(),
             scope_depth: 0,
             scope_vars: Vec::new(),
             errors: Vec::new(),
-            move_types,
             ref_targets: HashMap::new(),
             ref_scopes: Vec::new(),
             uses_left: HashMap::new(),
@@ -467,9 +458,8 @@ impl BorrowChecker {
                 HirDecl::Fn(f) => self.check_fn(f),
                 HirDecl::Extern(block) => {
                     for item in &block.items {
-                        if let crate::hir::types::HirExternItem::Fn(f) = item {
-                            self.check_fn(f);
-                        }
+                        let crate::hir::types::HirExternItem::Fn(f) = item;
+                        self.check_fn(f);
                     }
                 }
                 _ => {}
@@ -638,7 +628,7 @@ impl BorrowChecker {
                         HirCallArg::Pos(e, _) | HirCallArg::Named(_, e, _) => e,
                     };
 
-                    if let (Some(ty), HirExpr::Ref(inner, mutable, span)) = (param_ty, arg_expr)
+                    if let (Some(_ty), HirExpr::Ref(inner, mutable, span)) = (param_ty, arg_expr)
                         && let HirExpr::Var(target) = inner.as_ref()
                     {
                         let result = if *mutable {

@@ -164,6 +164,7 @@ fn jump_optimization(mir: &mut Vec<MirInst>) -> bool {
     changed
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::vm::value::Value;

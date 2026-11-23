@@ -405,7 +405,7 @@ impl<'a> TypeChecker<'a> {
 
     /// 检查整个程序，返回类型错误与警告。
     pub fn check_program_with_warnings(
-        mut self,
+        self,
         program: &HirProgram,
     ) -> (Vec<TypeCheckError>, Vec<TypeCheckWarning>) {
         let (errors, warnings, _tags) = self.check_program_detailed(program);
