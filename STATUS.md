@@ -1,82 +1,85 @@
 # Freebird 能力矩阵
 
-> 更新日期：2026-11-23。对照 `readme.md`（目标规范）与当前 `src/` 实现。
+> 更新日期：2026-11-24。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **202 unit + 142 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **206 unit + 177 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 35，`tests/differential_test.rs` 2）。
+> 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 在 LLVM 目标上编译期拒绝，非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 限制。
 
 ## 1. 语言与运行时
 
 | 能力 | 规范章节 | VM | Stardust | LLVM | 测试 |
 |---|---|---|---|---|---|
-| 整数/浮点/布尔/字符/单位值 | §3、§5 | ✅ | ✅ | ❌ | 单元 + 集成 |
-| 变量、遮蔽、作用域、赋值 | §4 | ✅ | ✅ | ❌ | 单元 + 集成 |
-| `if` / `while` / `for` / `loop`（unit） | §7 | ✅ | ✅ | ❌ | 集成 |
-| `if let` / `while let` | §7 | ✅ | ✅ | ❌ | `m2_test` |
-| `break` / `continue` | §7 | ✅ | ✅ | ❌ | 集成 |
-| `break value`、值位置 `loop` | §7 | ✅ | ✅ | ❌ | `m2_test` |
-| 循环标签 `break 'label` / `continue 'label` | §7 | ✅ | ✅ | ❌ | `m2_test` |
-| 函数指针 `fn(A) -> B`、函数值、间接调用 | §5、§6 | ✅ 零/单/多返回值 | ✅ FnId dispatch | ❌ | `m2_test` |
-| 用户泛型 `struct/enum/fn<T>`（类型擦除 MVP） | §5 | ✅ 字段/实参推断 | ✅ 单份代码生成 | ❌ | `m2_test` |
-| 显式类型实参（turbofish） | §5 | ✅ | ✅ | ❌ | `m2_test` |
-| 泛型约束、按实例单态化 | §5 | ❌ 待办 | ❌ 待办 | ❌ | — |
-| 函数、递归、多值返回、`return` | §6 | ✅ | ✅ | ❌ | 集成 |
-| `ret n`（整数立即数、元数匹配） | §6 | ✅ | ✅ | ❌ | 集成 + `m0_test` |
-| 数组、`Vec`、`String`、`Box` | §8、§9 | ✅ | ✅ | ❌ | 集成 + 差分（全局堆块，ADR 0001） |
-| 容器索引越界检查 | §8 | ✅ 运行期报错 | ✅ 运行期陷阱（M1-5） | ❌ | `differential_test` |
-| 堆块回收 / 复用 | §8.5 | ✅ 随值释放 | 🟡 free list + Vec/Box DropVar 回收；数组/结构体 COW 与嵌套块保守不释放 | ❌ | `m1_test` |
-| 结构体、字段访问/赋值 | §8 | ✅ | ✅ | ❌ | 集成 |
-| 枚举、变体构造、`EnumTag` | §8 | ✅ | ✅ | ❌ | 集成 |
-| `&` / `&mut`、解引用、写回 | §4 | ✅ | ✅ | ❌ | 集成 |
-| 借用/移动检查 | §4 | ✅ 编译期 | ✅ 编译期 | — | 单元 + 集成 |
-| 标量 `as` 转换 | §5 | ✅ | ✅ | ❌ | 集成 |
-| `print_*` / `read_*` / `read_line` | §9 | ✅ | 🟡 UTF-8/CRLF/非法字节一致；EOF 报 I/O 错误 | ❌ | 集成 + `m1_test` |
-| `Option` / `Result` 内建枚举（泛型载荷 `Option<T>` / `Result<T, E>`） | §9 | ✅ | ✅ | ❌ | `m2_test` |
-| `Option` 方法（is_some/is_none/unwrap/unwrap_or） | §9 | ✅ | ✅ | ❌ | `m2_test` |
-| `Option` / `Result` 方法（`is_some`/`is_none`/`unwrap`/`unwrap_or`、`is_ok`/`is_err`/`unwrap`/`unwrap_or`、`ok`/`err`/`ok_or`/`map`） | §9 | ✅ | ✅ | ❌ | `m2_test` |
-| 数学内建 `abs` / `min` / `max` | §9 | ✅ | ✅ | ❌ | `m2_test` |
-| Vec/String `is_empty` / `clear` | §9 | ✅ | ✅ | ❌ | `m2_test` |
-| 字符串解析（`str_to_int`） | §9 | ✅ | ✅ | ❌ | `m2_test` |
+| 整数/浮点/布尔/字符/单位值 | §3、§5 | ✅ | ✅ | ✅ | 单元 + 集成 + `m3_test` |
+| 变量、遮蔽、作用域、赋值 | §4 | ✅ | ✅ | ✅ | 单元 + 集成 + `m3_test` |
+| `if` / `while` / `for` / `loop`（unit） | §7 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
+| `if let` / `while let` | §7 | ✅ | ✅ | ✅ | `m2_test` |
+| `break` / `continue` | §7 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
+| `break value`、值位置 `loop` | §7 | ✅ | ✅ | ✅ | `m2_test` |
+| 循环标签 `break 'label` / `continue 'label` | §7 | ✅ | ✅ | ✅ | `m2_test` |
+| 函数指针 `fn(A) -> B`、函数值、间接调用 | §5、§6 | ✅ 零/单/多返回值 | ✅ FnId dispatch | ✅ | `m2_test` + `m3_test` |
+| 用户泛型 `struct/enum/fn<T>`（类型擦除 MVP） | §5 | ✅ 字段/实参推断 | ✅ 单份代码生成 | ✅ | `m2_test` |
+| 显式类型实参（turbofish） | §5 | ✅ | ✅ | ✅ | `m2_test` |
+| 泛型约束、按实例单态化 | §5 | ❌ 待办 | ❌ 待办 | ❌ 待办 | — |
+| 函数、递归、多值返回、`return` | §6 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
+| `ret n`（整数立即数、元数匹配） | §6 | ✅ | ✅ | ✅ | 集成 + `m0_test` |
+| 数组、`Vec`、`String`、`Box` | §8、§9 | ✅ | ✅ | ✅ | 集成 + 差分 + `m3_test`（全局堆块，ADR 0001） |
+| 容器索引越界检查 | §8 | ✅ 运行期报错 | ✅ 运行期陷阱（M1-5） | ✅ 运行期陷阱（继承 Stardust） | `differential_test` |
+| 堆块回收 / 复用 | §8.5 | ✅ 随值释放 | 🟡 free list + Vec/Box DropVar 回收；数组/结构体 COW 与嵌套块保守不释放 | 🟡 同 Stardust | `m1_test` |
+| 结构体、字段访问/赋值 | §8 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
+| 枚举、变体构造、`EnumTag` | §8 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
+| `&` / `&mut`、解引用、写回 | §4 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
+| 借用/移动检查 | §4 | ✅ 编译期 | ✅ 编译期 | ✅ 编译期（同一前端） | 单元 + 集成 |
+| 标量 `as` 转换 | §5 | ✅ | ✅ | ✅ | 集成 |
+| `print_*` / `read_*` / `read_line` | §9 | ✅ | 🟡 UTF-8/CRLF/非法字节一致；EOF 报 I/O 错误 | 🟡 继承 Stardust；`CharOut` 仅 ASCII | 集成 + `m1_test` + `m3_test` |
+| `Option` / `Result` 内建枚举（泛型载荷 `Option<T>` / `Result<T, E>`） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
+| `Option` 方法（is_some/is_none/unwrap/unwrap_or） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
+| `Option` / `Result` 方法（`is_some`/`is_none`/`unwrap`/`unwrap_or`、`is_ok`/`is_err`/`unwrap`/`unwrap_or`、`ok`/`err`/`ok_or`/`map`） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
+| 数学内建 `abs` / `min` / `max` | §9 | ✅ | ✅ | ✅ | `m2_test` |
+| Vec/String `is_empty` / `clear` | §9 | ✅ | ✅ | ✅ | `m2_test` |
+| 字符串解析（`str_to_int`） | §9 | ✅ | ✅ | ✅ | `m2_test` |
 | 字符串格式化输出 | — | ❌ 规范未定义 | ❌ 规范未定义 | ❌ | 用 `print`/`int_to_str` 组合 |
-| 用户 `impl`（关联函数 + `self` 方法） | §5 | ✅ | ✅ | ❌ | `m2_test` |
-| `&self` 接收者（只读方法） | §5 | ✅ | ✅ | ❌ | `m2_test` |
-| `&mut self` 接收者（写回） | §5 | ✅ | ✅ | ❌ | `m2_test` |
-| `file_read` / `file_write` | §9 | ✅ | ✅ | ❌ | 集成 |
-| `unsafe` + `stardust!` 宏 | §11 | 🟡 大部分 | 🟡 大部分（自定义 `Ident` 指令只生成注释） | ❌ | 集成 + `m1_test` |
+| 用户 `impl`（关联函数 + `self` 方法） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
+| `&self` 接收者（只读方法） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
+| `&mut self` 接收者（写回） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
+| `file_read` / `file_write` | §9 | ✅ | ✅ | ❌ 编译期拒绝 | 集成 |
+| `unsafe` + `stardust!` 宏 | §11 | ✅ 全部宏指令（Call 仅 Stardust/LLVM） | ✅ 全部宏指令 | ✅ 全部宏指令 | 集成 + `m1_test` + `m3_test` |
+| `stardust!` 的 `Mark`/`Jump`/`UncondJump`/`DropN`/`Pick`/`NumOut`/`NumIn`/`CharOut`/`CharIn`/`DumpStack`/`DumpState`/`Breakpoint`/`Nop`/`ShiftL`/`ShiftR`/`Rotate`/`Depth`/`Reverse`/`Call` | §10.3 | ✅ 语义与 Stardust 一致 | ✅ | ✅ | `m3_test` |
+| `extern "stardust"` FFI（`#[stardust(id = N)]`） | §10.4 | ❌ 明确报错（仅 Stardust/LLVM 可执行） | ✅ 生成 `Call(id, argc)` | 🟡 需外部 Stardust 定义参与链接 | `m3_test` |
 
 ## 2. 模式匹配与绑定
 
 | 能力 | VM | Stardust | LLVM | 测试 |
 |---|---|---|---|---|
-| 完整被匹配表达式（调用、二元、括号结构体字面量） | ✅ | ✅ | ❌ | `m0_test` |
-| 字面量、`_`、变量模式 | ✅ | ✅ | ❌ | 集成 |
-| 结构体模式（含字段简写、`..`） | ✅ | ✅ | ❌ | 集成 + `m0_test` |
-| 枚举模式（含嵌套载荷） | ✅ | ✅ | ❌ | 集成 + `m0_test` |
-| 元组模式（含嵌套、`..` 剩余） | ✅ | ✅ | ❌ | `m0_test` + `m2_test` |
-| `or` 模式（要求各分支绑定同名变量） | ✅ | ✅ | ❌ | `m0_test` |
-| 引用模式 `&pat` / `&mut pat` | ✅ | ✅ | ❌ | `m0_test` |
-| guard 失败后继续尝试后续分支 | ✅ | ✅ | ❌ | 集成 |
+| 完整被匹配表达式（调用、二元、括号结构体字面量） | ✅ | ✅ | ✅ | `m0_test` |
+| 字面量、`_`、变量模式 | ✅ | ✅ | ✅ | 集成 |
+| 结构体模式（含字段简写、`..`） | ✅ | ✅ | ✅ | 集成 + `m0_test` |
+| 枚举模式（含嵌套载荷） | ✅ | ✅ | ✅ | 集成 + `m0_test` |
+| 元组模式（含嵌套、`..` 剩余） | ✅ | ✅ | ✅ | `m0_test` + `m2_test` |
+| `or` 模式（要求各分支绑定同名变量） | ✅ | ✅ | ✅ | `m0_test` |
+| 引用模式 `&pat` / `&mut pat` | ✅ | ✅ | ✅ | `m0_test` |
+| guard 失败后继续尝试后续分支 | ✅ | ✅ | ✅ | 集成 |
 | 穷尽性检查（枚举/bool/兜底） | ✅ 编译期 | ✅ 编译期 | — | `m0_test` |
 | 不可达/重复分支警告 | ✅ 编译期 warning | ✅ 编译期 warning | — | `m2_test` |
 | 未知变体/字段/结构体诊断 | ✅ 编译期 | ✅ 编译期 | — | `m0_test` |
-| `let` 变量/元组/结构体解构 | ✅ | ✅ | ❌ | 集成 + `m0_test` |
-| `let` 可失败模式（枚举变体、字面量） | ❌ 编译期拒绝 | ❌ 编译期拒绝 | ❌ | `m0_test` |
+| `let` 变量/元组/结构体解构 | ✅ | ✅ | ✅ | 集成 + `m0_test` |
+| `let` 可失败模式（枚举变体、字面量） | ❌ 编译期拒绝 | ❌ 编译期拒绝 | — | `m0_test` |
 
 ## 3. 声明、属性与工具链
 
 | 能力 | VM | Stardust | LLVM | 备注/测试 |
 |---|---|---|---|---|
 | `#[key=value]`、`#[key(value)]` 属性解析 | ✅ | ✅ | — | 属性挂到函数/结构体/枚举声明 |
-| `#[stardust(id = N)]` | ✅ 解析/校验 | ✅ 解析/校验 | ❌ | `m0_test` |
+| `#[stardust(id = N)]` | ✅ 解析/校验 | ✅ 生成 `Call(id, argc)` | ✅ 生成 `Call(id, argc)` | `m0_test` + `m3_test` |
 | `#[max_stack]` / `#[max_call_depth]` / `#[max_steps]` / `#[time_limit]` | ✅ 读取 `main` 属性并生效 | ❌ 仅接受、不生成限制 | ❌ | `m0_test`（VM） |
 | 未知/非法属性诊断 | ✅ 编译期 | ✅ 编译期 | — | `m0_test` |
 | 无函数体的普通 `fn` | ❌ 编译期拒绝 | ❌ 编译期拒绝 | — | `m0_test` |
-| `extern "stardust"` 声明 | ✅ 解析 | ✅ 解析 | ❌ | `m0_test` |
-| `extern` 函数调用（FFI） | ❌ 编译期拒绝 | ❌ 编译期拒绝 | ❌ | `m0_test` |
+| `extern "stardust"` 声明 | ✅ 解析 | ✅ 解析 | ✅ 解析 | `m0_test` |
+| `extern` 函数调用（FFI） | ❌ 运行时明确报错 | ✅ 生成真实 `Call` | 🟡 需外部 Stardust 定义参与链接 | `m3_test` |
 | `#id` / `ElementId` 表达式 | ❌ 已从规范移除（§4.3） | ❌ 同上 | ❌ | `m0_test` |
-| `use` / 文件级模块（`mod`、`pub`） | ✅ | ✅ | ❌ | `m2_test` |
+| `use` / 文件级模块（`mod`、`pub`） | ✅ | ✅ | ✅ 前端展开 | `m2_test` |
 | `freebird check`（parse → resolve → type → borrow） | ✅ | ✅ | — | `m0_test`；JSON 含 `warning_count` |
 | `freebird build --target stardust` | — | ✅ | — | 集成 |
-| `freebird build --target llvm` | ❌ | ❌ | ❌ | CLI 直接报未实现 |
+| `freebird build --target llvm` | — | — | ✅ IR / 可执行文件 | `m3_test`；支持 `--output`、`--emit ir\|exe`、`--opt-level` |
 
 ## 4. M0 退出标准核对
 
@@ -102,4 +105,26 @@
 - **M2-2 Option/Result（泛型枚举）**：内建 `Option<T>`/`Result<T, E>`，载荷类型从构造表达式推断并做替换检查；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`。类型检查把每个方法调用的成功/失败变体标签标注在 `Span → MethodVariantTags` 上交给 MIR 生成器，因此 `Option`（`Some`=1/`None`=0）与 `Result`（`Ok`=0/`Err`=1）共用同一套指令。`map`/`ok`/`err` 等组合子由 M2-7 补齐。
 - **M2-7 标准库**：`abs`/`min`/`max`、`Vec`/`String` 的 `is_empty`/`clear`、转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`（新增 `EnumPayloadToOption`/`OptionToResult` 指令）、`int_to_str`（双后端，堆块逐位写入）、`str_to_int`（双后端，堆块逐字符解析）与 `Option::map`/`Result::map`（MIR 用现有指令组合实现分支，双后端一致）。
 - **M2-9 impl/方法（方案 C 分期）**：`impl Type { fn f(self) }` 与关联函数 `Rect::square(3)` 已可用；名字扁平化为 `Type::f`，方法调用由类型检查解析（用户方法优先、内建方法兜底）并记录 `Span` 标注供 MIR 生成。`&self` 只读方法与 `&mut self` 写方法均已支持：调用点对具名变量取引用，方法体 `self.field` 自动解引用，`self.field = v` 走 `FieldStoreRef` 写回引用目标（VM 用 `find_ref_target` 跨帧定位，Stardust 按 cell 语义写回）。
-- **待实现 / 里程碑**：readme 未定义字符串格式化 API（当前用 `print`/`int_to_str` 组合）；泛型约束与按实例单态化、LLVM 后端、Stardust FFI 属于后续里程碑（`ROADMAP.md` M3/M4）。M2-8 的 unsafe 值栈已按 `docs/adr/0004-unsafe-raw-stack.md` 落地：`push`/`pop`/`swap`/`dup`/`roll(n)` 双后端一致，Stardust 侧按需翻倍扩容，`roll(n)` 支持正/零/负三向语义。
+- **待实现 / 里程碑**：readme 未定义字符串格式化 API（当前用 `print`/`int_to_str` 组合）；泛型约束与按实例单态化属于后续里程碑（`ROADMAP.md` M4）。M2-8 的 unsafe 值栈已按 `docs/adr/0004-unsafe-raw-stack.md` 落地：`push`/`pop`/`swap`/`dup`/`roll(n)` 双后端一致，Stardust 侧按需翻倍扩容，`roll(n)` 支持正/零/负三向语义。
+
+## 7. M3 后端与 FFI（已完成，2026-11-24）
+
+- **LLVM 后端**：`build --target llvm` 复用 Stardust 的 LLVM 编译器。流水线为
+  `Freebird → MIR → Stardust 源码 → stardust --compile → LLVM IR → clang → 可执行文件`。
+  支持 `--output/-o`、`--emit ir|exe`、`--opt-level 0-3`、`--stardust-bin`；
+  工具链按 `STARDUST_BIN` → `PATH` → 仓库自带 `stardust/stardust-linux-x86_64` → 兄弟仓库查找。
+- **LLVM 覆盖范围**：标量、控制流、函数/递归/多值返回、函数指针、结构体、数组、枚举/`match`、
+  引用与 `&mut` 写回、`Vec`/`String`/`Box`、`Option`/`Result`、`impl` 方法、`stardust!` 指令、
+  `read_int`/`read_char`/`read_line`。`m3_test` 有 16 个 VM/LLVM 输出对比测试。
+- **LLVM 限制**：文件 I/O（`file_read`/`file_write`）在编译期明确拒绝；非 ASCII `CharOut`
+  受 Stardust LLVM 的 ASCII 模式限制；`read_line` 的 EOF 行为继承 Stardust（报 I/O 错误）；
+  Freebird 的运行时限制属性只影响 VM。
+- **Stardust FFI**：`extern "stardust"` + `#[stardust(id = N)]` 生成真实 `Call(id, argc)`；
+  省略 `id` 时按函数名做 SipHash-2-4 并映射到 `1..=999`（ID 即 Stardust 前导空格数）。
+  调用必须在 `unsafe` 块内；重复/过大 ID 编译期报错；内部函数名自动避开 extern ID。
+  VM 上执行 FFI 会在运行时报明确错误；LLVM 目标需要外部 Stardust 定义参与链接。
+- **`stardust!` 指令**：`Mark`/`Jump`/`UncondJump`/`DropN`/`Pick`/`NumOut`/`NumIn`/`CharOut`/
+  `CharIn`/`DumpStack`/`DumpState`/`Breakpoint`/`Nop` 以及 `ShiftL`/`ShiftR`/`Rotate`/`Depth`/
+  `Reverse`/`Call` 全部落地；未知指令改为编译错误。宏入口/出口隐藏并恢复 Freebird 的
+  `CallElement`（堆槽 13），因此宏内整栈指令只操作用户数据栈，VM 与 Stardust 输出一致。
+- **测试基线**：206 unit + 177 integration；`tests/m3_test.rs` 35 个测试。

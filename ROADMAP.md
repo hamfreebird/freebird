@@ -8,6 +8,7 @@
 > **M2-4 零返回值指针后基线**（2026-11-23）：`cargo test` = **201 unit + 133 integration** 全绿（`tests/m2_test.rs` 49 项）。
 > **unsafe 值栈扩容与 roll(n) 后基线**（2026-11-23）：`cargo test` = **201 unit + 136 integration** 全绿（`tests/m2_test.rs` 52 项）。
 > **Reverse/可见性/泛型 impl/turbofish 后基线**（2026-11-23）：`cargo test` = **202 unit + 142 integration** 全绿（`tests/m2_test.rs` 58 项）。
+> **M3 完成后基线**（2026-11-24）：`cargo test` = **206 unit + 177 integration** 全绿（新增 `tests/m3_test.rs` 35 项）；`cargo build --release` 通过；LLVM 后端经仓库自带 Stardust 工具链验证。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 
@@ -36,7 +37,9 @@
 - VM：数值/布尔/字符、变量与作用域、`if`/`while`/`loop`/`for`、函数与递归、多值返回、数组、结构体、枚举与 `match`、`Vec`/`String`/`Box`、元组解构、`&`/`&mut` 引用、借用检查、`print_*`/`read_*`、文件 I/O、`stardust!` 宏的大部分指令。
 - Stardust 后端：数值/字符、变量、控制流、调用/递归、I/O、`ret n`、标量 `as`、数组/结构体/枚举/字符串/Box/Vec、`&mut` 堆单元写回、`for`/`continue`、`file_read`/`file_write`。
 - 工具链：`run`、`check`、`build --target stardust`、`repl`；VS Code 扩展提供语法高亮。
-- 测试：201 个单元测试 + 136 个集成测试；Stardust 集成测试与 VM 输出逐字节对比，差分测试自动遍历 `tests/programs` 与 `examples`。
+- 测试：206 个单元测试 + 177 个集成测试；Stardust/LLVM 集成测试与 VM 输出逐字节对比，差分测试自动遍历 `tests/programs` 与 `examples`。
+- LLVM：`build --target llvm` 复用 Stardust 的 LLVM 编译器；`--emit ir|exe`、`--output`、`--opt-level` 与 `--stardust-bin` 已落地。
+- FFI：`extern "stardust"` + `#[stardust(id = N)]` 生成真实 `Call(id, argc)`；VM 上明确报错，LLVM 需要外部定义参与链接。
 
 ---
 
@@ -172,24 +175,35 @@
 
 ---
 
-### M3 — 后端与 FFI（P1/P2）
+### M3 — 后端与 FFI（已完成，2026-11-24）
 
 **目标**：让 Stardust 后端成为完整目标，启动 LLVM 后端，并打通 `stardust!`/`extern "stardust"` 互操作。
 
-| ID | 工作项 | 验收标准 |
-|---|---|---|
-| M3-1 | LLVM MVP：整数/布尔/字符、算术、比较、`if`/`while`、函数调用、`print`/`read` | `freebird build --target llvm` 生成可编译 IR；一小组程序可执行且输出与 VM 一致 |
-| M3-2 | LLVM 复合类型：数组、结构体、枚举、引用；字符串/Vec/Box 采用与 VM 等价的运行时表示 | 分阶段启用；每阶段有 VM/LLVM 差分测试 |
-| M3-3 | Stardust FFI：`#[stardust(id = N)]`、`extern "stardust"` 调用、参数/返回值 ABI | 文档 10.4 的示例能生成真实 FFI 调用；调用不存在的 ID 有明确错误 |
-| M3-4 | `stardust!` 指令补全：`Reverse`/`Rotate`/`Store`/`Load` 已实现；剩余自定义 `Ident` 指令与逐条语义测试 | 每条指令至少一个单元/集成测试；不再有“注释替代指令” |
-| M3-5 | 后端特性矩阵与差分：VM / Stardust / LLVM 三列，明确支持/不支持 | CI 按矩阵跑测试；不支持项在编译期报错，不生成错误代码 |
-| M3-6 | 目标选择与产物：`build` 默认目标、输出路径、优化级别、错误处理 | CLI 行为写入 `USAGE.md`；`--target llvm` 不再是 “not implemented” |
+**完成情况**：LLVM 后端复用 Stardust 自带的 LLVM 编译器（`MIR → Stardust → --compile → IR → clang`），
+共享同一套值布局与堆块语义；标量/控制流/函数、复合类型、引用、容器、`stardust!` 与 `read_*` 均有
+VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 SipHash-2-4 派生并映射到 `1..=999`。
+`stardust!` 指令集补全，未知指令改为编译错误。新增 `tests/m3_test.rs` 35 项。
 
-**M3 退出标准**
+| ID | 工作项 | 验收标准 | 状态 |
+|---|---|---|---|
+| M3-1 | LLVM MVP：整数/布尔/字符、算术、比较、`if`/`while`、函数调用、`print`/`read` | `freebird build --target llvm` 生成可编译 IR；一小组程序可执行且输出与 VM 一致 | ✅ |
+| M3-2 | LLVM 复合类型：数组、结构体、枚举、引用；字符串/Vec/Box 采用与 VM 等价的运行时表示 | 分阶段启用；每阶段有 VM/LLVM 差分测试 | ✅ |
+| M3-3 | Stardust FFI：`#[stardust(id = N)]`、`extern "stardust"` 调用、参数/返回值 ABI | 文档 10.4 的示例能生成真实 FFI 调用；调用不存在的 ID 有明确错误 | ✅ |
+| M3-4 | `stardust!` 指令补全：`Reverse`/`Rotate`/`Store`/`Load` 已实现；剩余自定义 `Ident` 指令与逐条语义测试 | 每条指令至少一个单元/集成测试；不再有“注释替代指令” | ✅ |
+| M3-5 | 后端特性矩阵与差分：VM / Stardust / LLVM 三列，明确支持/不支持 | CI 按矩阵跑测试；不支持项在编译期报错，不生成错误代码 | ✅ |
+| M3-6 | 目标选择与产物：`build` 默认目标、输出路径、优化级别、错误处理 | CLI 行为写入 `USAGE.md`；`--target llvm` 不再是 “not implemented” | ✅ |
 
-- LLVM MVP 可用，且与 VM 在标量/控制流/函数子集上输出一致。
-- Stardust FFI 与 `stardust!` 不再有占位指令。
-- 三后端特性矩阵进入 CI。
+**M3 退出标准（已满足）**
+
+- LLVM MVP 可用，且与 VM 在标量/控制流/函数及复合类型子集上输出一致。
+- Stardust FFI 与 `stardust!` 不再有占位指令；未知指令与 LLVM 不支持项在编译期报错。
+- 三后端特性矩阵进入 CI（`llvm` job 运行 `tests/m3_test.rs`）。
+
+**M3 已知限制**
+
+- LLVM 目标不支持 `file_read`/`file_write`（编译期拒绝）；非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 模式限制。
+- FFI 在 VM 上明确报错；LLVM 目标需要外部 Stardust 函数定义参与链接。
+- `stardust!` 的 `Call(id, m)` 返回值个数由被调 Stardust 函数决定，Freebird 栈模型按 0 处理。
 
 ---
 

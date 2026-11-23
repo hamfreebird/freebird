@@ -254,7 +254,24 @@ pub enum StardustInst {
     Rotate,
     Call { n: u32, m: u32 },
     Ret { m: u32 },
-    Ident(String), // 自定义 Stardust 指令
+    /// 跳转标记（Stardust `Mark(n)`）；宏内标签与 MIR 内部标签隔离。
+    Mark(u32),
+    /// 条件跳转：弹出栈顶，非零则跳转到 `Mark(n)`。
+    Jump(u32),
+    /// 无条件跳转。
+    UncondJump(u32),
+    /// 弹出栈顶 n，丢弃 n 个元素。
+    DropN,
+    /// 弹出栈顶 n，复制从栈顶数第 n 个元素。
+    Pick,
+    NumOut,
+    NumIn,
+    CharOut,
+    CharIn,
+    DumpStack,
+    DumpState,
+    Breakpoint,
+    Nop,
 }
 
 // ─── 语句 AST ───

@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 
 use crate::borrowck::check_borrow;
+use crate::codegen::ffi::{stardust_id_for_fn, validate_stardust_id};
 use crate::codegen::stardust::FnInfo;
 use crate::codegen::{optimize_mir, StardustGen};
 use crate::frontend::parse;
@@ -709,9 +710,12 @@ fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<
     apply_runtime_attributes(&hir, &mut config);
 
     // 3. MIR 生成
+    let extern_fns = collect_extern_functions(&hir)?;
+
     let mut generator = MirGen::new()
         .with_type_table(type_table)
-        .with_method_variant_tags(method_tags);
+        .with_method_variant_tags(method_tags)
+        .with_extern_functions(extern_fns.clone());
     let functions = generator.gen_program(&hir);
 
     if functions.is_empty() {
@@ -819,8 +823,55 @@ pub fn check_source(source: &str) -> Result<(), Vec<String>> {
     if errors.is_empty() { Ok(()) } else { Err(errors) }
 }
 
-/// 编译到 Stardust 源码
-pub fn build_stardust(source: &str) -> Result<String, String> {
+/// 一次完整前端编译的产物：优化后的 MIR 与生成的 Stardust 源码。
+///
+/// `compile_program` 是 `build --target stardust` 与 `build --target llvm` 的
+/// 共同入口：LLVM 后端复用同一份 Stardust 文本，从而保证两个后端语义一致。
+pub struct CompiledProgram {
+    pub functions: Vec<(FnId, Vec<MirInst>)>,
+    pub fn_info: HashMap<FnId, FnInfo>,
+    pub entry: Option<FnId>,
+    /// extern "stardust" 函数名 → Stardust ID。
+    pub extern_fns: HashMap<String, u64>,
+    pub stardust: String,
+}
+
+/// 收集并校验 `extern "stardust"` 声明。
+///
+/// 显式 `#[stardust(id = N)]` 优先；省略时由函数名派生（`codegen::ffi`）。
+/// 重复 ID 会让两个外部函数映射到同一个 Stardust 函数名，必须报错。
+fn collect_extern_functions(
+    program: &crate::hir::types::HirProgram,
+) -> Result<HashMap<String, u64>, String> {
+    use crate::hir::types::{HirDecl, HirExternItem};
+    let mut functions: HashMap<String, u64> = HashMap::new();
+    let mut ids: HashMap<u64, String> = HashMap::new();
+    for decl in &program.decls {
+        let HirDecl::Extern(ext) = decl else { continue };
+        if ext.abi != "stardust" {
+            return Err(format!(
+                "extern ABI `{}` is not supported; only `extern \"stardust\"` is defined",
+                ext.abi
+            ));
+        }
+        for item in &ext.items {
+            let HirExternItem::Fn(f) = item;
+            let id = stardust_id_for_fn(f);
+            validate_stardust_id(id, &f.name)?;
+            if let Some(previous) = ids.insert(id, f.name.clone()) {
+                return Err(format!(
+                    "stardust id {id} is assigned to both extern functions `{previous}` and `{}`;                      give them distinct `#[stardust(id = N)]` values",
+                    f.name
+                ));
+            }
+            functions.insert(f.name.clone(), id);
+        }
+    }
+    Ok(functions)
+}
+
+/// 解析、检查并生成 MIR / Stardust 源码（不执行）。
+pub fn compile_program(source: &str) -> Result<CompiledProgram, String> {
     let (ast, ast_errors) = parse(source);
     if !ast_errors.is_empty() {
         let msg: Vec<String> = ast_errors.iter().map(|e| e.to_string()).collect();
@@ -847,9 +898,12 @@ pub fn build_stardust(source: &str) -> Result<String, String> {
         return Err(format!("Borrow errors:\n{}", msg.join("\n")));
     }
 
+    let extern_fns = collect_extern_functions(&hir)?;
+
     let mut generator = MirGen::new()
         .with_type_table(type_table)
-        .with_method_variant_tags(method_tags);
+        .with_method_variant_tags(method_tags)
+        .with_extern_functions(extern_fns.clone());
     let functions = generator.gen_program(&hir);
     if functions.is_empty() {
         return Err("No functions generated".to_string());
@@ -860,7 +914,10 @@ pub fn build_stardust(source: &str) -> Result<String, String> {
     let mut entry = None;
     for (i, sig) in hir.fn_signatures.iter().enumerate() {
         let id = FnId((i + 1) as u64);
-        fn_info.insert(id, FnInfo::new(sig.name.clone(), sig.n, sig.m));
+        // extern 函数没有内部 MIR/定义；调用点走 ExternCall。
+        if !extern_fns.contains_key(&sig.name) {
+            fn_info.insert(id, FnInfo::new(sig.name.clone(), sig.n, sig.m));
+        }
         if entry.is_none() && sig.name == "main" {
             entry = Some(id);
         }
@@ -874,8 +931,25 @@ pub fn build_stardust(source: &str) -> Result<String, String> {
         optimized_functions.push((*fn_id, optimized));
     }
 
-    let mut sd_gen = StardustGen::new();
-    Ok(sd_gen.generate_program(&optimized_functions, &fn_info, entry))
+    // extern 的 Stardust ID 与内部函数名共用同一命名空间（前导空格数）：
+    // 预留这些名字，内部 FnId 自动跳过，避免 `#[stardust(id = 1)]` 误调 main。
+    let reserved_names: HashSet<usize> =
+        extern_fns.values().map(|id| *id as usize).collect();
+    let mut sd_gen = StardustGen::new().with_reserved_names(reserved_names);
+    let stardust = sd_gen.generate_program(&optimized_functions, &fn_info, entry);
+
+    Ok(CompiledProgram {
+        functions: optimized_functions,
+        fn_info,
+        entry,
+        extern_fns,
+        stardust,
+    })
+}
+
+/// 编译到 Stardust 源码
+pub fn build_stardust(source: &str) -> Result<String, String> {
+    Ok(compile_program(source)?.stardust)
 }
 
 #[cfg(test)]

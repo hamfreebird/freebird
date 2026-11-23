@@ -120,6 +120,32 @@ impl StackTracker {
         self.slots.reverse();
     }
 
+    /// Stardust `ShiftL`：栈底槽移到栈顶。
+    pub fn shift_left(&mut self) {
+        if !self.slots.is_empty() {
+            let first = self.slots.remove(0);
+            self.slots.push(first);
+        }
+    }
+
+    /// Stardust `ShiftR`：栈顶槽移到栈底。
+    pub fn shift_right(&mut self) {
+        if !self.slots.is_empty() {
+            let last = self.slots.pop().expect("non-empty");
+            self.slots.insert(0, last);
+        }
+    }
+
+    /// Stardust `Rotate`：栈顶三元素 a,b,c → c,a,b。
+    pub fn rotate_top3(&mut self) {
+        let len = self.slots.len();
+        if len >= 3 {
+            let n = len - 3;
+            self.slots.swap(n, n + 2);
+            self.slots.swap(n + 1, n + 2);
+        }
+    }
+
     /// 交换栈顶两个槽
     pub fn swap(&mut self) {
         let len = self.slots.len();
@@ -212,6 +238,8 @@ pub struct MirGen {
     active_vars: Vec<HashMap<String, usize>>,
     /// 类型检查的方法解析标注（内建枚举标签 / 用户方法名）。
     method_variant_tags: MethodTagMap,
+    /// extern "stardust" 函数名 → Stardust ID（调用点生成 ExternCall）。
+    extern_fns: HashMap<String, u64>,
 }
 
 impl MirGen {
@@ -229,6 +257,7 @@ impl MirGen {
             pending_loop_label: None,
             active_vars: Vec::new(),
             method_variant_tags: HashMap::new(),
+            extern_fns: HashMap::new(),
         }
     }
 
@@ -247,6 +276,12 @@ impl MirGen {
     /// 设置类型检查标注的内建枚举变体标签
     pub fn with_method_variant_tags(mut self, tags: MethodTagMap) -> Self {
         self.method_variant_tags = tags;
+        self
+    }
+
+    /// 设置 extern "stardust" 函数名 → Stardust ID 映射。
+    pub fn with_extern_functions(mut self, extern_fns: HashMap<String, u64>) -> Self {
+        self.extern_fns = extern_fns;
         self
     }
 
@@ -281,16 +316,10 @@ impl MirGen {
                     let (mir, _sig) = self.gen_fn(f);
                     functions.push((fn_id, mir));
                 }
-                HirDecl::Extern(ext) => {
-                    for item in &ext.items {
-                        let HirExternItem::Fn(f) = item;
-                        let fn_id = *self.name_to_id.get(&f.name).unwrap_or(&FnId(fn_id_counter));
-                        if fn_id.0 >= fn_id_counter {
-                            fn_id_counter = fn_id.0 + 1;
-                        }
-                        let (mir, _sig) = self.gen_fn(f);
-                        functions.push((fn_id, mir));
-                    }
+                HirDecl::Extern(_) => {
+                    // extern 函数没有 Freebird 函数体：调用点直接生成
+                    // `ExternCall`（Stardust 后端生成 `Call(id, argc)`），
+                    // 这里不生成内部函数定义，避免与外部实现重名。
                 }
                 _ => {}
             }
@@ -1099,6 +1128,35 @@ impl MirGen {
                     args.len() as u32
                 };
 
+                // Stardust FFI：参数按 `argc` 个直接压栈（不需要 CallElement），
+                // 由 Stardust 后端生成 `Call(id, argc)`。
+                if let Some(stardust_id) = self.extern_fns.get(&fn_name).copied() {
+                    if !stack_pass {
+                        for arg in args {
+                            match arg {
+                                HirCallArg::Pos(e, _) | HirCallArg::Named(_, e, _) => {
+                                    self.gen_expr(e, fn_sig);
+                                }
+                            }
+                        }
+                    }
+                    let ret_count = call_sig.as_ref().map_or(0, |s| s.m);
+                    self.mir.push(MirInst::ExternCall {
+                        stardust_id,
+                        argc,
+                        return_arity: ret_count,
+                    });
+                    if !stack_pass {
+                        for _ in 0..argc {
+                            self.stack.pop();
+                        }
+                    }
+                    for _ in 0..ret_count {
+                        self.stack.push_temp();
+                    }
+                    return;
+                }
+
                 // 零参数调用没有可以栈传的参数，仍必须压入 CallElement，
                 // 否则 VM 的 Call 指令找不到调用帧。有参数的栈传参保持原语义。
                 let needs_call_element = !stack_pass || argc == 0;
@@ -1788,10 +1846,22 @@ impl MirGen {
                 self.exit_scope();
             }
             HirExpr::StardustMacro(insts, _) => {
-                // 翻译 stardust! 宏指令为 MIR
+                // stardust! 的 Mark/Jump 使用宏内标签；先收集 Mark 并分配
+                // MIR 内部标签，避免与生成器自己的分支标签冲突。
+                let mut labels: HashMap<u32, usize> = HashMap::new();
                 for inst in insts {
-                    self.gen_stardust_inst(inst);
+                    if let ast::StardustInst::Mark(n) = inst {
+                        labels.entry(*n).or_insert_with(|| self.labels.fresh());
+                    }
                 }
+                // 宏内的整栈指令（ShiftL/Depth/Reverse/...）只应看到用户数据：
+                // 进入时隐藏调用元素，离开时恢复。main 帧没有 CallElement，
+                // VM 上的 Hide 是 no-op。
+                self.mir.push(MirInst::HideCallElement);
+                for inst in insts {
+                    self.gen_stardust_inst(inst, &labels);
+                }
+                self.mir.push(MirInst::RestoreCallElement);
             }
             HirExpr::Unsafe(block, _) => {
                 // unsafe 块：标记作用域并生成代码（跳过类型检查）
@@ -2233,7 +2303,11 @@ impl MirGen {
     }
 
     /// 将 stardust! 宏指令翻译为 MIR
-    fn gen_stardust_inst(&mut self, inst: &crate::frontend::ast::StardustInst) {
+    fn gen_stardust_inst(
+        &mut self,
+        inst: &crate::frontend::ast::StardustInst,
+        labels: &HashMap<u32, usize>,
+    ) {
         match inst {
             crate::frontend::ast::StardustInst::Push(v) => {
                 self.mir.push(MirInst::Push { value: Value::I64(*v), ty: TypeId::Unknown });
@@ -2320,16 +2394,18 @@ impl MirGen {
                 self.stack.pop(); self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::ShiftL => {
-                self.mir.push(MirInst::Roll { n: -1 });
-                self.stack.roll(-1);
+                // Stardust ShiftL：栈底元素移到栈顶（整帧循环移位，不是 Roll）。
+                self.mir.push(MirInst::RawShiftL);
+                self.stack.shift_left();
             }
             crate::frontend::ast::StardustInst::ShiftR => {
-                self.mir.push(MirInst::Roll { n: 1 });
-                self.stack.roll(1);
+                // Stardust ShiftR：栈顶元素移到栈底。
+                self.mir.push(MirInst::RawShiftR);
+                self.stack.shift_right();
             }
             crate::frontend::ast::StardustInst::Depth => {
-                let len = self.stack.len() as i64;
-                self.mir.push(MirInst::Push { value: Value::I64(len), ty: TypeId::Unknown });
+                // Stardust Depth：运行时压入当前栈深度。
+                self.mir.push(MirInst::RawDepth);
                 self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Reverse => {
@@ -2337,27 +2413,63 @@ impl MirGen {
                 self.stack.reverse();
             }
             crate::frontend::ast::StardustInst::Rotate => {
-                self.mir.push(MirInst::Roll { n: 2 });
-                self.stack.roll(2);
+                // Stardust Rotate：栈顶三元素 a,b,c → c,a,b。
+                self.mir.push(MirInst::RawRotate);
+                self.stack.rotate_top3();
             }
             crate::frontend::ast::StardustInst::Call { n, m } => {
-                self.mir.push(MirInst::Push {
-                    value: Value::CallElement { argc: *n },
-                    ty: TypeId::Unknown,
-                });
-                self.stack.push_temp();
-                self.mir.push(MirInst::Call { fn_id: FnId(0), return_arity: *m });
-                // 清理栈追踪
-                for _ in 0..*n { self.stack.pop(); }
-                self.stack.pop(); // CallElement
-                for _ in 0..*m { self.stack.push_temp(); }
+                // 原始 Stardust 调用：参数直接压栈（不带 CallElement）。
+                // 返回值个数由被调函数决定，Freebird 不追踪（按 0 处理）。
+                self.mir.push(MirInst::StardustCall { id: *n, argc: *m });
+                for _ in 0..*m {
+                    self.stack.pop();
+                }
             }
             crate::frontend::ast::StardustInst::Ret { m } => {
                 self.mir.push(MirInst::Ret { argc: *m });
             }
-            crate::frontend::ast::StardustInst::Ident(_) => {
-                self.mir.push(MirInst::Comment("stardust custom ident".to_string()));
+            crate::frontend::ast::StardustInst::Mark(n) => {
+                let label = labels.get(n).copied().unwrap_or(0);
+                self.mir.push(MirInst::Mark(label));
             }
+            crate::frontend::ast::StardustInst::Jump(n) => {
+                let label = labels.get(n).copied().unwrap_or(0);
+                self.mir.push(MirInst::Jump(label));
+                self.stack.pop();
+            }
+            crate::frontend::ast::StardustInst::UncondJump(n) => {
+                let label = labels.get(n).copied().unwrap_or(0);
+                self.mir.push(MirInst::UncondJump(label));
+            }
+            crate::frontend::ast::StardustInst::DropN => {
+                self.mir.push(MirInst::StardustDropN);
+                self.stack.pop(); // n
+            }
+            crate::frontend::ast::StardustInst::Pick => {
+                self.mir.push(MirInst::Pick);
+                self.stack.pop();
+                self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::NumOut => {
+                self.mir.push(MirInst::NumOut);
+                self.stack.pop();
+            }
+            crate::frontend::ast::StardustInst::NumIn => {
+                self.mir.push(MirInst::NumIn);
+                self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::CharOut => {
+                self.mir.push(MirInst::CharOut);
+                self.stack.pop();
+            }
+            crate::frontend::ast::StardustInst::CharIn => {
+                self.mir.push(MirInst::CharIn);
+                self.stack.push_temp();
+            }
+            crate::frontend::ast::StardustInst::DumpStack => self.mir.push(MirInst::DumpStack),
+            crate::frontend::ast::StardustInst::DumpState => self.mir.push(MirInst::DumpState),
+            crate::frontend::ast::StardustInst::Breakpoint => self.mir.push(MirInst::Breakpoint),
+            crate::frontend::ast::StardustInst::Nop => self.mir.push(MirInst::Nop),
         }
     }
 }

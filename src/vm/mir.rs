@@ -135,6 +135,36 @@ pub enum MirInst {
     UncondJump(usize),     // 无条件跳转
     Call { fn_id: FnId, return_arity: u32 }, // 函数调用（argc从CallElement获取, return_arity从签名获取）
     CallIndirect { argc: u32, return_arity: u32 }, // 间接调用：栈布局 [args..., fnptr]
+    /// `stardust!` 的原始 `Call(n, m)`：直接调用 Stardust 函数 `n`，
+    /// 栈上已有 `m` 个参数。返回值个数由被调函数决定，Freebird 不追踪。
+    StardustCall {
+        id: u32,
+        argc: u32,
+    },
+    /// `stardust!` 的原始 `DropN`：弹出 n，再丢弃 n 个元素。
+    StardustDropN,
+    /// Stardust `ShiftL`：把栈底元素移到栈顶。
+    RawShiftL,
+    /// Stardust `ShiftR`：把栈顶元素移到栈底。
+    RawShiftR,
+    /// Stardust `Rotate`：栈顶三元素 a,b,c → c,a,b。
+    RawRotate,
+    /// Stardust `Depth`：压入当前栈深度。
+    RawDepth,
+    /// `stardust!` 入口：把 Freebird 的隐藏调用元素（CallElement）移出数据栈，
+    /// 使宏内的整栈指令只看到用户数据。main 帧没有 CallElement，VM 上是 no-op。
+    HideCallElement,
+    /// `stardust!` 出口：恢复被隐藏的 CallElement。
+    RestoreCallElement,
+    /// Stardust FFI 调用：栈上已有 `argc` 个参数（不含 CallElement）。
+    ///
+    /// Stardust 后端生成 `Call(id, argc)`；VM 无法执行 Stardust 函数，会返回
+    /// 明确的运行时错误。`#[stardust(id = N)]` 的 ID 见 `codegen::ffi`。
+    ExternCall {
+        stardust_id: u64,
+        argc: u32,
+        return_arity: u32,
+    },
     Ret { argc: u32 },     // 返回
 
     // === 变量与作用域 ===
@@ -227,6 +257,8 @@ impl MirInst {
             MirInst::Jump(_)
                 | MirInst::UncondJump(_)
                 | MirInst::Call { .. }
+                | MirInst::StardustCall { .. }
+                | MirInst::ExternCall { .. }
                 | MirInst::Ret { .. }
                 | MirInst::Mark(_)
         )
@@ -271,6 +303,20 @@ impl std::fmt::Display for MirInst {
             MirInst::CallIndirect { argc, return_arity } => {
                 write!(f, "CallIndirect(argc={argc}, ret={return_arity})")
             }
+            MirInst::ExternCall { stardust_id, argc, return_arity } => write!(
+                f,
+                "ExternCall(id={stardust_id}, argc={argc}, ret={return_arity})"
+            ),
+            MirInst::StardustCall { id, argc } => {
+                write!(f, "StardustCall(id={id}, argc={argc})")
+            }
+            MirInst::StardustDropN => write!(f, "DropN"),
+            MirInst::RawShiftL => write!(f, "ShiftL"),
+            MirInst::RawShiftR => write!(f, "ShiftR"),
+            MirInst::RawRotate => write!(f, "Rotate"),
+            MirInst::RawDepth => write!(f, "Depth"),
+            MirInst::HideCallElement => write!(f, "HideCallElement"),
+            MirInst::RestoreCallElement => write!(f, "RestoreCallElement"),
             MirInst::Ret { argc } => write!(f, "Ret({argc})"),
             MirInst::EnterScope => write!(f, "EnterScope"),
             MirInst::ExitScope => write!(f, "ExitScope"),

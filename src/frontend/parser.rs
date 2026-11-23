@@ -1360,7 +1360,42 @@ impl Parser {
                             self.expect(TokenKind::RParen)?;
                             StardustInst::Ret { m }
                         }
-                        _ => StardustInst::Ident(name),
+                        "Mark" => {
+                            self.expect(TokenKind::LParen)?;
+                            let n = self.parse_expr_imm()?;
+                            self.expect(TokenKind::RParen)?;
+                            StardustInst::Mark(n)
+                        }
+                        "Jump" => {
+                            self.expect(TokenKind::LParen)?;
+                            let n = self.parse_expr_imm()?;
+                            self.expect(TokenKind::RParen)?;
+                            StardustInst::Jump(n)
+                        }
+                        "UncondJump" => {
+                            self.expect(TokenKind::LParen)?;
+                            let n = self.parse_expr_imm()?;
+                            self.expect(TokenKind::RParen)?;
+                            StardustInst::UncondJump(n)
+                        }
+                        "DropN" => StardustInst::DropN,
+                        "Pick" => StardustInst::Pick,
+                        "NumOut" => StardustInst::NumOut,
+                        "NumIn" => StardustInst::NumIn,
+                        "CharOut" => StardustInst::CharOut,
+                        "CharIn" => StardustInst::CharIn,
+                        "DumpStack" => StardustInst::DumpStack,
+                        "DumpState" => StardustInst::DumpState,
+                        "Breakpoint" => StardustInst::Breakpoint,
+                        "Nop" => StardustInst::Nop,
+                        other => {
+                            return Err(FrontendError::new(
+                                FrontendErrorKind::UnknownStardustInstruction(
+                                    other.to_string(),
+                                ),
+                                self.current_span(),
+                            ));
+                        }
                     };
                     insts.push(inst);
                 }

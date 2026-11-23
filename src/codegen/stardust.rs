@@ -56,6 +56,8 @@ const HEAP_RAW_LEN: usize = 14;
 const HEAP_RAW_BLOCK: usize = 15;
 /// unsafe 值栈的初始容量。
 const RAW_CAP: i64 = 64;
+/// `stardust!` 宏执行期间暂存 CallElement 的堆槽（保留，不供用户使用）。
+const HEAP_CE_TEMP: usize = 13;
 
 /// 第一个可分配的堆块地址。
 const HEAP_BASE: i64 = 16;
@@ -162,6 +164,14 @@ pub struct StardustGen {
     heap_bindings: HashSet<usize>,
     /// 当前函数的返回值个数（用于 DropVar 的逃逸检查）。
     current_returns: u32,
+    /// Stardust 函数名（源码中的前导空格数）→ 已被 FFI/原始调用占用的名字。
+    reserved_names: HashSet<usize>,
+    /// Freebird FnId → 实际生成的 Stardust 函数名。
+    fn_names: HashMap<FnId, usize>,
+    /// 下一个可用的内部函数名。
+    next_fn_name: usize,
+    /// 当前是否已为 `stardust!` 隐藏 CallElement（支持嵌套宏）。
+    ce_hidden: bool,
 }
 
 impl StardustGen {
@@ -183,7 +193,20 @@ impl StardustGen {
             alias_body: false,
             heap_bindings: HashSet::new(),
             current_returns: 0,
+            reserved_names: HashSet::new(),
+            fn_names: HashMap::new(),
+            next_fn_name: 1,
+            ce_hidden: false,
         }
+    }
+
+    /// 预留 Stardust 函数名（FFI / `stardust!` 的 `Call(id, m)` 使用）。
+    ///
+    /// 内部函数名从 1 开始分配并跳过这些名字，避免 extern 的 `#[stardust(id = N)]`
+    /// 与 Freebird 内部 FnId 指向同一个 Stardust 函数。
+    pub fn with_reserved_names(mut self, names: HashSet<usize>) -> Self {
+        self.reserved_names = names;
+        self
     }
 
     /// 生成整个程序的 Stardust 源码。
@@ -199,6 +222,8 @@ impl StardustGen {
     ) -> String {
         self.output.clear();
         self.fn_info = fn_info.clone();
+        self.fn_names.clear();
+        self.next_fn_name = 1;
 
         // Unicode 字符输出模式。该注解由解释器在词法分析前提取。
         self.output.push_str("#[char_mode=unicode]\n");
@@ -212,6 +237,16 @@ impl StardustGen {
 
         // 为自递归函数分配别名函数名。别名名从现有最大 FnId 之后开始，
         // 避免与真实函数冲突。
+        // `stardust!` 的原始 Call(id, m) 直接使用 Stardust 函数名；
+        // 内部函数名必须避开这些 ID。
+        for (_, mir) in functions {
+            for inst in mir {
+                if let MirInst::StardustCall { id, .. } = inst {
+                    self.reserved_names.insert(*id as usize);
+                }
+            }
+        }
+
         self.aliases.clear();
         let max_id = functions.iter().map(|(id, _)| id.0).max().unwrap_or(0);
         let mut next_alias = max_id + 1;
@@ -294,6 +329,7 @@ impl StardustGen {
         // 重置函数级状态。
         self.current_fn = Some(fn_id);
         self.alias_body = alias_body;
+        self.ce_hidden = false;
         self.next_binding = 0;
         self.heap_bindings.clear();
         self.current_returns = info.returns;
@@ -334,7 +370,8 @@ impl StardustGen {
         self.next_helper_label = self.epilogue_label + 1;
 
         // 函数声明：(name):
-        self.raw_inst(output_id.0 as usize, ':');
+        let decl_name = self.fn_name(output_id);
+        self.raw_inst(decl_name, ':');
 
         for inst in mir {
             self.gen_inst(inst);
@@ -350,7 +387,7 @@ impl StardustGen {
         self.raw_inst(self.epilogue_label, '`');
 
         // 函数声明结束：(name):
-        self.raw_inst(output_id.0 as usize, ':');
+        self.raw_inst(decl_name, ':');
     }
 
     /// 生成一条 MIR 指令。
@@ -459,6 +496,72 @@ impl StardustGen {
                     self.stack.push(Slot::unknown());
                 }
             }
+            MirInst::RawShiftL => {
+                // Stardust `ShiftL`（`<` 0 空格）：栈底元素移到栈顶。
+                self.raw_inst(0, '<');
+                self.model_shift_left();
+            }
+            MirInst::RawShiftR => {
+                // Stardust `ShiftR`（`>` 0 空格）：栈顶元素移到栈底。
+                self.raw_inst(0, '>');
+                self.model_shift_right();
+            }
+            MirInst::RawRotate => {
+                // Stardust `Rotate`（`+` 3 空格）：栈顶 a,b,c → c,a,b。
+                self.raw_inst(3, '+');
+                self.model_rotate_top3();
+            }
+            MirInst::RawDepth => {
+                // Stardust `Depth`（`<` 1 空格）：压入运行时栈深度。
+                self.raw_inst(1, '<');
+                self.stack.push(Slot::unknown());
+            }
+            MirInst::StardustDropN => {
+                // Stardust `DropN`（`>` 1 空格）：弹出 n，丢弃 n 个元素。
+                self.raw_inst(1, '>');
+                self.stack.pop();
+                self.emit_comment(
+                    "note: DropN depth is dynamic; compile-time stack model is approximate",
+                );
+            }
+            MirInst::HideCallElement => {
+                if !self.ce_hidden {
+                    self.emit_comment(
+                        "stardust! begin: hide Freebird CallElement (heap[13])",
+                    );
+                    // [CE, users...] → [users...]
+                    self.raw_inst(5, '*'); // Reverse
+                    self.emit_push_int(HEAP_CE_TEMP as i64);
+                    self.raw_inst(0, '-'); // Store
+                    self.raw_inst(5, '*'); // Reverse
+                    if !self.stack.is_empty() {
+                        self.stack.remove(0);
+                    }
+                    self.ce_hidden = true;
+                }
+            }
+            MirInst::RestoreCallElement => {
+                if self.ce_hidden {
+                    // [users...] → [CE, users...]
+                    self.raw_inst(5, '*'); // Reverse
+                    self.emit_push_int(HEAP_CE_TEMP as i64);
+                    self.raw_inst(1, '-'); // Load
+                    self.raw_inst(5, '*'); // Reverse
+                    self.stack.insert(0, Slot::unknown());
+                    self.ce_hidden = false;
+                }
+            }
+            MirInst::StardustCall { id, argc } => {
+                // 原始 Stardust 调用：`Call(id, argc)`，不带 CallElement。
+                self.emit_comment(&format!(
+                    "raw stardust call id={id} argc={argc} (return values unknown)"
+                ));
+                self.raw_inst(*id as usize, ':');
+                self.raw_inst(*argc as usize, ';');
+                for _ in 0..*argc {
+                    self.stack.pop();
+                }
+            }
 
             // ─── 算术 ───
             MirInst::Add { .. } => self.gen_binary_arith(0, BinOp::Add),
@@ -541,6 +644,9 @@ impl StardustGen {
             MirInst::Call { fn_id, .. } => self.gen_call(*fn_id),
             MirInst::CallIndirect { argc, return_arity } => {
                 self.gen_call_indirect(*argc, *return_arity);
+            }
+            MirInst::ExternCall { stardust_id, argc, return_arity } => {
+                self.gen_extern_call(*stardust_id, *argc, *return_arity);
             }
             MirInst::Ret { argc } => {
                 self.emit_return(*argc);
@@ -1255,6 +1361,27 @@ impl StardustGen {
         for _ in 0..info.returns {
             // 返回值可能是 Copy 类型（结构体/数组），保守不标记为可回收；
             // Vec 返回值在调用者 push/pop 时再标记。
+            self.stack.push(Slot::unknown());
+        }
+    }
+
+    /// extern "stardust" 调用：栈上已有 `argc` 个参数，生成 `Call(id, argc)`。
+    ///
+    /// 外部函数由 Stardust 侧提供；Freebird 不生成对应的函数定义。
+    fn gen_extern_call(&mut self, stardust_id: u64, argc: u32, return_arity: u32) {
+        self.emit_comment(&format!(
+            "extern stardust call id={stardust_id} argc={argc} -> {return_arity} return(s)"
+        ));
+        if self.stack.len() < argc as usize {
+            self.emit_comment(&format!(
+                "WARNING: extern call id={stardust_id} expects {argc} stack slots, model has {}",
+                self.stack.len()
+            ));
+        }
+        self.raw_inst(stardust_id as usize, ':'); // Call(id)
+        self.raw_inst(argc as usize, ';'); // (argc)
+        self.pop_n_model(argc as usize);
+        for _ in 0..return_arity {
             self.stack.push(Slot::unknown());
         }
     }
@@ -3432,8 +3559,46 @@ impl StardustGen {
     }
 
     fn emit_call(&mut self, fn_id: FnId, argc: u32) {
-        self.raw_inst(fn_id.0 as usize, ':'); // (name):
+        let name = self.fn_name(fn_id);
+        self.raw_inst(name, ':'); // (name):
         self.raw_inst(argc as usize, ';'); // (argc);
+    }
+
+    /// 为 FnId 分配 Stardust 函数名（前导空格数），跳过 FFI 预留名字。
+    fn fn_name(&mut self, fn_id: FnId) -> usize {
+        if let Some(name) = self.fn_names.get(&fn_id) {
+            return *name;
+        }
+        while self.reserved_names.contains(&self.next_fn_name) {
+            self.next_fn_name += 1;
+        }
+        let name = self.next_fn_name;
+        self.next_fn_name += 1;
+        self.fn_names.insert(fn_id, name);
+        name
+    }
+
+    fn model_shift_left(&mut self) {
+        if !self.stack.is_empty() {
+            let first = self.stack.remove(0);
+            self.stack.push(first);
+        }
+    }
+
+    fn model_shift_right(&mut self) {
+        if !self.stack.is_empty() {
+            let last = self.stack.pop().expect("non-empty");
+            self.stack.insert(0, last);
+        }
+    }
+
+    fn model_rotate_top3(&mut self) {
+        let len = self.stack.len();
+        if len >= 3 {
+            let n = len - 3;
+            self.stack.swap(n, n + 2);
+            self.stack.swap(n + 1, n + 2);
+        }
     }
 
     fn model_roll(&mut self, n: i32) {

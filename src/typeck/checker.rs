@@ -93,10 +93,9 @@ pub enum TypeCheckError {
         name: String,
         span: Span,
     },
-    /// 调用尚未实现的 extern/FFI 函数。
-    ExternCall {
+    /// extern/FFI 调用必须位于 `unsafe` 块内（readme.md §10.4）。
+    ExternCallOutsideUnsafe {
         name: String,
-        abi: Option<String>,
         span: Span,
     },
     /// 已解析但尚未实现的语言特性（`use`、`#id` 等）。
@@ -154,7 +153,7 @@ impl TypeCheckError {
             | TypeCheckError::LoopUsedAsValue { span }
             | TypeCheckError::NonExhaustiveMatch { span, .. }
             | TypeCheckError::MissingFunctionBody { span, .. }
-            | TypeCheckError::ExternCall { span, .. }
+            | TypeCheckError::ExternCallOutsideUnsafe { span, .. }
             | TypeCheckError::UnsupportedFeature { span, .. }
             | TypeCheckError::UnknownAttribute { span, .. }
             | TypeCheckError::InvalidAttribute { span, .. }
@@ -246,16 +245,10 @@ impl std::fmt::Display for TypeCheckError {
                 f,
                 "{span}: function `{name}` has no body; only extern functions may omit it"
             ),
-            TypeCheckError::ExternCall { name, abi, span } => match abi {
-                Some(abi) => write!(
-                    f,
-                    "{span}: calling extern function `{name}` (ABI {abi:?}) is not supported yet; FFI is unimplemented"
-                ),
-                None => write!(
-                    f,
-                    "{span}: calling function `{name}` without a body is not supported"
-                ),
-            },
+            TypeCheckError::ExternCallOutsideUnsafe { name, span } => write!(
+                f,
+                "{span}: calling extern function `{name}` requires an `unsafe` block (readme.md §10.4)"
+            ),
             TypeCheckError::UnsupportedFeature { feature, reference, span } => write!(
                 f,
                 "{span}: unsupported feature: {feature} (see {reference})"
@@ -1360,13 +1353,21 @@ impl<'a> TypeChecker<'a> {
         };
 
         if let Some(abi) = self.extern_functions.get(&sig.name).cloned() {
-            // extern 函数尚未与 Stardust FFI 接通；调用必须失败，不能返回
-            // 栈上残留的参数值。
-            self.error(TypeCheckError::ExternCall {
-                name: sig.name.clone(),
-                abi: Some(abi),
-                span,
-            });
+            if abi != "stardust" {
+                // 规范只定义 `extern "stardust"`；其他 ABI 必须明确拒绝。
+                self.error(TypeCheckError::UnsupportedFeature {
+                    feature: format!("extern ABI `{abi}`"),
+                    reference: "readme.md §10.4 (only `extern \"stardust\"` is supported)"
+                        .to_string(),
+                    span,
+                });
+            } else if self.unsafe_depth == 0 {
+                // Stardust 函数没有类型安全保障：所有 FFI 调用必须在 unsafe 块内。
+                self.error(TypeCheckError::ExternCallOutsideUnsafe {
+                    name: sig.name.clone(),
+                    span,
+                });
+            }
         }
 
         // 先求值参数，便于泛型函数从实参推断类型。

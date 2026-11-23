@@ -42,6 +42,10 @@ pub enum VmError {
     AssertionFailed(String),
     /// I/O 错误
     IoError(String),
+    /// Stardust FFI 调用无法在 VM 上执行。
+    FfiUnsupported { stardust_id: u64 },
+    /// `stardust!` 的原始 `Call(n, m)` 无法在 VM 上执行。
+    RawCallUnsupported { id: u32 },
 }
 
 impl fmt::Display for VmError {
@@ -105,6 +109,16 @@ impl fmt::Display for VmError {
             VmError::IoError(msg) => {
                 write!(f, "I/O error: {msg}")
             }
+            VmError::FfiUnsupported { stardust_id } => write!(
+                f,
+                "Stardust FFI call (id {stardust_id}) cannot run on the VM; use \
+                 `freebird build --target stardust` or `--target llvm`"
+            ),
+            VmError::RawCallUnsupported { id } => write!(
+                f,
+                "raw stardust! Call({id}, ...) cannot run on the VM; use \
+                 `freebird build --target stardust` or `--target llvm`"
+            ),
         }
     }
 }

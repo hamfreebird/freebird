@@ -5,6 +5,7 @@ use std::process;
 
 use freebird::{build_stardust, run_file, RuntimeConfig};
 use freebird::borrowck::check_borrow;
+use freebird::codegen::llvm::{compile_llvm, LlvmArtifact, LlvmEmit, LlvmOptions};
 use freebird::diagnostics;
 use freebird::frontend::parse;
 use freebird::hir::lower;
@@ -36,13 +37,25 @@ enum Command {
     },
     /// 交互式 REPL
     Repl,
-    /// 编译为 Stardust 源码或 LLVM IR
+    /// 编译为 Stardust 源码或 LLVM IR / 可执行文件
     Build {
         /// 源文件路径 (.fb)
         file: PathBuf,
-        /// 编译目标
+        /// 编译目标（默认 stardust）
         #[arg(long, value_enum)]
         target: Option<Target>,
+        /// 输出文件路径；省略时打印到 stdout（stardust/llvm-ir）或使用源文件名（可执行文件）
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// 产物类型：ir（LLVM IR 文本）或 exe（可执行文件）；仅 --target llvm 使用
+        #[arg(long, value_enum)]
+        emit: Option<EmitOption>,
+        /// 传给 clang 的优化级别（0-3）
+        #[arg(long)]
+        opt_level: Option<u8>,
+        /// Stardust 可执行文件路径（也可用 STARDUST_BIN 环境变量）
+        #[arg(long)]
+        stardust_bin: Option<PathBuf>,
     },
 }
 
@@ -50,6 +63,12 @@ enum Command {
 enum Target {
     Stardust,
     Llvm,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum EmitOption {
+    Ir,
+    Exe,
 }
 
 fn main() {
@@ -122,7 +141,14 @@ fn main() {
                 process::exit(1);
             }
         }
-        Some(Command::Build { file, target }) => {
+        Some(Command::Build {
+            file,
+            target,
+            output,
+            emit,
+            opt_level,
+            stardust_bin,
+        }) => {
             let source = fs::read_to_string(&file).unwrap_or_else(|e| {
                 eprintln!("Error reading {}: {e}", file.display());
                 process::exit(1);
@@ -131,17 +157,73 @@ fn main() {
             let target_name = target.unwrap_or(Target::Stardust);
             match target_name {
                 Target::Stardust => {
-                    match build_stardust(&source) {
-                        Ok(code) => println!("{code}"),
+                    if matches!(emit, Some(EmitOption::Exe)) {
+                        eprintln!(
+                            "Error: `--emit exe` requires `--target llvm`; the stardust target emits source text."
+                        );
+                        process::exit(1);
+                    }
+                    let code = match build_stardust(&source) {
+                        Ok(code) => code,
+                        Err(e) => {
+                            eprintln!("Build error: {e}");
+                            process::exit(1);
+                        }
+                    };
+                    match output {
+                        Some(path) => {
+                            if let Err(e) = fs::write(&path, code) {
+                                eprintln!("Error writing {}: {e}", path.display());
+                                process::exit(1);
+                            }
+                            eprintln!("Stardust source written to {}", path.display());
+                        }
+                        None => println!("{code}"),
+                    }
+                }
+                Target::Llvm => {
+                    let emit = match emit.unwrap_or(EmitOption::Ir) {
+                        EmitOption::Ir => LlvmEmit::Ir,
+                        EmitOption::Exe => LlvmEmit::Executable,
+                    };
+                    if matches!(emit, LlvmEmit::Executable) && output.is_none() {
+                        eprintln!(
+                            "Error: `--emit exe` requires `--output <path>` (the output executable path)."
+                        );
+                        process::exit(1);
+                    }
+                    let opt_level = match opt_level.unwrap_or(0) {
+                        level @ 0..=3 => level,
+                        other => {
+                            eprintln!("Error: `--opt-level` must be 0-3, got {other}");
+                            process::exit(1);
+                        }
+                    };
+                    let options = LlvmOptions {
+                        emit,
+                        output: output.clone(),
+                        stardust_bin,
+                        opt_level: opt_level as u8,
+                    };
+                    match compile_llvm(&source, &options) {
+                        Ok(LlvmArtifact::Ir(ir)) => match output {
+                            Some(path) => {
+                                if let Err(e) = fs::write(&path, ir) {
+                                    eprintln!("Error writing {}: {e}", path.display());
+                                    process::exit(1);
+                                }
+                                eprintln!("LLVM IR written to {}", path.display());
+                            }
+                            None => print!("{ir}"),
+                        },
+                        Ok(LlvmArtifact::Executable(path)) => {
+                            eprintln!("Executable written to {}", path.display());
+                        }
                         Err(e) => {
                             eprintln!("Build error: {e}");
                             process::exit(1);
                         }
                     }
-                }
-                Target::Llvm => {
-                    eprintln!("LLVM backend not yet implemented (Phase 9).");
-                    process::exit(1);
                 }
             }
         }

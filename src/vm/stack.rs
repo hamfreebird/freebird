@@ -54,6 +54,27 @@ impl DualStack {
         self.values.push(value);
     }
 
+    /// 取出栈底元素（用于临时隐藏调用元素）。
+    pub fn remove_bottom(&mut self) -> Option<(ElementId, Value)> {
+        if self.is_empty() {
+            return None;
+        }
+        let id = self.ids.remove(0);
+        let value = self.values.remove(0);
+        Some((id, value))
+    }
+
+    /// 把元素插回栈底。
+    pub fn insert_bottom(&mut self, id: ElementId, value: Value) {
+        self.ids.insert(0, id);
+        self.values.insert(0, value);
+    }
+
+    /// 查看栈底值。
+    pub fn bottom_value(&self) -> Option<&Value> {
+        self.values.first()
+    }
+
     /// Pop — 同步弹出 ID 和值
     pub fn pop(&mut self) -> Option<(ElementId, Value)> {
         match (self.ids.pop(), self.values.pop()) {
@@ -128,6 +149,55 @@ impl DualStack {
     pub fn reverse(&mut self) {
         self.ids.reverse();
         self.values.reverse();
+    }
+
+    /// Stardust `ShiftL`：栈底元素移到栈顶。
+    pub fn shift_left(&mut self) -> Result<(), VmError> {
+        if self.is_empty() {
+            return Err(VmError::StackUnderflow);
+        }
+        let id = self.ids.remove(0);
+        let value = self.values.remove(0);
+        self.ids.push(id);
+        self.values.push(value);
+        Ok(())
+    }
+
+    /// Stardust `ShiftR`：栈顶元素移到栈底。
+    pub fn shift_right(&mut self) -> Result<(), VmError> {
+        if self.is_empty() {
+            return Err(VmError::StackUnderflow);
+        }
+        let id = self.ids.pop().expect("non-empty");
+        let value = self.values.pop().expect("non-empty");
+        self.ids.insert(0, id);
+        self.values.insert(0, value);
+        Ok(())
+    }
+
+    /// Stardust `Rotate`：栈顶三元素 a,b,c → c,a,b。
+    pub fn rotate_top3(&mut self) -> Result<(), VmError> {
+        let len = self.len();
+        if len < 3 {
+            return Err(VmError::StackUnderflow);
+        }
+        let n = len - 3;
+        self.ids.swap(n, n + 2);
+        self.values.swap(n, n + 2);
+        self.ids.swap(n + 1, n + 2);
+        self.values.swap(n + 1, n + 2);
+        Ok(())
+    }
+
+    /// Stardust `DropN`：丢弃栈顶 `n` 个元素。
+    pub fn drop_n(&mut self, n: usize) -> Result<(), VmError> {
+        if n > self.len() {
+            return Err(VmError::StackUnderflow);
+        }
+        let new_len = self.len() - n;
+        self.ids.truncate(new_len);
+        self.values.truncate(new_len);
+        Ok(())
     }
 
     /// Pick(n): 读取 n（栈顶），复制位置 n 的元素到栈顶（新 ElementId）

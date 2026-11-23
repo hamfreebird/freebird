@@ -19,7 +19,10 @@ pub use diagnostics::{generate_diagnostic_json, generate_diagnostic_json_with_wa
 pub use frontend::parse;
 pub use hir::lower;
 pub use io::{std_library, IoLib};
-pub use pipeline::{build_stardust, check_source, check_source_with_warnings, run_file, run_source};
+pub use pipeline::{
+    build_stardust, check_source, check_source_with_warnings, compile_program, run_file, run_source,
+    CompiledProgram,
+};
 pub use vm::Vm;
 pub use vm::config::RuntimeConfig;
 pub use vm::error::VmError;

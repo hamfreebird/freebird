@@ -35,6 +35,9 @@ pub struct CallFrame {
 
     /// 函数名（调试用）
     pub fn_name: Option<String>,
+
+    /// `stardust!` 宏执行期间被隐藏的 CallElement。
+    pub hidden_call_element: Option<(crate::vm::id::ElementId, crate::vm::value::Value)>,
 }
 
 impl CallFrame {
@@ -51,6 +54,7 @@ impl CallFrame {
             return_arity: 0,
             marks,
             fn_name: Some("main".to_string()),
+            hidden_call_element: None,
         }
     }
 
@@ -76,6 +80,7 @@ impl CallFrame {
             return_arity,
             marks,
             fn_name,
+            hidden_call_element: None,
         }
     }
 

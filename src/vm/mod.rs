@@ -269,6 +269,64 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
+            MirInst::RawShiftL => {
+                let mut frame = self.pop_frame()?;
+                frame.data.shift_left()?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RawShiftR => {
+                let mut frame = self.pop_frame()?;
+                frame.data.shift_right()?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RawRotate => {
+                let mut frame = self.pop_frame()?;
+                frame.data.rotate_top3()?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RawDepth => {
+                let mut frame = self.pop_frame()?;
+                let depth = frame.data.len() as i64;
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, Value::I64(depth));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::StardustDropN => {
+                let mut frame = self.pop_frame()?;
+                let (_, n_val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let n = n_val.as_i64().ok_or(VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: n_val.type_name().to_string(),
+                })?;
+                frame.data.drop_n(n.max(0) as usize)?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::StardustCall { id, .. } => {
+                return Err(VmError::RawCallUnsupported { id: *id });
+            }
+            MirInst::HideCallElement => {
+                let mut frame = self.pop_frame()?;
+                if frame.hidden_call_element.is_none()
+                    && matches!(frame.data.bottom_value(), Some(Value::CallElement { .. }))
+                {
+                    frame.hidden_call_element = frame.data.remove_bottom();
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+            MirInst::RestoreCallElement => {
+                let mut frame = self.pop_frame()?;
+                if let Some((id, value)) = frame.hidden_call_element.take() {
+                    frame.data.insert_bottom(id, value);
+                }
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
 
             // === 算术 ===
             MirInst::Add { .. } => self.binary_arith_op(|a, b| Ok(a + b))?,
@@ -361,6 +419,9 @@ impl Vm {
             }
             MirInst::CallIndirect { argc, return_arity } => {
                 self.execute_call_indirect(*argc, *return_arity)?;
+            }
+            MirInst::ExternCall { stardust_id, .. } => {
+                return Err(VmError::FfiUnsupported { stardust_id: *stardust_id });
             }
             MirInst::Ret { argc } => {
                 self.execute_ret(*argc)?;

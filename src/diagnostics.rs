@@ -157,9 +157,8 @@ pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
             TypeCheckError::MissingFunctionBody { .. } => {
                 Some("add `{ ... }`, or declare the function inside an `extern` block".to_string())
             }
-            TypeCheckError::ExternCall { .. } => {
-                Some("FFI calls are not implemented yet; provide a Freebird implementation"
-                    .to_string())
+            TypeCheckError::ExternCallOutsideUnsafe { .. } => {
+                Some("wrap the extern call in an `unsafe` block".to_string())
             }
             TypeCheckError::UnsupportedFeature { .. } => {
                 Some("remove the construct; it is reserved for a later milestone".to_string())

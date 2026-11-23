@@ -39,10 +39,33 @@ freebird check hello.fb        # JSON 诊断输出
 ### 编译
 
 ```bash
-freebird build --target stardust hello.fb  # 编译为 Stardust 源码
+# Stardust 源码（默认目标）：打印到 stdout，或用 -o 写入文件
+freebird build hello.fb
+freebird build --target stardust hello.fb -o hello.sd
+
+# LLVM IR（打印到 stdout 或写入 .ll）
+freebird build --target llvm hello.fb
+freebird build --target llvm hello.fb -o hello.ll
+
+# 可执行文件（调用 clang）
+freebird build --target llvm hello.fb --emit exe -o hello
+freebird build --target llvm hello.fb --emit exe -o hello --opt-level 2
 ```
 
-`--target llvm` 尚未实现；请求该目标会直接报错退出。
+`build` 的选项：
+
+| 选项 | 说明 |
+|---|---|
+| `--target stardust\|llvm` | 目标后端，默认 `stardust` |
+| `-o, --output <path>` | 输出路径；省略时 stardust/llvm-ir 打印到 stdout |
+| `--emit ir\|exe` | 仅 LLVM：生成 IR 文本（默认）或可执行文件 |
+| `--opt-level 0-3` | 传给 clang 的优化级别（默认 0） |
+| `--stardust-bin <path>` | 显式指定 Stardust 可执行文件 |
+
+LLVM 后端复用 Stardust 的 LLVM 编译器。Stardust 可执行文件按
+`--stardust-bin` → `STARDUST_BIN` → `PATH` 中的 `stardust` → 仓库自带
+`stardust/stardust-linux-x86_64` → 兄弟仓库 `../esolang_stardust/target/{release,debug}` 查找；
+`--emit exe` 还需要 clang（`CLANG`/`CC`/`PATH`）。找不到工具链时会给出明确错误。
 
 ## 当前实现状态
 
@@ -54,14 +77,14 @@ freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 - `match` 支持结构体、枚举（含嵌套载荷）、元组、字面量、`or`、引用、`..` 剩余和 `_` 模式，并在类型检查阶段拒绝非穷尽匹配；重复分支或兜底分支之后的分支会产生 `warning` 级诊断。`let` 支持变量、元组和结构体解构；可失败模式（如枚举变体）必须改用 `match`。
 - `ret n` 的 `n` 必须是整数字面量；`loop` 支持值语义与 `break value`，`if let` / `while let` 已支持（VM/Stardust 输出一致）；`while`/`for` 中的 `break value` 会在编译期报错；循环标签 `'outer: loop` + `break 'outer` / `continue 'outer` 已支持。
 - 函数指针：支持 `fn(A, B) -> C` 类型、函数名作值、作为参数/返回值以及间接调用；Stardust 通过 FnId dispatch 实现。当前 MVP 要求间接调用恰好返回一个值。
-- `#id` 与 `extern` 函数调用尚未实现：声明可以解析，但使用处会报 `unsupported feature`，不会静默返回栈上残留值。（`use` 与文件级模块已实现，见上。）
+- Stardust FFI：`extern "stardust" { #[stardust(id = N)] fn f(...) -> ...; }` 已可用，调用生成真实 `Call(N, argc)`。调用必须在 `unsafe` 块内；省略 `id` 时按函数名做 SipHash-2-4 并映射到 `1..=999`（ID 就是 Stardust 源码中的前导空格数）；重复或过大的 ID 在编译期报错。VM 执行 FFI 会报明确错误，LLVM 目标需要外部 Stardust 函数定义参与链接。`#id` 仍按 §4.3 明确拒绝。
 - Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆块上（逻辑远程栈，见 `docs/adr/0001-logical-remote-stack.md`）。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 文本处理，非 UTF-8/二进制内容不在支持范围内。
 - `read_line` 与 VM 的 `String::from_utf8_lossy` 对齐：CRLF、UTF-8、非法首字节/续字节、overlong/surrogate/越界码点都逐字节一致。**已知差异**：输入 EOF 时 Stardust 解释器的 `CharIn` 直接报 I/O 错误（VM 返回空字符串），生成代码无法捕获。
 - 索引读写在 Stardust 后端执行 `index >= 0 && index < len` 检查；越界时用除零陷阱让解释器非零退出，错误消息与 VM 的 `index out of bounds` 不同。
 - Stardust 全局堆块使用 free list 复用；`VecPush` 原地追加、`VecPop` 原地缩减，扩容时释放旧块；`DropVar` 回收未被返回/别名的 Vec/Box 绑定。数组/结构体等 Copy 类型的 COW 旧块、嵌套容器内层块、从未 push/pop 的 Vec/String 保守不回收（安全泄漏）；完整引用计数方案见 `docs/adr/0002-heap-reclamation-deferred.md`。
-- `stardust!` 的 `store`/`load` 映射为真实堆操作；`Reverse`/`Rotate`/`Depth` 等指令已映射，自定义 `Ident` 指令仍只生成注释。
+- `stardust!` 支持 `Push`/`Pop`/`Dup`/`Swap`/`Add`/`Sub`/`Mul`/`Div`/`Mod`/比较/逻辑/`Store`/`Load`/`ShiftL`/`ShiftR`/`Depth`/`Pick`/`DropN`/`Reverse`/`Rotate`/`Mark`/`Jump`/`UncondJump`/`Call`/`Ret`/`NumOut`/`NumIn`/`CharOut`/`CharIn`/`DumpStack`/`DumpState`/`Breakpoint`/`Nop`；未知指令在解析阶段报错。宏入口/出口会临时隐藏 Freebird 的隐藏调用元素（堆槽 13），因此 `ShiftL`/`Depth`/`Reverse` 等整栈指令只操作用户数据栈，VM 与 Stardust 语义一致。`Call(id, m)` 的参数从栈顶取 `m` 个，返回值个数由被调 Stardust 函数决定（Freebird 栈模型按 0 处理）；VM 执行 `Call` 会报明确错误。
 - `#[max_stack]`/`#[max_call_depth]`/`#[max_steps]`/`#[time_limit]` 只影响 VM；生成的 Stardust 代码没有等价资源限制，由外部解释器负责。
-- LLVM 后端尚未实现。
+- LLVM 后端：`build --target llvm` 生成 LLVM IR 或可执行文件（复用 Stardust 的 LLVM 编译器）。标量/控制流/函数、结构体/数组/枚举/引用/`Vec`/`String`/`Box`、`Option`/`Result`、`impl`、`stardust!` 与 `read_*` 均已与 VM 输出对比通过。**限制**：`file_read`/`file_write` 在 LLVM 目标上编译期拒绝；非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 模式限制；Freebird 的运行时限制属性只影响 VM。
 - 完整的能力矩阵见 `STATUS.md`；VM/Stardust 差分测试见 `tests/differential_test.rs` 与 `tests/m1_test.rs`。
 
 ### 交互式 REPL
@@ -222,6 +245,29 @@ fn raw_stack_op() -> i32 {
     }
 }
 ```
+
+宏内可用 Stardust REPL 简写指令，完整列表见 `readme.md` §10.3 / 附录 A.2。
+整栈指令（`ShiftL`/`ShiftR`/`Rotate`/`Depth`/`Reverse`/`Pick`/`DropN`）只看到用户数据栈，
+不会碰到 Freebird 内部用于参数传递的隐藏调用元素。
+
+### Stardust FFI
+
+```freebird
+extern "stardust" {
+    #[stardust(id = 7)]
+    fn sd_add(a: i64, b: i64) -> i64;
+}
+
+fn main() {
+    unsafe {
+        print(sd_add(3, 5));   // 生成 Call(7, 2)
+    }
+}
+```
+
+Stardust 侧需要提供 ID 为 7 的函数定义（例如 `       :` / `*` / `       :`）。
+VM 无法执行 Stardust 函数，`freebird run` 会报明确错误；请使用
+`freebird build --target stardust` 或 `--target llvm`。
 
 ## 标准库
 

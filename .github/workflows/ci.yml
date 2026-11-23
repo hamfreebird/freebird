@@ -22,3 +22,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: VM/Stardust differential tests
         run: cargo test --test differential_test
+
+  llvm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install LLVM/clang
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: LLVM backend tests (bundled Stardust toolchain)
+        run: cargo test --test m3_test

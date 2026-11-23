@@ -40,6 +40,8 @@ pub enum FrontendErrorKind {
     InvalidRetOperand {
         found: String,
     },
+    /// `stardust!` 宏中出现未知指令名。
+    UnknownStardustInstruction(String),
 
     // 语义错误（前端检测）
     MixedCallArgs(Span),
@@ -86,6 +88,10 @@ impl fmt::Display for FrontendErrorKind {
             FrontendErrorKind::InvalidAttributeValue { attribute, found } => {
                 write!(f, "invalid value `{found}` for attribute #[{attribute}]")
             }
+            FrontendErrorKind::UnknownStardustInstruction(name) => write!(
+                f,
+                "unknown stardust instruction `{name}`; see readme.md §10.3 / Stardust REPL shorthand"
+            ),
             FrontendErrorKind::InvalidRetOperand { found } => write!(
                 f,
                 "`ret` expects an integer literal, found `{found}`; use `return` for general expressions"

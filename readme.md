@@ -6,7 +6,7 @@
 >
 > 本规范是 Freebird 语言实现的权威参考文档。
 >
-> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如 LLVM 后端、Stardust FFI、泛型约束与按实例单态化、`stardust!` 的自定义 `Ident` 指令）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
+> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如泛型约束与按实例单态化、字符串格式化 API）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 在 LLVM 目标上编译期拒绝，非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 限制。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
 
 ---
 
@@ -737,7 +737,17 @@ let result = stardust! {
 // result = 64
 ```
 
-`stardust!` 宏中可用的简写指令完整列表见 Stardust 的 REPL 文档。宏内部为 unsafe 上下文（编译器不检查类型栈）。
+宏内部为 unsafe 上下文（编译器不检查类型栈）。当前支持的简写指令：
+
+- 栈与运算：`Push(n)`、`Pop`、`Dup`、`Swap`、`Add`、`Sub`、`Mul`、`Div`、`Mod`、`Eq`、`Ne`、`Lt`、`Gt`、`Le`、`Ge`、`And`、`Or`、`Not`、`Xor`
+- 栈扩展：`ShiftL`、`ShiftR`、`Depth`、`Pick`、`DropN`、`Reverse`、`Rotate`
+- 堆与控制流：`Store`、`Load`、`Mark(n)`、`Jump(n)`、`UncondJump(n)`、`Call(n, m)`、`Ret(m)`
+- 调试与 I/O：`NumOut`、`NumIn`、`CharOut`、`CharIn`、`DumpStack`、`DumpState`、`Breakpoint`、`Nop`
+
+未知指令名在解析阶段报错。宏入口/出口会临时隐藏 Freebird 内部用于参数传递的调用元素
+（`CallElement`，暂存在 Stardust 堆槽 13），因此 `ShiftL`/`Depth`/`Reverse` 等整栈指令
+只操作用户数据栈，VM 与 Stardust 输出一致。`Call(n, m)` 从栈顶取 `m` 个参数，
+返回值个数由被调 Stardust 函数决定，Freebird 栈模型按 0 处理；该指令在 VM 上不可执行。
 
 ### 10.4 `extern "stardust"` FFI
 
@@ -753,11 +763,12 @@ extern "stardust" {
 }
 ```
 
-- `#[stardust(id = N)]` 指定 Stardust 函数的数字 ID。
-- 若省略 `id`，则从函数名使用 SipHash-2-4 派生默认 ID。
+- `#[stardust(id = N)]` 指定 Stardust 函数的数字 ID。ID 会变成生成源码中的前导空格数，因此上限为 4096；重复 ID 编译失败。
+- 若省略 `id`，则从函数名使用 SipHash-2-4 派生，并映射到 `1..=999` 作为默认 ID。
 - 参数和返回值类型必须显式标注。
-- 调用 Stardust 函数时，Freebird 编译器生成标准的 `Call(N, M)` 指令。
+- 调用 Stardust 函数时，Freebird 编译器生成标准的 `Call(N, M)` 指令；内部 Freebird 函数名会自动避开这些 ID。
 - Stardust 函数天然支持多值返回；返回 `()` 等价于 `m=0`。
+- 所有调用必须在 `unsafe` 块内。VM 无法执行 Stardust 函数，`freebird run` 会在运行时报明确错误；`--target llvm` 需要外部 Stardust 函数定义参与链接。
 
 调用示例：
 
@@ -1013,9 +1024,10 @@ fn use_ffi() -> i32 {
 |------|------|
 | `freebird run <file.fb>` | 解释执行 Freebird 程序 |
 | `freebird run --debug <file.fb>` | 调试模式执行 |
-| `freebird build <file.fb>` | 编译为 Stardust 源码或 LLVM IR |
+| `freebird build <file.fb>` | 编译为 Stardust 源码（默认目标） |
 | `freebird build --target stardust <file.fb>` | 编译为 Stardust 源码（可在 Stardust 解释器运行） |
-| `freebird build --target llvm <file.fb>` | 编译为 LLVM IR → 可执行文件 |
+| `freebird build --target llvm <file.fb>` | 编译为 LLVM IR（`-o` 写文件，默认打印到 stdout） |
+| `freebird build --target llvm --emit exe -o <out> <file.fb>` | 生成 LLVM IR → 可执行文件 |
 | `freebird check <file.fb>` | 语法和类型检查（JSON 诊断输出） |
 | `freebird repl` | 交互式 REPL |
 | `freebird package` | 包管理 |
