@@ -596,6 +596,7 @@ impl BorrowChecker {
                 self.note_use(name);
             }
             HirExpr::Deref(inner, _) => self.check_expr(inner),
+            HirExpr::TypeApplied { callee, .. } => self.check_expr(callee),
             HirExpr::Ref(inner, mutable, span) => {
                 self.check_expr(inner);
                 if let HirExpr::Var(target) = inner.as_ref()
@@ -909,7 +910,8 @@ fn count_uses_expr(expr: &HirExpr, uses: &mut HashMap<String, usize>) {
         HirExpr::Deref(inner, _)
         | HirExpr::Unary(_, inner, _)
         | HirExpr::FieldAccess(inner, _, _)
-        | HirExpr::As(inner, _, _) => count_uses_expr(inner, uses),
+        | HirExpr::As(inner, _, _)
+        | HirExpr::TypeApplied { callee: inner, .. } => count_uses_expr(inner, uses),
         HirExpr::Ref(inner, _, _) => count_uses_expr(inner, uses),
         HirExpr::Binary(lhs, _, rhs, _) | HirExpr::Index(lhs, rhs, _) => {
             count_uses_expr(lhs, uses);

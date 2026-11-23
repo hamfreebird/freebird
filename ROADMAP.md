@@ -7,6 +7,7 @@
 > **M2-2/M2-7 后基线**（2026-11-23）：`cargo test` = **201 unit + 99 integration** 全绿（`tests/m2_test.rs` 15 项）。
 > **M2-4 零返回值指针后基线**（2026-11-23）：`cargo test` = **201 unit + 133 integration** 全绿（`tests/m2_test.rs` 49 项）。
 > **unsafe 值栈扩容与 roll(n) 后基线**（2026-11-23）：`cargo test` = **201 unit + 136 integration** 全绿（`tests/m2_test.rs` 52 项）。
+> **Reverse/可见性/泛型 impl/turbofish 后基线**（2026-11-23）：`cargo test` = **202 unit + 142 integration** 全绿（`tests/m2_test.rs` 58 项）。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 
@@ -153,7 +154,7 @@
 
 | ID | 工作项 | 验收标准 |
 |---|---|---|
-| M2-1 | 用户泛型 MVP：`struct`/`enum`/`fn` 的泛型参数，单态化生成 MIR；先支持类型参数，不做高阶类型 | `Pair<T>`、`Option<T>`、`fn id<T>(x: T) -> T` 可解析、检查、运行；单态化测试覆盖多实例 | 🟡 类型擦除 MVP：泛型参数声明、字段访问/函数实参推断 + 替换检查；布局与代码按基名共用一份，未做单态化/约束/turbofish |
+| M2-1 | 用户泛型 MVP：`struct`/`enum`/`fn` 的泛型参数，单态化生成 MIR；先支持类型参数，不做高阶类型 | `Pair<T>`、`Option<T>`、`fn id<T>(x: T) -> T` 可解析、检查、运行；单态化测试覆盖多实例 | 🟡 类型擦除 MVP：泛型参数声明、字段访问/函数实参推断 + 替换检查；布局与代码按基名共用一份，未做单态化/约束；支持 turbofish |
 | M2-2 | `Option`/`Result` 作为泛型枚举进入标准库，替代硬编码特例 | `Option::Some`/`None`、`Result::Ok`/`Err` 及基本 `unwrap`/`map` 可用；VM/Stardust 测试 | ✅ 泛型枚举：`Option<T>`/`Result<T, E>` 载荷推断与替换检查；`Option` 的 `is_some`/`is_none`/`unwrap`/`unwrap_or` 与 `Result` 的 `is_ok`/`is_err`/`unwrap`/`unwrap_or`；`map`/`ok`/`err`/`ok_or` 组合子由 M2-7 补齐 |
 | M2-3 | 模块与 `use`：至少支持文件级模块、`use path::item`、可见性检查；不引入完整包生态 | 多文件示例可编译运行；未解析路径报错；循环依赖有明确诊断 | ✅ 文件级模块闭环：`mod util;` 递归加载同目录 `util.fb`（顶层函数加 `util::` 前缀）、`use util::f;` 别名映射、循环依赖与未解析路径有明确诊断；`pub` 可见性与模块内类型前缀（`util::Point`）已补齐 |
 | M2-4 | 函数指针：解析 `fn(A, B) -> C`，端到端支持 `Value::FnPtr`、间接调用、作为参数/返回值 | `let f: fn(i64) -> i64 = inc; f(1)` 在 VM/Stardust 上工作；错误签名报错 | ✅ 零/单/多返回值间接调用均可用（Stardust FnId dispatch）；`fn(A) -> (B, C)` 的返回列表与函数声明一致，元数由类型检查标注供给 MIR |

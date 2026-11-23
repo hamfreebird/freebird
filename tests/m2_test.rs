@@ -174,6 +174,46 @@ fn main() {
 }
 
 #[test]
+fn turbofish_matches() {
+    let source = r#"
+fn id<T>(x: T) -> T { x }
+fn main() {
+    print(id::<i64>(7));
+    print(id::<bool>(true) as i64);
+}
+"#;
+    assert_same_output(source, "turbofish", b"");
+}
+
+#[test]
+fn turbofish_arg_count_mismatch_is_rejected() {
+    let source = r#"
+fn id<T>(x: T) -> T { x }
+fn main() { print(id::<i64, i64>(7)); }
+"#;
+    let errors = check_source(source).expect_err("wrong generic arg count should be rejected");
+    assert!(
+        errors.join("\n").contains("generic argument"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}
+
+#[test]
+fn turbofish_on_generic_impl_matches() {
+    let source = r#"
+struct Pair<T> { a: T, b: T }
+impl<T> Pair<T> {
+    fn new(a: T, b: T) -> Pair<T> { Pair { a: a, b: b } }
+}
+fn main() {
+    let p = Pair::<i64>::new(3, 4);
+    print(p.a);
+}
+"#;
+    assert_same_output(source, "turbofish_impl", b"");
+}
+
+#[test]
 fn generic_impl_methods_match() {
     let source = r#"
 struct Pair<T> { a: T, b: T }

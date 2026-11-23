@@ -230,6 +230,13 @@ fn check_expr_refs(expr: &crate::frontend::ast::Expr, pub_names: &PubNames) -> R
             check_expr_refs(inner, pub_names)?;
             check_type_refs(ty, pub_names)
         }
+        Expr::TypeArgs(inner, type_args, _) => {
+            check_expr_refs(inner, pub_names)?;
+            for ty in type_args {
+                check_type_refs(ty, pub_names)?;
+            }
+            Ok(())
+        }
         Expr::Binary(lhs, _, rhs, _) => {
             check_expr_refs(lhs, pub_names)?;
             check_expr_refs(rhs, pub_names)

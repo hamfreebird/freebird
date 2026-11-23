@@ -165,6 +165,8 @@ pub enum Expr {
     StardustMacro(Vec<StardustInst>, Span),
     /// as 类型转换: expr as Type
     As(Box<Expr>, Box<Type>, Span),
+    /// 显式类型实参（turbofish）：`f::<T>`、`Type::<T>::method`
+    TypeArgs(Box<Expr>, Vec<Type>, Span),
 }
 
 /// 函数调用参数

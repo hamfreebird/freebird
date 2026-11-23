@@ -137,6 +137,12 @@ pub enum HirExpr {
     Unsafe(HirBlock, Span),
     StardustMacro(Vec<ast::StardustInst>, Span),
     As(Box<HirExpr>, HirType, Span),
+    /// 显式类型实参（turbofish）：`f::<T>(...)`
+    TypeApplied {
+        callee: Box<HirExpr>,
+        args: Vec<HirType>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]

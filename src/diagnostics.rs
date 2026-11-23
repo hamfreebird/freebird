@@ -176,6 +176,9 @@ pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
             TypeCheckError::OrPatternBindingMismatch { .. } => {
                 Some("bind the same variable names in every `or` alternative".to_string())
             }
+            TypeCheckError::GenericArgMismatch { .. } => {
+                Some("pass the number of type arguments declared by the function".to_string())
+            }
         };
         Diagnostic {
             level: DiagnosticLevel::Error,

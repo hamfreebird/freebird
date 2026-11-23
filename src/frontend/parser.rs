@@ -425,7 +425,26 @@ impl Parser {
                     continue;
                 }
                 TokenKind::ColonColon => {
+                    // turbofish：`f::<T>(...)` / `Type::<T>::method(...)`。
+                    if matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(TokenKind::Lt)) {
+                        self.advance(); // ::
+                        self.advance(); // <
+                        let mut type_args = Vec::new();
+                        while !self.check(TokenKind::Gt) && !self.check(TokenKind::Eof) {
+                            type_args.push(self.parse_type()?);
+                            if !self.eat(TokenKind::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(TokenKind::Gt)?;
+                        lhs = Expr::TypeArgs(Box::new(lhs), type_args, self.pos_span());
+                        continue;
+                    }
                     // 枚举变体或模块路径: A::B、A::B::C、A::B::C(payload)
+                    let turbofish = match &lhs {
+                        Expr::TypeArgs(_, type_args, _) => Some(type_args.clone()),
+                        _ => None,
+                    };
                     let path_prefix = match &lhs {
                         Expr::Var(n, _) => Some(vec![n.clone()]),
                         Expr::EnumLit { name, variant, data: None, .. } => {
@@ -433,6 +452,15 @@ impl Parser {
                             path.push(variant.clone());
                             Some(path)
                         }
+                        Expr::TypeArgs(inner, _, _) => match inner.as_ref() {
+                            Expr::Var(n, _) => Some(vec![n.clone()]),
+                            Expr::EnumLit { name, variant, data: None, .. } => {
+                                let mut path = name.clone();
+                                path.push(variant.clone());
+                                Some(path)
+                            }
+                            _ => None,
+                        },
                         _ => None,
                     };
                     if let Some(path) = path_prefix {
@@ -451,11 +479,15 @@ impl Parser {
                         } else {
                             None
                         };
-                        lhs = Expr::EnumLit {
+                        let node = Expr::EnumLit {
                             name: path,
                             variant: segment,
                             data,
                             span,
+                        };
+                        lhs = match turbofish {
+                            Some(type_args) => Expr::TypeArgs(Box::new(node), type_args, span),
+                            None => node,
                         };
                         continue;
                     }
@@ -1729,6 +1761,7 @@ fn expr_span_of(expr: &Expr) -> Span {
         | Expr::Ref(_, _, span)
         | Expr::Binary(_, _, _, span)
         | Expr::Unary(_, _, span)
+        | Expr::TypeArgs(_, _, span)
         | Expr::Call { span, .. }
         | Expr::FieldAccess(_, _, span)
         | Expr::Index(_, _, span)

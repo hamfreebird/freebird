@@ -417,14 +417,15 @@ impl Lowering {
 
                 let hir_func = self.lower_expr(func)?;
 
-                // 查找函数签名（包括内建函数）
-                let fn_sig = if let ast::Expr::Var(name, _) = func.as_ref() {
+                // 查找函数签名（包括内建函数）。turbofish（`f::<T>(...)`）的
+                // 类型实参包裹在 `TypeArgs` 里，需要递归取内层 callee 名。
+                let fn_sig = if let Some(name) = callee_name(func.as_ref()) {
                     // `use` 别名：按限定名查签名，避免调用点拿不到返回元数。
                     let lookup_name = self
                         .aliases
                         .get(name)
                         .cloned()
-                        .unwrap_or_else(|| name.clone());
+                        .unwrap_or_else(|| name.to_string());
                     self.resolver
                         .lookup_fn(&lookup_name)
                         .cloned()
@@ -642,6 +643,15 @@ impl Lowering {
                 let hir_expr = self.lower_expr(expr)?;
                 let hir_ty = HirType::from_ast_type(ty);
                 Some(HirExpr::As(Box::new(hir_expr), hir_ty, *span))
+            }
+            ast::Expr::TypeArgs(inner, args, span) => {
+                let callee = self.lower_expr(inner)?;
+                let args = args.iter().map(HirType::from_ast_type).collect();
+                Some(HirExpr::TypeApplied {
+                    callee: Box::new(callee),
+                    args,
+                    span: *span,
+                })
             }
         }
     }
@@ -892,6 +902,15 @@ fn expand_impl_decls(decl: &ast::ImplDecl) -> Vec<ast::FnDecl> {
             f
         })
         .collect()
+}
+
+/// 取调用的 callee 名字，穿透 turbofish 的 `TypeArgs` 包装。
+fn callee_name(expr: &ast::Expr) -> Option<&str> {
+    match expr {
+        ast::Expr::Var(name, _) => Some(name.as_str()),
+        ast::Expr::TypeArgs(inner, _, _) => callee_name(inner),
+        _ => None,
+    }
 }
 
 /// 把类型中的 `Self` 替换为 impl 目标类型（泛型 impl 为 `Type<T...>`）。

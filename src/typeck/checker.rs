@@ -126,6 +126,13 @@ pub enum TypeCheckError {
         found: String,
         span: Span,
     },
+    /// 显式类型实参数量与泛型参数不匹配（或函数不是泛型）。
+    GenericArgMismatch {
+        function: String,
+        expected: usize,
+        found: usize,
+        span: Span,
+    },
 }
 
 impl TypeCheckError {
@@ -152,7 +159,8 @@ impl TypeCheckError {
             | TypeCheckError::UnknownAttribute { span, .. }
             | TypeCheckError::InvalidAttribute { span, .. }
             | TypeCheckError::RefutableLetPattern { span }
-            | TypeCheckError::OrPatternBindingMismatch { span, .. } => *span,
+            | TypeCheckError::OrPatternBindingMismatch { span, .. }
+            | TypeCheckError::GenericArgMismatch { span, .. } => *span,
         }
     }
 }
@@ -265,6 +273,10 @@ impl std::fmt::Display for TypeCheckError {
             TypeCheckError::OrPatternBindingMismatch { expected, found, span } => write!(
                 f,
                 "{span}: `or` pattern alternatives bind different variables (first binds {{{expected}}}, another binds {{{found}}})"
+            ),
+            TypeCheckError::GenericArgMismatch { function, expected, found, span } => write!(
+                f,
+                "{span}: function `{function}` expects {expected} generic argument(s), found {found}"
             ),
         }
     }
@@ -797,6 +809,7 @@ impl<'a> TypeChecker<'a> {
                     },
                 }
             }
+            HirExpr::TypeApplied { callee, .. } => self.check_expr(callee),
             HirExpr::Call { func, args, stack_pass, fn_sig, span } => {
                 self.check_call(func, args, *stack_pass, fn_sig.as_ref(), *span)
             }
@@ -1262,6 +1275,11 @@ impl<'a> TypeChecker<'a> {
         fn_sig: Option<&FnSignature>,
         span: Span,
     ) -> HirType {
+        // turbofish：显式类型实参只影响类型检查，内层 callee 才是调用目标。
+        let (func, explicit_type_args) = match func {
+            HirExpr::TypeApplied { callee, args, .. } => (callee.as_ref(), Some(args.as_slice())),
+            _ => (func, None),
+        };
         // 值栈内建属于 unsafe 语义：必须出现在 unsafe 块内。
         if self.unsafe_depth == 0
             && let HirExpr::Var(var) = func
@@ -1377,7 +1395,28 @@ impl<'a> TypeChecker<'a> {
                     self.unify_generic(expected, found, &params, &mut generic_map);
                 }
             }
+            if let Some(explicit) = explicit_type_args {
+                if explicit.len() != params.len() {
+                    self.error(TypeCheckError::GenericArgMismatch {
+                        function: sig.name.clone(),
+                        expected: params.len(),
+                        found: explicit.len(),
+                        span,
+                    });
+                }
+                // 显式类型实参优先于实参推断。
+                for (param, ty) in params.iter().zip(explicit.iter()) {
+                    generic_map.insert(param.clone(), ty.clone());
+                }
+            }
             sig = self.substitute_signature(&sig, &generic_map);
+        } else if let Some(explicit) = explicit_type_args {
+            self.error(TypeCheckError::GenericArgMismatch {
+                function: sig.name.clone(),
+                expected: 0,
+                found: explicit.len(),
+                span,
+            });
         }
 
         // 栈传参不检查实参个数；空参数调用按普通零参调用处理。
@@ -3003,6 +3042,7 @@ fn expr_span(expr: &HirExpr) -> Span {
         | HirExpr::Ref(_, _, span)
         | HirExpr::Binary(_, _, _, span)
         | HirExpr::Unary(_, _, span)
+        | HirExpr::TypeApplied { span, .. }
         | HirExpr::Call { span, .. }
         | HirExpr::MethodCall { span, .. }
         | HirExpr::TypeMethod { span, .. }

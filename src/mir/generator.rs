@@ -1017,9 +1017,14 @@ impl MirGen {
                 }
             }
             HirExpr::Call { func, args, stack_pass, fn_sig: call_sig, span } => {
+                // 显式类型实参只影响类型检查；运行时按内层 callee 生成。
+                let func: &HirExpr = match func.as_ref() {
+                    HirExpr::TypeApplied { callee, .. } => callee.as_ref(),
+                    other => other,
+                };
                 // 间接调用：调用目标不是静态函数名，而是持有 FnPtr 的表达式。
                 let indirect = !matches!(
-                    func.as_ref(),
+                    func,
                     HirExpr::Var(var_ref) if var_ref.scope_depth == usize::MAX
                 );
                 if indirect {
@@ -1057,7 +1062,7 @@ impl MirGen {
                 }
 
                 // 获取函数名（用于内建函数检测）
-                let fn_name = match func.as_ref() {
+                let fn_name = match func {
                     HirExpr::Var(var_ref) => var_ref.name.clone(),
                     _ => String::new(),
                 };
@@ -1426,6 +1431,7 @@ impl MirGen {
                 self.stack.truncate(keep);
                 self.reachable = false;
             }
+            HirExpr::TypeApplied { callee, .. } => self.gen_expr(callee, fn_sig),
             HirExpr::As(inner, target, _) => {
                 self.gen_expr(inner, fn_sig);
                 if !self.reachable {
