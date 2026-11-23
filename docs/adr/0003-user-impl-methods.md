@@ -107,9 +107,12 @@ fn main() {
 - **已实现**：`impl` 块、关联函数（`Rect::square(3)`）、值接收者方法（`fn area(self)`，
   含 `self.field`）。关联函数调用在降级阶段解析为普通函数调用；方法调用由类型检查
   解析为 `Type::name` 并把 receiver 作为第 0 个实参。
-- **未实现**：`&self` / `&mut self` 接收者。当前由类型检查报
-  `UnsupportedFeature`（而不是落到字段/类型错误的误导信息），后续实现时需要在
-  调用点生成 `Ref` 并对方法体做自动解引用。
+- **已实现（2026-11-23）**：`&self` 只读方法。调用点对具名变量生成
+  `Ref { mutable: false }`，方法体内 `self.field` 在 MIR 里自动插入 `Deref`，
+  类型检查按解引用后的类型查字段。
+- **未实现**：`&mut self` 接收者。`self.field = v` 需要引用目标的字段写入语义
+  （VM 的 `FieldStore` 作用于变量本身，Stardust 侧引用是堆单元），当前仍报
+  `UnsupportedFeature` / 方法体内 `self` 不可变诊断。
 
 同步更新 `readme.md` §5、`STATUS.md`、`TASKS.md`、`USAGE.md`。
 

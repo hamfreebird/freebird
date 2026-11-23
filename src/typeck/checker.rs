@@ -329,6 +329,8 @@ pub struct MethodResolution {
     pub user_method: Option<String>,
     /// 用户方法的返回值个数（MIR 生成调用时使用）。
     pub return_arity: u32,
+    /// 引用接收者：`Some(false)` = `&self`（调用点需取引用）。
+    pub receiver_ref: Option<bool>,
 }
 
 /// 方法调用 span → 解析结果。
@@ -416,6 +418,18 @@ impl<'a> TypeChecker<'a> {
             match decl {
                 HirDecl::Fn(f) => {
                     self.validate_attributes(&f.attrs);
+                    // `&mut self` 接收者尚未实现：在检查方法体之前给出明确诊断，
+                    // 避免先在方法体里报“self 不可变”这类误导信息。
+                    if let Some((name, HirType::Ref(_, true))) = f.sig.params.first()
+                        && name == "self"
+                    {
+                        self.error(TypeCheckError::UnsupportedFeature {
+                            feature: format!("`{}` with `&mut self`", f.name),
+                            reference: "ADR 0003: `&mut self` receivers are still pending; use `self`"
+                                .to_string(),
+                            span: f.span,
+                        });
+                    }
                     if f.body.is_none() {
                         self.error(TypeCheckError::MissingFunctionBody {
                             name: f.name.clone(),
@@ -1280,6 +1294,7 @@ impl<'a> TypeChecker<'a> {
                                 variant_tags: None,
                                 user_method: None,
                                 return_arity: rets.len() as u32,
+                                receiver_ref: None,
                             },
                         );
                         Some(FnSignature {
@@ -1533,6 +1548,7 @@ impl<'a> TypeChecker<'a> {
                 }),
                 user_method: None,
                 return_arity: 1,
+                receiver_ref: None,
             },
         );
 
@@ -1627,23 +1643,45 @@ impl<'a> TypeChecker<'a> {
                     span,
                 }
             });
+            // 引用接收者：`&self` 已支持（只读）；`&mut self` 仍待实现。
+            let mut receiver_ref = None;
+            if let Some((_, HirType::Ref(inner, mutable))) = sig.params.first() {
+                if *mutable {
+                    self.error(TypeCheckError::UnsupportedFeature {
+                        feature: format!("`{fn_name}` with `&mut self`"),
+                        reference: "ADR 0003: `&mut self` receivers are still pending; use `self`"
+                            .to_string(),
+                        span,
+                    });
+                } else {
+                    receiver_ref = Some(false);
+                    if !matches!(receiver, HirExpr::Var(_)) {
+                        self.error(TypeCheckError::UnsupportedFeature {
+                            feature: format!("`{fn_name}` `&self` receiver must be a variable"),
+                            reference: "ADR 0003: reference receivers require a named variable"
+                                .to_string(),
+                            span,
+                        });
+                    }
+                    if !is_assignable(inner, &receiver_ty) {
+                        self.error(TypeCheckError::TypeMismatch {
+                            expected: (**inner).clone(),
+                            found: receiver_ty.clone(),
+                            span,
+                            context: format!("`&self` receiver of `{fn_name}`"),
+                        });
+                    }
+                }
+            }
             self.method_variant_tags.insert(
                 span,
                 MethodResolution {
                     variant_tags: None,
                     user_method: Some(fn_name.clone()),
                     return_arity: sig.return_types.len() as u32,
+                    receiver_ref,
                 },
             );
-            // 引用接收者（`&self`/`&mut self`）尚未实现，给出明确诊断而不是字段错误。
-            if let Some((_, HirType::Ref(_, _))) = sig.params.first() {
-                self.error(TypeCheckError::UnsupportedFeature {
-                    feature: format!("`{fn_name}` with `&self`/`&mut self`"),
-                    reference: "ADR 0003: reference receivers are a follow-up; use `self`"
-                        .to_string(),
-                    span,
-                });
-            }
             // receiver 作为第 0 个实参。
             let mut found_args: Vec<(HirType, Span)> = vec![(receiver_ty.clone(), span)];
             for arg in args {
@@ -1658,6 +1696,10 @@ impl<'a> TypeChecker<'a> {
                 });
             }
             for (i, (found, arg_span)) in found_args.iter().enumerate() {
+                // 第 0 个实参是 receiver，已在引用接收者分支单独检查。
+                if i == 0 {
+                    continue;
+                }
                 if let Some((_, expected)) = sig.params.get(i)
                     && !is_assignable(expected, found)
                 {
@@ -2057,6 +2099,8 @@ impl<'a> TypeChecker<'a> {
                 (name, map)
             }
             HirType::Unknown => return HirType::Unknown,
+            // `&self.field`：先按解引用后的类型查字段。
+            HirType::Ref(inner, _) => return self.field_type(inner, field, span),
             _ => {
                 self.error(TypeCheckError::UnknownField {
                     type_name: inner_ty.name(),

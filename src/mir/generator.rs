@@ -728,12 +728,23 @@ impl MirGen {
                 if let Some(fn_name) = resolution.as_ref().and_then(|r| r.user_method.clone()) {
                     let argc = args.len() as u32 + 1;
                     let ret_count = resolution.as_ref().map_or(0, |r| r.return_arity);
+                    let receiver_ref = resolution.as_ref().and_then(|r| r.receiver_ref);
                     self.mir.push(MirInst::Push {
                         value: Value::CallElement { argc },
                         ty: TypeId::Unknown,
                     });
                     self.stack.push_temp();
-                    self.gen_expr(receiver, fn_sig);
+                    match (receiver_ref, receiver.as_ref()) {
+                        // `&self`：从具名变量取引用。
+                        (Some(mutable), HirExpr::Var(var)) => {
+                            self.mir.push(MirInst::Ref {
+                                name: var.name.clone(),
+                                mutable,
+                            });
+                            self.stack.push_temp();
+                        }
+                        _ => self.gen_expr(receiver, fn_sig),
+                    }
                     for arg in args {
                         self.gen_expr(arg, fn_sig);
                     }
@@ -1469,6 +1480,13 @@ impl MirGen {
             }
             HirExpr::FieldAccess(inner, field, _) => {
                 self.gen_expr(inner, fn_sig);
+                // `&self` 方法体内 `self.field` 先解引用引用值（栈深不变）。
+                if let HirExpr::Var(var) = inner.as_ref()
+                    && var.name == "self"
+                    && matches!(fn_sig.params.first(), Some((_, HirType::Ref(_, _))))
+                {
+                    self.mir.push(MirInst::Deref);
+                }
                 // 尝试从类型表查找字段偏移量
                 let offset = self.resolve_field_offset(inner, field);
                 self.mir.push(MirInst::FieldAccess { index: offset });

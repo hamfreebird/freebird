@@ -47,7 +47,7 @@ freebird build --target stardust hello.fb  # 编译为 Stardust 源码
 ## 当前实现状态
 
 - VM 已支持数值/字符/布尔、变量与作用域、控制流、函数调用/递归、数组、结构体、枚举匹配、`Vec`、`Box`、字符串、元组解构以及 `read_*`/`print_*`/文件 I/O。
-- 标准库（MVP）：内建 `Option<T>` / `Result<T, E>` 泛型枚举；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`/`ok_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`/`ok`/`err`；数学内建 `abs`/`min`/`max`；`Vec`/`String` 支持 `len`/`push`/`pop`/`is_empty`/`clear`。用户可为结构体/枚举声明 `impl Type { fn f(self) -> T { ... } }`：关联函数用 `Type::f(...)` 调用，值接收者方法用 `x.f(...)` 调用（`self.field` 访问字段）。`&self`/`&mut self` 尚未支持，会报明确的未实现错误。字符串转换提供 `int_to_str(i64) -> String`（双后端）与 `str_to_int(String) -> Option<i64>`（仅 VM；Stardust 后端生成显式陷阱）。`map` 等组合子尚未实现。
+- 标准库（MVP）：内建 `Option<T>` / `Result<T, E>` 泛型枚举；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`/`ok_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`/`ok`/`err`；数学内建 `abs`/`min`/`max`；`Vec`/`String` 支持 `len`/`push`/`pop`/`is_empty`/`clear`。用户可为结构体/枚举声明 `impl Type { fn f(self) -> T { ... } }`：关联函数用 `Type::f(...)` 调用，值接收者方法用 `x.f(...)` 调用（`self.field` 访问字段）。`&self` 只读方法已支持（`fn area(&self)`），`&mut self` 尚未支持并报未实现错误。字符串转换提供 `int_to_str(i64) -> String`（双后端）与 `str_to_int(String) -> Option<i64>`（仅 VM；Stardust 后端生成显式陷阱）。`map` 等组合子尚未实现。
 - 运行前会执行名称解析、类型检查和借用/移动检查；`check` 与 `run` 报告同一组前端错误。
 - `match` 支持结构体、枚举（含嵌套载荷）、元组、字面量、`or`、引用、`..` 剩余和 `_` 模式，并在类型检查阶段拒绝非穷尽匹配；重复分支或兜底分支之后的分支会产生 `warning` 级诊断。`let` 支持变量、元组和结构体解构；可失败模式（如枚举变体）必须改用 `match`。
 - `ret n` 的 `n` 必须是整数字面量；`loop` 支持值语义与 `break value`，`if let` / `while let` 已支持（VM/Stardust 输出一致）；`while`/`for` 中的 `break value` 会在编译期报错；循环标签 `'outer: loop` + `break 'outer` / `continue 'outer` 已支持。
