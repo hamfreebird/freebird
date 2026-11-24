@@ -1,8 +1,9 @@
 //! M6 正确性与一致性测试。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use freebird::{RuntimeConfig, compile_program, run_source};
+use freebird::{RuntimeConfig, build_stardust, compile_program, run_source};
 
 #[test]
 fn mir_generator_has_no_todo_fallback() {
@@ -83,4 +84,52 @@ fn project_entry_diagnostics_use_entry_file() {
         .expect("expected an entry-file diagnostic");
     assert_eq!(entry.span.line, 4);
     let _ = std::fs::remove_dir_all(base);
+}
+
+fn run_stardust_text(text: &str) -> Result<Vec<u8>, String> {
+    let interpreter = Path::new("stardust/stardust-linux-x86_64");
+    if !interpreter.exists() {
+        return Err("stardust interpreter not available".to_string());
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let path = std::env::temp_dir().join(format!("freebird-m6-{}-{stamp}.sd", std::process::id()));
+    std::fs::write(&path, text).map_err(|error| error.to_string())?;
+    let output = Command::new(interpreter)
+        .arg(&path)
+        .output()
+        .map_err(|error| error.to_string())?;
+    let _ = std::fs::remove_file(&path);
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).into_owned())
+    }
+}
+
+#[test]
+fn stardust_call_arity_declares_return_values() {
+    if !Path::new("stardust/stardust-linux-x86_64").exists() {
+        eprintln!("skipping: stardust interpreter not available");
+        return;
+    }
+    let source = r#"fn main() {
+        stardust! {
+            Push(3)
+            Push(5)
+            Call(7, 2, 1)
+            NumOut
+        }
+    }"#;
+    let stardust = build_stardust(source).expect("build stardust");
+    let pad = " ".repeat(7);
+    let external = format!("\n{pad}:\n*\n{pad}:\n");
+    let output =
+        run_stardust_text(&format!("{stardust}{external}")).expect("run combined Stardust");
+    assert_eq!(output, b"8\n");
+
+    let error = run_source(source, RuntimeConfig::test()).unwrap_err();
+    assert!(error.contains("Call"), "unexpected error: {error}");
 }

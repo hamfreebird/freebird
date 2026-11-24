@@ -1453,8 +1453,13 @@ impl Parser {
                             let n = self.parse_expr_imm()?;
                             self.expect(TokenKind::Comma)?;
                             let m = self.parse_expr_imm()?;
+                            let r = if self.eat(TokenKind::Comma) {
+                                self.parse_expr_imm()?
+                            } else {
+                                0
+                            };
                             self.expect(TokenKind::RParen)?;
-                            StardustInst::Call { n, m }
+                            StardustInst::Call { n, m, r }
                         }
                         "Ret" => {
                             self.expect(TokenKind::LParen)?;

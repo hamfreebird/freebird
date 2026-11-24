@@ -557,15 +557,23 @@ impl StardustGen {
                     self.ce_hidden = false;
                 }
             }
-            MirInst::StardustCall { id, argc } => {
+            MirInst::StardustCall {
+                id,
+                argc,
+                return_arity,
+            } => {
                 // 原始 Stardust 调用：`Call(id, argc)`，不带 CallElement。
+                // return_arity 仅用于 Freebird 栈模型。
                 self.emit_comment(&format!(
-                    "raw stardust call id={id} argc={argc} (return values unknown)"
+                    "raw stardust call id={id} argc={argc} ret={return_arity}"
                 ));
                 self.raw_inst(*id as usize, ':');
                 self.raw_inst(*argc as usize, ';');
                 for _ in 0..*argc {
                     self.stack.pop();
+                }
+                for _ in 0..*return_arity {
+                    self.stack.push(Slot::unknown());
                 }
             }
 

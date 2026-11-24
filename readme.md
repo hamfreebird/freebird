@@ -741,13 +741,14 @@ let result = stardust! {
 
 - 栈与运算：`Push(n)`、`Pop`、`Dup`、`Swap`、`Add`、`Sub`、`Mul`、`Div`、`Mod`、`Eq`、`Ne`、`Lt`、`Gt`、`Le`、`Ge`、`And`、`Or`、`Not`、`Xor`
 - 栈扩展：`ShiftL`、`ShiftR`、`Depth`、`Pick`、`DropN`、`Reverse`、`Rotate`
-- 堆与控制流：`Store`、`Load`、`Mark(n)`、`Jump(n)`、`UncondJump(n)`、`Call(n, m)`、`Ret(m)`
+- 堆与控制流：`Store`、`Load`、`Mark(n)`、`Jump(n)`、`UncondJump(n)`、`Call(n, m[, r])`、`Ret(m)`
 - 调试与 I/O：`NumOut`、`NumIn`、`CharOut`、`CharIn`、`DumpStack`、`DumpState`、`Breakpoint`、`Nop`
 
 未知指令名在解析阶段报错。宏入口/出口会临时隐藏 Freebird 内部用于参数传递的调用元素
 （`CallElement`，暂存在 Stardust 堆槽 13），因此 `ShiftL`/`Depth`/`Reverse` 等整栈指令
-只操作用户数据栈，VM 与 Stardust 输出一致。`Call(n, m)` 从栈顶取 `m` 个参数，
-返回值个数由被调 Stardust 函数决定，Freebird 栈模型按 0 处理；该指令在 VM 上不可执行。
+只操作用户数据栈，VM 与 Stardust 输出一致。`Call(n, m[, r])` 从栈顶取 `m` 个参数；
+`r` 可选（默认 0），只用于 Freebird 栈模型声明返回值个数，实际返回值由被调 Stardust
+函数决定（ADR 0005）；该指令在 VM 上不可执行。
 
 ### 10.4 `extern "stardust"` FFI
 

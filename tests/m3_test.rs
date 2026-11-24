@@ -457,7 +457,7 @@ fn ffi_stardust_codegen_and_execution() {
         return;
     }
     let sd = freebird::build_stardust(FFI_ADD).expect("build stardust");
-    // Call(7, 2)：7 个空格 + ':'，随后 2 个空格 + ';'
+    // Call(7, 2, 1)：7 个空格 + ':'，随后 2 个空格 + ';'
     assert!(sd.contains(&format!("{}:\n", " ".repeat(7))));
     assert!(sd.contains(&format!("{};\n", " ".repeat(2))));
     let combined = format!("{sd}{}", stardust_add_fn(7));
@@ -802,7 +802,7 @@ fn stardust_macro_raw_call() {
         stardust! {
             Push(3)
             Push(5)
-            Call(7, 2)
+            Call(7, 2, 1)
             NumOut
         }
     }"#;

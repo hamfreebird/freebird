@@ -146,6 +146,8 @@ pub enum MirInst {
     StardustCall {
         id: u32,
         argc: u32,
+        /// Freebird 栈模型声明的返回值个数（Stardust 函数实际返回值由函数体决定）。
+        return_arity: u32,
     },
     /// `stardust!` 的原始 `DropN`：弹出 n，再丢弃 n 个元素。
     StardustDropN,
@@ -367,9 +369,11 @@ impl std::fmt::Display for MirInst {
                 f,
                 "ExternCall(id={stardust_id}, argc={argc}, ret={return_arity})"
             ),
-            MirInst::StardustCall { id, argc } => {
-                write!(f, "StardustCall(id={id}, argc={argc})")
-            }
+            MirInst::StardustCall {
+                id,
+                argc,
+                return_arity,
+            } => write!(f, "StardustCall(id={id}, argc={argc}, ret={return_arity})"),
             MirInst::StardustDropN => write!(f, "DropN"),
             MirInst::RawShiftL => write!(f, "ShiftL"),
             MirInst::RawShiftR => write!(f, "ShiftR"),

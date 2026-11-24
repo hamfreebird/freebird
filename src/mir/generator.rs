@@ -2609,12 +2609,20 @@ impl MirGen {
                 self.mir.push(MirInst::RawRotate);
                 self.stack.rotate_top3();
             }
-            crate::frontend::ast::StardustInst::Call { n, m } => {
+            crate::frontend::ast::StardustInst::Call { n, m, r } => {
                 // 原始 Stardust 调用：参数直接压栈（不带 CallElement）。
-                // 返回值个数由被调函数决定，Freebird 不追踪（按 0 处理）。
-                self.mir.push(MirInst::StardustCall { id: *n, argc: *m });
+                // r 是程序员声明的返回值个数，仅用于 Freebird 栈模型；
+                // Stardust 函数实际返回值由函数体决定。
+                self.mir.push(MirInst::StardustCall {
+                    id: *n,
+                    argc: *m,
+                    return_arity: *r,
+                });
                 for _ in 0..*m {
                     self.stack.pop();
+                }
+                for _ in 0..*r {
+                    self.stack.push_temp();
                 }
             }
             crate::frontend::ast::StardustInst::Ret { m } => {

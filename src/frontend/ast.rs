@@ -255,6 +255,8 @@ pub enum StardustInst {
     Call {
         n: u32,
         m: u32,
+        /// Freebird 栈模型声明的返回值个数（默认 0）。
+        r: u32,
     },
     Ret {
         m: u32,

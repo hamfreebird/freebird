@@ -205,7 +205,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 - LLVM 目标不支持 `file_read`/`file_write`（编译期拒绝）；非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 模式限制。
 - FFI 在 VM 上明确报错；LLVM 目标需要外部 Stardust 函数定义参与链接。
-- `stardust!` 的 `Call(id, m)` 返回值个数由被调 Stardust 函数决定，Freebird 栈模型按 0 处理。
+- `stardust!` 的 `Call(id, m)` 返回值个数由被调 Stardust 函数决定；M6-1.3 已增加可选的显式返回值个数 `Call(id, m, r)`（默认 0）。
 
 ---
 
@@ -311,7 +311,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 |---|---|---|
 | M6-1.1 | MIR 生成不再对未知 `HirExpr` 落 `TODO` 注释：在类型检查或 MIR 生成期给出编译错误 | `rg 'TODO' src/mir` 无输出；新增负向测试；未知表达式不会静默生成空代码（已完成） |
 | M6-1.2 | 跨文件诊断位置：项目 `check` 的每条诊断携带来源文件（相对清单根）与正确 span | 多文件错误定位到正确文件/行；JSON 仅新增字段（保持 `schema_version: 1` 兼容）；`m6_test` 覆盖（已完成） |
-| M6-1.3 | 明确 `stardust!` `Call(id, m)` 的返回值语义：要么经 ADR 提供显式返回 arity 机制，要么在 MIR 阶段拒绝“依赖 Call 返回值”的用法 | 方案写入 ADR/规范；VM 与 Stardust 行为一致；新增正/负向测试（P1） |
+| M6-1.3 | 明确 `stardust!` `Call(id, m)` 的返回值语义：要么经 ADR 提供显式返回 arity 机制，要么在 MIR 阶段拒绝“依赖 Call 返回值”的用法 | 方案写入 ADR/规范；VM 与 Stardust 行为一致；新增正/负向测试（P1，已完成：ADR 0005 + `Call(n, m[, r])`） |
 
 #### M6-2 后端一致性（P1，2.5 为 P2）
 
