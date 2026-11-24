@@ -340,6 +340,8 @@ impl MirGen {
         self.next_hidden = 0;
         self.reachable = true;
 
+        self.mir.push(MirInst::Line(f.span.line as u32));
+
         // 进入函数作用域
         self.enter_scope();
 
@@ -546,6 +548,11 @@ impl MirGen {
         if !self.reachable {
             return;
         }
+        let span = match stmt {
+            HirStmt::Let { span, .. } | HirStmt::Assign { span, .. } => *span,
+            HirStmt::Expr(_, span) => *span,
+        };
+        self.mir.push(MirInst::Line(span.line as u32));
         match stmt {
             HirStmt::Let { pattern, init, .. } => {
                 let Some(init_expr) = init else { return };

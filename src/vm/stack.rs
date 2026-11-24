@@ -294,6 +294,12 @@ impl DualStack {
     pub fn iter_bottom_to_top(&self) -> impl Iterator<Item = (&ElementId, &Value)> {
         self.ids.iter().zip(self.values.iter())
     }
+
+    /// 按 ElementId 查找数据栈中的值（DAP 变量查看）。
+    pub fn value_of(&self, id: ElementId) -> Option<&Value> {
+        let index = self.ids.iter().position(|candidate| *candidate == id)?;
+        self.values.get(index)
+    }
 }
 
 #[cfg(test)]

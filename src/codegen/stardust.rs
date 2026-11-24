@@ -1161,6 +1161,7 @@ impl StardustGen {
             MirInst::DumpStack => self.raw_inst(0, '#'),
             MirInst::DumpState => self.raw_inst(1, '#'),
             MirInst::Breakpoint => self.raw_inst(2, '#'),
+            MirInst::Line(line) => self.emit_comment(&format!("source line {line}")),
             MirInst::Nop => {}
             MirInst::Comment(text) => self.emit_comment(text),
         }

@@ -293,6 +293,10 @@ pub enum MirInst {
     DumpState,
     Breakpoint,
 
+    // === 调试 ===
+    /// 源码行标记（1-based）；仅用于断点/单步，不改变程序语义。
+    Line(u32),
+
     // === 元数据 ===
     Nop,
     Comment(String), // 调试用注释，执行时忽略
@@ -452,6 +456,7 @@ impl std::fmt::Display for MirInst {
             MirInst::DumpStack => write!(f, "DumpStack"),
             MirInst::DumpState => write!(f, "DumpState"),
             MirInst::Breakpoint => write!(f, "Breakpoint"),
+            MirInst::Line(n) => write!(f, "Line({n})"),
             MirInst::Nop => write!(f, "Nop"),
             MirInst::Comment(s) => write!(f, "// {s}"),
         }

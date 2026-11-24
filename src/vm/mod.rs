@@ -8,7 +8,7 @@ pub mod stack;
 pub mod value;
 pub mod var_stack;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, Read};
 use std::rc::Rc;
 
@@ -47,6 +47,26 @@ pub struct Vm {
     input_pos: usize,
     /// `stardust!` 的 store/load 使用的全局堆（与 Stardust 解释器一致）
     pub heap: HashMap<i64, i64>,
+
+    // ─── 调试（DAP）───
+    /// 断点行（1-based 源码行）。
+    pub debug_breakpoints: HashSet<u32>,
+    /// 是否启用断点/单步检查；普通 `execute_mir` 不启用。
+    pub debug_enabled: bool,
+    /// 单步模式：执行一条指令后暂停。
+    debug_step_mode: bool,
+    /// 单步起点步数。
+    debug_step_anchor: u64,
+    /// `continue` 后跳过当前断点行，避免立即再次命中。
+    debug_skip_line: Option<u32>,
+    /// `stepOut` 的目标调用栈深度。
+    debug_step_out_depth: Option<usize>,
+    /// 当前执行的源码行（0 表示尚未进入任何语句）。
+    pub current_line: u32,
+    /// 是否在断点/单步处暂停。
+    pub paused: bool,
+    /// 是否已自然执行结束。
+    pub finished: bool,
 }
 
 impl Vm {
@@ -70,6 +90,15 @@ impl Vm {
             input,
             input_pos: 0,
             heap: HashMap::new(),
+            debug_breakpoints: HashSet::new(),
+            debug_enabled: false,
+            debug_step_mode: false,
+            debug_step_anchor: 0,
+            debug_skip_line: None,
+            debug_step_out_depth: None,
+            current_line: 0,
+            paused: false,
+            finished: false,
         }
     }
 
@@ -126,9 +155,69 @@ impl Vm {
 
     /// 加载主程序 MIR 并执行
     pub fn execute_mir(&mut self, instructions: Vec<MirInst>) -> Result<(), VmError> {
+        self.prepare_mir(instructions)?;
+        self.run()
+    }
+
+    /// 准备主程序帧但不执行（供 DAP 单步/断点使用）。
+    pub fn prepare_mir(&mut self, instructions: Vec<MirInst>) -> Result<(), VmError> {
+        if !self.call_stack.is_empty() {
+            return Err(VmError::AssertionFailed(
+                "VM already has an active call frame".to_string(),
+            ));
+        }
         let main_sid = self.id_alloc.alloc_stack();
         let main_frame = CallFrame::new_main(instructions, main_sid);
         self.call_stack.push(main_frame);
+        self.finished = false;
+        self.paused = false;
+        self.current_line = 0;
+        Ok(())
+    }
+
+    /// 启用调试并设置断点（1-based 行号）。
+    pub fn set_breakpoints(&mut self, lines: impl IntoIterator<Item = u32>) {
+        self.debug_breakpoints = lines.into_iter().collect();
+        self.debug_enabled = true;
+    }
+
+    /// 从头运行到第一个断点/结束。
+    pub fn run_debug(&mut self) -> Result<(), VmError> {
+        self.debug_step_mode = false;
+        self.debug_step_out_depth = None;
+        self.debug_skip_line = self
+            .debug_breakpoints
+            .contains(&self.current_line)
+            .then_some(self.current_line);
+        self.paused = false;
+        self.run()
+    }
+
+    /// 继续执行到下一个断点/结束。
+    pub fn continue_debug(&mut self) -> Result<(), VmError> {
+        self.debug_step_mode = false;
+        self.debug_step_out_depth = None;
+        self.debug_skip_line = Some(self.current_line);
+        self.paused = false;
+        self.run()
+    }
+
+    /// 单步执行（一条 MIR 指令）。
+    pub fn step_debug(&mut self) -> Result<(), VmError> {
+        self.debug_step_mode = true;
+        self.debug_step_anchor = self.step_count;
+        self.debug_skip_line = None;
+        self.debug_step_out_depth = None;
+        self.paused = false;
+        self.run()
+    }
+
+    /// 运行到当前函数的调用者（调用栈深度减一）或下一个断点。
+    pub fn step_out_debug(&mut self) -> Result<(), VmError> {
+        self.debug_step_mode = false;
+        self.debug_skip_line = None;
+        self.debug_step_out_depth = Some(self.call_stack.len().saturating_sub(1));
+        self.paused = false;
         self.run()
     }
 
@@ -166,6 +255,30 @@ impl Vm {
                 && start.elapsed().as_secs() >= limit
             {
                 return Err(VmError::TimeLimitExceeded { limit });
+            }
+
+            // 调试：断点 / 单步 / stepOut。
+            if self.debug_enabled {
+                if let Some(depth) = self.debug_step_out_depth
+                    && self.call_stack.len() < depth
+                {
+                    self.debug_step_out_depth = None;
+                    self.paused = true;
+                    return Ok(());
+                }
+                if self.debug_step_mode && self.step_count > self.debug_step_anchor {
+                    self.debug_step_mode = false;
+                    self.paused = true;
+                    return Ok(());
+                }
+                if let Some(skip) = self.debug_skip_line {
+                    if self.current_line != skip {
+                        self.debug_skip_line = None;
+                    }
+                } else if self.debug_breakpoints.contains(&self.current_line) {
+                    self.paused = true;
+                    return Ok(());
+                }
             }
 
             // 检查调用栈深度
@@ -214,6 +327,7 @@ impl Vm {
                 None => break,
             }
         }
+        self.finished = true;
         Ok(())
     }
 
@@ -223,6 +337,14 @@ impl Vm {
         // 对于需要 self.id_alloc / self.output 的操作，先 pop 帧再 push 回
 
         match inst {
+            // === 调试 ===
+            MirInst::Line(line) => {
+                self.current_line = *line;
+                let mut frame = self.pop_frame()?;
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
+
             // === 栈操作 ===
             MirInst::Push { value, .. } => {
                 let new_id = self.id_alloc.alloc_element();
@@ -1748,6 +1870,59 @@ mod tests {
 
     fn make_vm() -> Vm {
         Vm::with_config(RuntimeConfig::test())
+    }
+
+    #[test]
+    fn test_debug_breakpoint_and_continue() {
+        let mut vm = make_vm();
+        let mir = vec![
+            MirInst::Line(1),
+            MirInst::Push {
+                value: Value::I64(10),
+                ty: TypeId::Unknown,
+            },
+            MirInst::Line(2),
+            MirInst::Push {
+                value: Value::I64(20),
+                ty: TypeId::Unknown,
+            },
+        ];
+        vm.prepare_mir(mir).unwrap();
+        vm.set_breakpoints([2]);
+        vm.run_debug().unwrap();
+        assert!(vm.paused);
+        assert_eq!(vm.current_line, 2);
+        vm.continue_debug().unwrap();
+        assert!(vm.finished);
+        assert!(!vm.paused);
+    }
+
+    #[test]
+    fn test_debug_single_step() {
+        let mut vm = make_vm();
+        let mir = vec![
+            MirInst::Line(1),
+            MirInst::Push {
+                value: Value::I64(1),
+                ty: TypeId::Unknown,
+            },
+            MirInst::Line(2),
+            MirInst::Push {
+                value: Value::I64(2),
+                ty: TypeId::Unknown,
+            },
+        ];
+        vm.prepare_mir(mir).unwrap();
+        vm.set_breakpoints(Vec::<u32>::new());
+        vm.step_debug().unwrap();
+        assert!(vm.paused);
+        assert_eq!(vm.current_line, 1);
+        vm.step_debug().unwrap();
+        assert!(vm.paused);
+        assert_eq!(vm.current_line, 1);
+        vm.step_debug().unwrap();
+        assert!(vm.paused);
+        assert_eq!(vm.current_line, 2);
     }
 
     #[test]
