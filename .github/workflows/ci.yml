@@ -22,6 +22,8 @@ jobs:
         run: cargo test
       - name: Documentation links
         run: python3 scripts/check-doc-links.py
+      - name: Fixture checks
+        run: python3 scripts/check-fixtures.py
       - name: Examples smoke test
         run: |
           for file in examples/*.fb; do
