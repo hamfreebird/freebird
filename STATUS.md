@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-24。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **227 unit + 190 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 35，`tests/m4_test.rs` 13，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **232 unit + 196 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 35，`tests/m4_test.rs` 13，`tests/m5_test.rs` 5，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
 > 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 在 LLVM 目标上编译期拒绝，非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 限制。
 
 ## 1. 语言与运行时

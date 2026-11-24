@@ -10,6 +10,7 @@
 > **Reverse/可见性/泛型 impl/turbofish 后基线**（2026-11-23）：`cargo test` = **202 unit + 142 integration** 全绿（`tests/m2_test.rs` 58 项）。
 > **M3 完成后基线**（2026-11-24）：`cargo test` = **206 unit + 177 integration** 全绿（新增 `tests/m3_test.rs` 35 项）；`cargo build --release` 通过；LLVM 后端经仓库自带 Stardust 工具链验证。
 > **M4 完成后基线**（2026-11-24）：`cargo test` = **227 unit + 190 integration** 全绿（新增 `tests/m4_test.rs` 13 项）；fmt/clippy、文档链接与 examples 巡检纳入 CI。
+> **M5 完成后基线**（2026-11-24）：`cargo test` = **232 unit + 196 integration** 全绿（新增 `tests/m5_test.rs` 5 项、`tests/snapshot_test.rs` 1 项）；fmt/clippy/bench/文档/快照检查纳入 CI。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 
@@ -38,7 +39,7 @@
 - VM：数值/布尔/字符、变量与作用域、`if`/`while`/`loop`/`for`、函数与递归、多值返回、数组、结构体、枚举与 `match`、`Vec`/`String`/`Box`、元组解构、`&`/`&mut` 引用、借用检查、`print_*`/`read_*`、文件 I/O、`stardust!` 宏的大部分指令。
 - Stardust 后端：数值/字符、变量、控制流、调用/递归、I/O、`ret n`、标量 `as`、数组/结构体/枚举/字符串/Box/Vec、`&mut` 堆单元写回、`for`/`continue`、`file_read`/`file_write`。
 - 工具链：`run`、`check`、`build --target stardust`、`repl`；VS Code 扩展提供语法高亮。
-- 测试：206 个单元测试 + 177 个集成测试；Stardust/LLVM 集成测试与 VM 输出逐字节对比，差分测试自动遍历 `tests/programs` 与 `examples`。
+- 测试：232 个单元测试 + 196 个集成测试；Stardust/LLVM 集成测试与 VM 输出逐字节对比，差分测试自动遍历 `tests/programs` 与 `examples`。
 - LLVM：`build --target llvm` 复用 Stardust 的 LLVM 编译器；`--emit ir|exe`、`--output`、`--opt-level` 与 `--stardust-bin` 已落地。
 - FFI：`extern "stardust"` + `#[stardust(id = N)]` 生成真实 `Call(id, argc)`；VM 上明确报错，LLVM 需要外部定义参与链接。
 

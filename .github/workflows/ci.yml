@@ -24,6 +24,8 @@ jobs:
         run: python3 scripts/check-doc-links.py
       - name: Fixture checks
         run: python3 scripts/check-fixtures.py
+      - name: Documentation consistency
+        run: python3 scripts/check-docs.py
       - name: Examples smoke test
         run: |
           for file in examples/*.fb; do
