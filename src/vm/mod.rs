@@ -1516,10 +1516,10 @@ impl Vm {
         // 验证 return_arity
         {
             let frame = self.call_stack.last().ok_or(VmError::EmptyCallStack)?;
-            if argc as u32 != frame.return_arity {
+            if argc != frame.return_arity {
                 return Err(VmError::ReturnArityMismatch {
                     expected: frame.return_arity,
-                    actual: argc as u32,
+                    actual: argc,
                 });
             }
         }

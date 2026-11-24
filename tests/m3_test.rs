@@ -531,7 +531,7 @@ fn main() {
 "#;
     let sd = freebird::build_stardust(source).expect("build stardust");
     // 内部 main 被重命名为 2，FFI 仍使用 1。
-    assert!(sd.contains(&format!("{}:\n", " ".repeat(1))));
+    assert!(sd.contains(&format!("{}:\n", " ")));
     assert!(sd.contains(&format!("{}:\n", " ".repeat(2))));
     let ext = stardust_add_fn(1);
     let out = run_stardust_text(&format!("{sd}{ext}"), b"").expect("run combined Stardust");

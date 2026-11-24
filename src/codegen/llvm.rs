@@ -266,10 +266,10 @@ fn sibling_bases() -> Vec<PathBuf> {
         }
         bases.push(cwd.join("esolang_stardust"));
     }
-    if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
-        if let Some(parent) = Path::new(manifest).parent() {
-            bases.push(parent.join("esolang_stardust"));
-        }
+    if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR")
+        && let Some(parent) = Path::new(manifest).parent()
+    {
+        bases.push(parent.join("esolang_stardust"));
     }
     bases
 }
@@ -285,12 +285,12 @@ fn bundled_stardust_candidates() -> Vec<PathBuf> {
     if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
         candidates.push(Path::new(manifest).join("stardust/stardust-linux-x86_64"));
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("stardust/stardust-linux-x86_64"));
-            candidates.push(dir.join("../../stardust/stardust-linux-x86_64"));
-            candidates.push(dir.join("../../../stardust/stardust-linux-x86_64"));
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join("stardust/stardust-linux-x86_64"));
+        candidates.push(dir.join("../../stardust/stardust-linux-x86_64"));
+        candidates.push(dir.join("../../../stardust/stardust-linux-x86_64"));
     }
     candidates
 }

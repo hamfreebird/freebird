@@ -12,14 +12,14 @@ mod tests {
                 eprintln!("  {e}");
             }
         }
-        if let Some(Decl::Fn(f)) = prog.decls.first() {
-            if let Some(ref body) = f.body {
-                if let Some(ref tail) = body.tail {
-                    return (**tail).clone();
-                }
-                if let Some(Stmt::Expr(e, _)) = body.stmts.first() {
-                    return e.clone();
-                }
+        if let Some(Decl::Fn(f)) = prog.decls.first()
+            && let Some(ref body) = f.body
+        {
+            if let Some(ref tail) = body.tail {
+                return (**tail).clone();
+            }
+            if let Some(Stmt::Expr(e, _)) = body.stmts.first() {
+                return e.clone();
             }
         }
         panic!("failed to parse expression: {source}");
@@ -34,12 +34,11 @@ mod tests {
                 eprintln!("  {e}");
             }
         }
-        if let Some(Decl::Fn(f)) = prog.decls.first() {
-            if let Some(ref body) = f.body {
-                if let Some(s) = body.stmts.first() {
-                    return s.clone();
-                }
-            }
+        if let Some(Decl::Fn(f)) = prog.decls.first()
+            && let Some(ref body) = f.body
+            && let Some(s) = body.stmts.first()
+        {
+            return s.clone();
         }
         panic!("failed to parse statement: {source}");
     }

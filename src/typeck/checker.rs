@@ -1161,21 +1161,21 @@ impl<'a> TypeChecker<'a> {
                             }
                         }
                     }
-                } else if let Some(ctx) = self.loop_contexts.last_mut() {
-                    if ctx.is_loop {
-                        match &ctx.result_ty {
-                            None => ctx.result_ty = Some(HirType::Unit),
-                            Some(expected) if *expected != HirType::Unit => {
-                                let expected = expected.clone();
-                                self.error(TypeCheckError::TypeMismatch {
-                                    expected,
-                                    found: HirType::Unit,
-                                    span: *span,
-                                    context: "break value".to_string(),
-                                });
-                            }
-                            _ => {}
+                } else if let Some(ctx) = self.loop_contexts.last_mut()
+                    && ctx.is_loop
+                {
+                    match &ctx.result_ty {
+                        None => ctx.result_ty = Some(HirType::Unit),
+                        Some(expected) if *expected != HirType::Unit => {
+                            let expected = expected.clone();
+                            self.error(TypeCheckError::TypeMismatch {
+                                expected,
+                                found: HirType::Unit,
+                                span: *span,
+                                context: "break value".to_string(),
+                            });
                         }
+                        _ => {}
                     }
                 }
                 HirType::Never
@@ -1194,15 +1194,15 @@ impl<'a> TypeChecker<'a> {
                 HirType::Never
             }
             HirExpr::Ret(n, span) => {
-                if let Some(ctx) = self.fn_stack.last() {
-                    if *n < 0 || *n as usize != ctx.return_types.len() {
-                        self.error(TypeCheckError::ReturnArityMismatch {
-                            function: ctx.name.clone(),
-                            expected: ctx.return_types.len(),
-                            found: (*n).max(0) as usize,
-                            span: *span,
-                        });
-                    }
+                if let Some(ctx) = self.fn_stack.last()
+                    && (*n < 0 || *n as usize != ctx.return_types.len())
+                {
+                    self.error(TypeCheckError::ReturnArityMismatch {
+                        function: ctx.name.clone(),
+                        expected: ctx.return_types.len(),
+                        found: (*n).max(0) as usize,
+                        span: *span,
+                    });
                 }
                 HirType::Never
             }
@@ -1480,15 +1480,13 @@ impl<'a> TypeChecker<'a> {
         }
 
         // 栈传参不检查实参个数；空参数调用按普通零参调用处理。
-        if !stack_pass {
-            if args.len() != sig.params.len() {
-                self.error(TypeCheckError::ArgumentCountMismatch {
-                    function: sig.name.clone(),
-                    expected: sig.params.len(),
-                    found: args.len(),
-                    span,
-                });
-            }
+        if !stack_pass && args.len() != sig.params.len() {
+            self.error(TypeCheckError::ArgumentCountMismatch {
+                function: sig.name.clone(),
+                expected: sig.params.len(),
+                found: args.len(),
+                span,
+            });
         }
 
         for (i, (found, arg_span)) in arg_types.iter().enumerate() {
@@ -2472,11 +2470,10 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
             }
-            ast::Pattern::Enum { inner, .. } => {
-                if let Some(inner) = inner {
-                    self.validate_pattern_bindings(inner);
-                }
-            }
+            ast::Pattern::Enum {
+                inner: Some(inner), ..
+            } => self.validate_pattern_bindings(inner),
+            ast::Pattern::Enum { inner: None, .. } => {}
             ast::Pattern::Ref(inner, _, _) => self.validate_pattern_bindings(inner),
             _ => {}
         }

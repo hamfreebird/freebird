@@ -3693,9 +3693,10 @@ fn merge_slots(a: &[Slot], b: &[Slot]) -> Vec<Slot> {
     for i in 0..len {
         let mut slot = b[i].clone();
         // 绑定/调用元素必须一致；常量不同则退化为未知。
-        if a[i].binding != b[i].binding || a[i].call_element != b[i].call_element {
-            slot.constant = None;
-        } else if a[i].constant != b[i].constant {
+        if a[i].binding != b[i].binding
+            || a[i].call_element != b[i].call_element
+            || a[i].constant != b[i].constant
+        {
             slot.constant = None;
         }
         merged.push(slot);

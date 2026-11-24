@@ -142,10 +142,10 @@ impl Repl {
                 match result {
                     Ok(()) => {
                         // 显示执行结果（栈顶值）
-                        if let Some(frame) = self.vm.call_stack.last() {
-                            if let Some(val) = frame.data.top_value() {
-                                println!("  => {val}");
-                            }
+                        if let Some(frame) = self.vm.call_stack.last()
+                            && let Some(val) = frame.data.top_value()
+                        {
+                            println!("  => {val}");
                         }
                     }
                     Err(e) => {

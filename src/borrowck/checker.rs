@@ -673,7 +673,7 @@ impl BorrowChecker {
                         continue;
                     }
 
-                    if param_ty.is_some_and(|ty| is_move_hir_type(ty))
+                    if param_ty.is_some_and(is_move_hir_type)
                         && let HirExpr::Var(var) = arg_expr
                         && self.is_move_type(&var.name)
                     {

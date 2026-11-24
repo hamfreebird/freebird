@@ -851,105 +851,6 @@ fn builtin_fn_signature(name: &str) -> Option<FnSignature> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::frontend::parse;
-
-    use super::*;
-
-    fn lower_source(source: &str) -> (HirProgram, Vec<ResolveError>) {
-        let (ast, _) = parse(source);
-        // 解析错误通过 parse 的返回值传播，_ 忽略前端错误
-        lower(&ast)
-    }
-
-    #[test]
-    fn test_simple_function() {
-        let src = "fn add(a: i32, b: i32) -> i32 { return a + b; }";
-        let (hir, errors) = lower_source(src);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        assert_eq!(hir.decls.len(), 1);
-        if let HirDecl::Fn(ref f) = hir.decls[0] {
-            assert_eq!(f.name, "add");
-            assert_eq!(f.sig.n, 2);
-            assert_eq!(f.sig.m, 1);
-            assert!(f.body.is_some());
-        } else {
-            panic!("expected Fn");
-        }
-    }
-
-    #[test]
-    fn test_variable_resolution() {
-        let src = "fn main() { let x = 42; let y = x + 1; }";
-        let (hir, errors) = lower_source(src);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        if let HirDecl::Fn(ref f) = hir.decls[0] {
-            if let Some(ref body) = f.body {
-                // x 的绑定应该是第一个 let
-                assert_eq!(body.stmts.len(), 2);
-            }
-        }
-    }
-
-    #[test]
-    fn test_undefined_variable() {
-        let src = "fn main() { let x = y; }";
-        let (_, errors) = lower_source(src);
-        assert!(!errors.is_empty());
-        let has_undefined = errors
-            .iter()
-            .any(|e| matches!(e, ResolveError::UndefinedVariable { name, .. } if name == "y"));
-        assert!(
-            has_undefined,
-            "expected undefined variable error, got: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn test_forward_reference() {
-        let src = "fn main() { let x = x + 1; }";
-        let (_, errors) = lower_source(src);
-        let has_forward = errors
-            .iter()
-            .any(|e| matches!(e, ResolveError::ForwardReference { name, .. } if name == "x"));
-        assert!(
-            has_forward,
-            "expected forward reference error, got: {errors:?}"
-        );
-    }
-
-    #[test]
-    fn test_shadowing() {
-        let src = "fn main() { let x = 1; { let x = 2; } let y = x; }";
-        let (hir, errors) = lower_source(src);
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        // y 引用的是外层 x (值为1)
-        if let HirDecl::Fn(ref f) = hir.decls[0] {
-            if let Some(ref body) = f.body {
-                // 最后一个 let 应该能正确解析 x -> 外层
-                assert!(body.stmts.len() >= 3);
-            }
-        }
-    }
-
-    #[test]
-    fn test_function_forward_reference() {
-        let src = "fn main() -> i32 { return foo(); } fn foo() -> i32 { return 42; }";
-        let (hir, errors) = lower_source(src);
-        // foo 应该可以在 main 之前被调用（函数前向引用是合法的）
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        assert_eq!(hir.fn_signatures.len(), 2);
-    }
-
-    #[test]
-    fn test_call_arg_count_mismatch() {
-        let src = "fn foo(a: i32) -> i32 { return a; } fn main() { foo(1, 2); }";
-        let (_, errors) = lower_source(src);
-        assert!(!errors.is_empty());
-    }
-}
-
 /// 把 `impl Type { fn ... }` 展开为名字扁平化（`Type::name`）的函数声明，
 /// 并把接收者/参数类型中的 `Self` 替换为具体类型。
 fn expand_impl_decls(decl: &ast::ImplDecl) -> Vec<ast::FnDecl> {
@@ -1021,5 +922,104 @@ fn replace_self_type(ty: &ast::Type, self_ty: &ast::Type) -> ast::Type {
             *span,
         ),
         other => other.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::frontend::parse;
+
+    use super::*;
+
+    fn lower_source(source: &str) -> (HirProgram, Vec<ResolveError>) {
+        let (ast, _) = parse(source);
+        // 解析错误通过 parse 的返回值传播，_ 忽略前端错误
+        lower(&ast)
+    }
+
+    #[test]
+    fn test_simple_function() {
+        let src = "fn add(a: i32, b: i32) -> i32 { return a + b; }";
+        let (hir, errors) = lower_source(src);
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(hir.decls.len(), 1);
+        if let HirDecl::Fn(ref f) = hir.decls[0] {
+            assert_eq!(f.name, "add");
+            assert_eq!(f.sig.n, 2);
+            assert_eq!(f.sig.m, 1);
+            assert!(f.body.is_some());
+        } else {
+            panic!("expected Fn");
+        }
+    }
+
+    #[test]
+    fn test_variable_resolution() {
+        let src = "fn main() { let x = 42; let y = x + 1; }";
+        let (hir, errors) = lower_source(src);
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        if let HirDecl::Fn(ref f) = hir.decls[0]
+            && let Some(ref body) = f.body
+        {
+            // x 的绑定应该是第一个 let
+            assert_eq!(body.stmts.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_undefined_variable() {
+        let src = "fn main() { let x = y; }";
+        let (_, errors) = lower_source(src);
+        assert!(!errors.is_empty());
+        let has_undefined = errors
+            .iter()
+            .any(|e| matches!(e, ResolveError::UndefinedVariable { name, .. } if name == "y"));
+        assert!(
+            has_undefined,
+            "expected undefined variable error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_forward_reference() {
+        let src = "fn main() { let x = x + 1; }";
+        let (_, errors) = lower_source(src);
+        let has_forward = errors
+            .iter()
+            .any(|e| matches!(e, ResolveError::ForwardReference { name, .. } if name == "x"));
+        assert!(
+            has_forward,
+            "expected forward reference error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_shadowing() {
+        let src = "fn main() { let x = 1; { let x = 2; } let y = x; }";
+        let (hir, errors) = lower_source(src);
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        // y 引用的是外层 x (值为1)
+        if let HirDecl::Fn(ref f) = hir.decls[0]
+            && let Some(ref body) = f.body
+        {
+            // 最后一个 let 应该能正确解析 x -> 外层
+            assert!(body.stmts.len() >= 3);
+        }
+    }
+
+    #[test]
+    fn test_function_forward_reference() {
+        let src = "fn main() -> i32 { return foo(); } fn foo() -> i32 { return 42; }";
+        let (hir, errors) = lower_source(src);
+        // foo 应该可以在 main 之前被调用（函数前向引用是合法的）
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(hir.fn_signatures.len(), 2);
+    }
+
+    #[test]
+    fn test_call_arg_count_mismatch() {
+        let src = "fn foo(a: i32) -> i32 { return a; } fn main() { foo(1, 2); }";
+        let (_, errors) = lower_source(src);
+        assert!(!errors.is_empty());
     }
 }

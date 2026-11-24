@@ -693,7 +693,7 @@ fn prefix_expr(expr: &mut crate::frontend::ast::Expr, rename: &impl Fn(&str) -> 
         }
         Expr::As(inner, ty, _) => {
             prefix_expr(inner, rename);
-            *ty = Box::new(prefix_type(ty, rename));
+            **ty = prefix_type(ty, rename);
         }
         _ => {}
     }

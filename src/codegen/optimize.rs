@@ -128,14 +128,14 @@ fn eliminate_redundant_roll(mir: &mut Vec<MirInst>) -> bool {
     let mut changed = false;
     let mut i = 0;
     while i + 1 < mir.len() {
-        if let (MirInst::Roll { n: a }, MirInst::Roll { n: b }) = (&mir[i], &mir[i + 1]) {
-            if *a == -*b {
-                // roll(n); roll(-n) → Nop
-                mir.remove(i);
-                mir.remove(i);
-                changed = true;
-                continue;
-            }
+        if let (MirInst::Roll { n: a }, MirInst::Roll { n: b }) = (&mir[i], &mir[i + 1])
+            && *a == -*b
+        {
+            // roll(n); roll(-n) → Nop
+            mir.remove(i);
+            mir.remove(i);
+            changed = true;
+            continue;
         }
         i += 1;
     }
@@ -143,7 +143,7 @@ fn eliminate_redundant_roll(mir: &mut Vec<MirInst>) -> bool {
 }
 
 /// 跳转优化: Jump A; ... Mark A; UncondJump B → Jump B
-fn jump_optimization(mir: &mut Vec<MirInst>) -> bool {
+fn jump_optimization(mir: &mut [MirInst]) -> bool {
     let mut changed = false;
     // 首先收集所有 Mark 位置
     let mut mark_positions: std::collections::HashMap<usize, usize> =
@@ -155,16 +155,16 @@ fn jump_optimization(mir: &mut Vec<MirInst>) -> bool {
     }
     let mut i = 0;
     while i < mir.len() {
-        if let MirInst::Jump(n) = &mir[i] {
-            if let Some(&target_pos) = mark_positions.get(n) {
-                // 查找跳转目标后的指令
-                if target_pos + 1 < mir.len() {
-                    if let MirInst::UncondJump(m) = &mir[target_pos + 1] {
-                        // Jump A → ... Mark A; UncondJump B → 改为 Jump B
-                        mir[i] = MirInst::Jump(*m);
-                        changed = true;
-                    }
-                }
+        if let MirInst::Jump(n) = &mir[i]
+            && let Some(&target_pos) = mark_positions.get(n)
+        {
+            // 查找跳转目标后的指令
+            if target_pos + 1 < mir.len()
+                && let MirInst::UncondJump(m) = &mir[target_pos + 1]
+            {
+                // Jump A → ... Mark A; UncondJump B → 改为 Jump B
+                mir[i] = MirInst::Jump(*m);
+                changed = true;
             }
         }
         i += 1;

@@ -416,10 +416,8 @@ impl Lexer {
         } else {
             // 整数，可能带后缀（i8/i16/i32/i64/u8..u64/f32/f64）
             let (suffix, is_float) = self.lex_int_suffix();
-            if is_float {
-                if let Ok(v) = num_str.parse::<f64>() {
-                    return Token::new(TokenKind::FloatLiteral(v), start_span);
-                }
+            if is_float && let Ok(v) = num_str.parse::<f64>() {
+                return Token::new(TokenKind::FloatLiteral(v), start_span);
             }
             match num_str.parse::<i64>() {
                 Ok(v) => Token::new(TokenKind::IntLiteral(v, suffix), start_span),
@@ -847,9 +845,9 @@ mod tests {
     #[test]
     fn test_floats() {
         check_tokens(
-            "3.14 1.5e10 0.5",
+            "3.25 1.5e10 0.5",
             &[
-                TokenKind::FloatLiteral(3.14),
+                TokenKind::FloatLiteral(3.25),
                 TokenKind::FloatLiteral(1.5e10),
                 TokenKind::FloatLiteral(0.5),
             ],
