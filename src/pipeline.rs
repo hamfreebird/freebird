@@ -778,6 +778,9 @@ fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<
         .with_method_variant_tags(method_tags)
         .with_extern_functions(extern_fns.clone());
     let functions = generator.gen_program(&hir);
+    if !generator.errors().is_empty() {
+        return Err(format!("MIR errors:\n{}", generator.errors().join("\n")));
+    }
 
     if functions.is_empty() {
         return Err("No functions generated".to_string());
@@ -1006,6 +1009,9 @@ pub fn compile_ast_with_options(
         .with_method_variant_tags(method_tags)
         .with_extern_functions(extern_fns.clone());
     let functions = generator.gen_program(&hir);
+    if !generator.errors().is_empty() {
+        return Err(format!("MIR errors:\n{}", generator.errors().join("\n")));
+    }
     if functions.is_empty() {
         return Err("No functions generated".to_string());
     }

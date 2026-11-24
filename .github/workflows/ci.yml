@@ -26,6 +26,8 @@ jobs:
         run: python3 scripts/check-fixtures.py
       - name: Documentation consistency
         run: python3 scripts/check-docs.py
+      - name: MIR placeholder checks
+        run: python3 scripts/check-no-todo.py
       - name: Examples smoke test
         run: |
           for file in examples/*.fb; do

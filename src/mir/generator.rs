@@ -242,6 +242,8 @@ pub struct MirGen {
     method_variant_tags: MethodTagMap,
     /// extern "stardust" 函数名 → Stardust ID（调用点生成 ExternCall）。
     extern_fns: HashMap<String, u64>,
+    /// MIR 生成期错误（例如已从规范移除的 `#id` 表达式）。
+    errors: Vec<String>,
 }
 
 impl MirGen {
@@ -260,6 +262,7 @@ impl MirGen {
             active_vars: Vec::new(),
             method_variant_tags: HashMap::new(),
             extern_fns: HashMap::new(),
+            errors: Vec::new(),
         }
     }
 
@@ -287,6 +290,11 @@ impl MirGen {
         self
     }
 
+    /// MIR 生成期错误（调用方必须检查并拒绝静默降级）。
+    pub fn errors(&self) -> &[String] {
+        &self.errors
+    }
+
     /// 获取生成的 MIR 指令
     pub fn into_mir(self) -> Vec<MirInst> {
         self.mir
@@ -296,6 +304,7 @@ impl MirGen {
 
     /// 生成整个程序的 MIR 指令
     pub fn gen_program(&mut self, program: &HirProgram) -> Vec<(FnId, Vec<MirInst>)> {
+        self.errors.clear();
         let mut functions: Vec<(FnId, Vec<MirInst>)> = Vec::new();
         let mut fn_id_counter: u64 = 1;
 
@@ -2005,13 +2014,12 @@ impl MirGen {
                 self.mir
                     .push(MirInst::Comment("unsafe block end".to_string()));
             }
-
-            // 其他表达式：占位
-            _ => {
-                self.mir.push(MirInst::Comment(format!(
-                    "TODO: {:?}",
-                    std::mem::discriminant(expr)
-                )));
+            HirExpr::IdRef(_, span) => {
+                // `#id` 已从规范移除（readme §4.3）。类型检查通常已拒绝；
+                // 这里保留明确错误，避免 MIR 生成静默降级。
+                self.errors
+                    .push(format!("{span}: `#id` expressions are not supported"));
+                self.mir.push(MirInst::Nop);
             }
         }
     }
