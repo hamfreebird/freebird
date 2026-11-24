@@ -145,3 +145,14 @@
 - **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。
 - **测试基线**：227 unit + 190 integration；`tests/m4_test.rs` 13 项。
 - **已知限制**：LSP 为文本级 MVP（UTF-16 列近似）；DAP 单线程无 pause；包管理仅单层路径依赖、无锁定文件；格式化器只规范化空白/缩进。
+
+## 9. M5 质量基线（基线已完成，2026-11-24）
+
+- **基准**：`freebird-bench`（VM fib/循环/Vec、Stardust 体积与耗时、LLVM 可选）+ `bench/baseline.json`；`--check` 阈值比较，CI 非阻塞 job。
+- **MIR 优化**：`CompileOptions`/`--no-opt`；常量折叠（算术/Div/Mod/比较/逻辑）、常量条件跳转、无用跳转；`Line` 保留；`tests/m5_test.rs` 验证优化/非优化输出一致。
+- **fuzz**：固定 seed 30 个随机程序 VM/Stardust 差分、60 个坏输入 `check_source` 不 panic；失败最小化并归档到 `target/fuzz-failures`。
+- **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri/sanitizer 不可用已记录。
+- **测试基础设施**：`scripts/check-fixtures.py`、`tests/snapshot_test.rs` + `UPDATE_SNAPSHOTS`。
+- **发布**：`CHANGELOG.md`、`docs/release.md`、`scripts/check-docs.py`；release workflow 校验 tag/版本。
+- **测试基线**：232 unit + 196 integration。
+- **已知限制**：Miri/sanitizer 未接入；fuzz 规模有限；内联未实现；bench 仅告警。

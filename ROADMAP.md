@@ -242,18 +242,34 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 ---
 
-### M5 — 性能、测试与稳定性（持续）
+### M5 — 性能、测试与稳定性（基线已完成，2026-11-24）
 
 **目标**：建立长期可维护的质量基线，避免语言扩展拖垮运行时和后端。
 
-| ID | 工作项 | 验收标准 |
-|---|---|---|
-| M5-1 | 基准套件：VM 启动/算术/调用/集合；Stardust 生成代码体积与运行时间；LLVM 对比 | 基准数据入库；回归超过阈值时 CI 警告 |
-| M5-2 | MIR 优化：常量折叠、死代码消除、分支简化、内联（谨慎）；保持可关闭 | 优化前后输出一致；有优化开关和测试 |
-| M5-3 | 模糊测试/属性测试：parser、typeck、MIR、VM；差分 fuzz | 持续运行 corpus；崩溃/差异自动最小化并归档 |
-| M5-4 | 内存与 UB 审计：Rust `unsafe` 代码、Miri、sanitizer（可用时）；堆/远程栈生命周期 | 审计记录；关键路径无未解释 UB |
-| M5-5 | 测试基础设施：`tests/programs` 自动发现、fixture 命名规范、快照更新流程 | 新增 `.fb` 自动进入测试；不再有未使用 fixture |
-| M5-6 | 发布与兼容：语义化版本、CHANGELOG、破坏性变更流程、文档一致性检查 | 每次发布有迁移说明；文档与测试基线一致 |
+**完成情况**：基准套件与基线、MIR 优化开关/常量跳转/无用跳转、固定 seed 差分 fuzz 与坏输入
+防 panic、内存/UB 审计、fixture 检查、诊断快照、CHANGELOG/发布流程与文档一致性检查全部落地。
+`tests/m5_test.rs` 5 项、`tests/snapshot_test.rs` 1 项；当前基线 232 unit + 196 integration。
+
+| ID | 工作项 | 验收标准 | 状态 |
+|---|---|---|---|
+| M5-1 | 基准套件：VM 启动/算术/调用/集合；Stardust 生成代码体积与运行时间；LLVM 对比 | 基准数据入库；回归超过阈值时 CI 警告 | ✅ `freebird-bench` + `bench/baseline.json` + 非阻塞 CI job |
+| M5-2 | MIR 优化：常量折叠、死代码消除、分支简化、内联（谨慎）；保持可关闭 | 优化前后输出一致；有优化开关和测试 | ✅ `--no-opt`；常量跳转/无用跳转/比较折叠；内联暂缓 |
+| M5-3 | 模糊测试/属性测试：parser、typeck、MIR、VM；差分 fuzz | 持续运行 corpus；崩溃/差异自动最小化并归档 | ✅ 固定 seed 差分 + 坏输入 + 最小化归档；未接持续 fuzz |
+| M5-4 | 内存与 UB 审计：Rust `unsafe` 代码、Miri、sanitizer（可用时）；堆/远程栈生命周期 | 审计记录；关键路径无未解释 UB | ✅ 无 Rust unsafe；Miri/sanitizer 不可用，记录在案 |
+| M5-5 | 测试基础设施：`tests/programs` 自动发现、fixture 命名规范、快照更新流程 | 新增 `.fb` 自动进入测试；不再有未使用 fixture | ✅ fixture 检查 + 诊断快照 |
+| M5-6 | 发布与兼容：语义化版本、CHANGELOG、破坏性变更流程、文档一致性检查 | 每次发布有迁移说明；文档与测试基线一致 | ✅ CHANGELOG + release.md + check-docs + tag 校验 |
+
+**M5 退出标准（已满足）**
+
+- 基准数据入库，回归有 CI 告警（非阻塞）。
+- 优化可关闭且前后输出一致；fuzz 失败可最小化归档。
+- 审计有记录；fixture/快照/发布流程可重复执行。
+
+**M5 已知限制 / 后续**
+
+- Miri/sanitizer 需要 nightly 组件，当前环境不可用；未接入 CI。
+- fuzz 为固定 seed 的有限规模 smoke，未持续运行；深层递归输入未覆盖。
+- 内联优化未实现；bench job 仅告警，不作为门禁。
 
 ---
 

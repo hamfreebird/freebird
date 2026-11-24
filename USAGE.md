@@ -166,6 +166,21 @@ REPL 命令：
 
 多行输入：括号、字符串或块注释未闭合时 REPL 继续读取（`...` 提示符）；表达式执行前会做类型/借用检查，失败后可继续输入。
 
+## 质量与发布
+
+```bash
+cargo test                                  # debug 全量测试
+cargo test --release                        # release 行为检查
+cargo run --release --bin freebird-bench -- --check --tolerance 2.5
+python3 scripts/check-doc-links.py
+python3 scripts/check-fixtures.py
+python3 scripts/check-docs.py
+```
+
+基准基线在 `bench/baseline.json`（`--update` 更新）；诊断快照用
+`UPDATE_SNAPSHOTS=1 cargo test --test snapshot_test` 更新；发布流程见 `docs/release.md`，
+变更记录见 `CHANGELOG.md`。
+
 ## 语言示例
 
 ### 完整语言巡礼
