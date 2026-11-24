@@ -20,6 +20,14 @@ jobs:
         run: cargo build --release
       - name: Test
         run: cargo test
+      - name: Documentation links
+        run: python3 scripts/check-doc-links.py
+      - name: Examples smoke test
+        run: |
+          for file in examples/*.fb; do
+            ./target/release/freebird run "$file" > /dev/null
+            ./target/release/freebird build --target stardust "$file" > /dev/null
+          done
 
   differential:
     runs-on: ubuntu-latest

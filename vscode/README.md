@@ -30,7 +30,7 @@ ln -s $(pwd)/vscode ~/.vscode/extensions/freebird-language
 ## Freebird Language
 
 Freebird is a stack-based systems programming language with a dual-stack VM.
-See the [Freebird Language Specification](../../readme.md) for details.
+See the [Freebird Language Specification](../readme.md) for details.
 
 ## Language server (LSP)
 

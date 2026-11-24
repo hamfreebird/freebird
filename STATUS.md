@@ -84,6 +84,7 @@
 | `freebird lsp`（诊断/hover/跳转/符号/补全） | ✅ | ✅ | ✅ | `m4_test` + LSP 单元测试 |
 | `freebird dap`（断点/单步/栈/变量） | ✅ | — | — | `m4_test` + DAP 单元测试 |
 | `freebird.toml` 项目（entry + 路径依赖） | ✅ | ✅ | ✅ | `m4_test`；`--manifest-path` / 自动发现 |
+| CI/发布（fmt/clippy/examples/文档链接/release） | ✅ | ✅ | ✅ | `.github/workflows/{ci,release}.yml` |
 
 ## 4. M0 退出标准核对
 
