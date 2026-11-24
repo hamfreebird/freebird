@@ -132,6 +132,10 @@ impl TypeStack {
     }
 
     /// 检查两条类型栈在控制流合并点是否兼容
+    ///
+    /// `TypeError` 携带完整 span 与两侧类型，Box 化会改变所有调用方签名；
+    /// 这里是内部错误路径，保持既有 API 并显式豁免 clippy 的体积告警。
+    #[allow(clippy::result_large_err)]
     pub fn merge(&self, other: &TypeStack) -> Result<TypeStack, TypeError> {
         let default_span = Span::new(0, 0, 0);
         if self.len() != other.len() {

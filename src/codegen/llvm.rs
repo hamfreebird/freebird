@@ -21,7 +21,6 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::pipeline::{CompiledProgram, compile_program};
-use crate::vm::mir::MirInst;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -91,8 +90,6 @@ pub fn compile_llvm_compiled(
     program: &CompiledProgram,
     options: &LlvmOptions,
 ) -> Result<LlvmArtifact, String> {
-    check_llvm_supported(program)?;
-
     let stardust = locate_stardust(options.stardust_bin.as_deref())?;
     let temp = TempFiles::new()?;
     std::fs::write(&temp.stardust, &program.stardust)
@@ -123,29 +120,6 @@ pub fn compile_llvm_ir(source: &str) -> Result<String, String> {
         LlvmArtifact::Ir(ir) => Ok(ir),
         LlvmArtifact::Executable(_) => unreachable!("ir options produce ir"),
     }
-}
-
-/// LLVM 后端当前不支持的 MIR 能力必须在编译期报错，而不是生成错误代码。
-fn check_llvm_supported(program: &CompiledProgram) -> Result<(), String> {
-    for (fn_id, mir) in &program.functions {
-        let name = program
-            .fn_info
-            .get(fn_id)
-            .map(|info| info.name.as_str())
-            .unwrap_or("<unknown>");
-        for inst in mir {
-            match inst {
-                MirInst::FileRead | MirInst::FileWrite => {
-                    return Err(format!(
-                        "LLVM backend does not support file I/O (`file_read`/`file_write`) in function `{name}`; \
-                         use `--target stardust` or `freebird run`"
-                    ));
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(())
 }
 
 /// 临时文件集合，Drop 时清理。
@@ -344,9 +318,17 @@ mod tests {
     }
 
     #[test]
-    fn llvm_rejects_file_io() {
-        let err = compile_llvm_ir(r#"fn main() { let s = file_read("x.txt"); print_str(s); }"#)
-            .unwrap_err();
-        assert!(err.contains("file I/O"), "unexpected error: {err}");
+    fn llvm_supports_file_io() {
+        // M6-2.1：Stardust LLVM 后端实现 FileRead/FileWrite 后，Freebird 不再编译期拒绝。
+        if locate_stardust(None).is_err() {
+            eprintln!("skipping: Stardust toolchain not available");
+            return;
+        }
+        let ir = compile_llvm_ir(r#"fn main() { let s = file_read("x.txt"); print_str(s); }"#)
+            .expect("file I/O should compile on the LLVM backend");
+        assert!(
+            ir.contains("@sd_file_read") || ir.contains("@fread"),
+            "LLVM IR should contain the file I/O runtime: {ir}"
+        );
     }
 }

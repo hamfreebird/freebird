@@ -829,3 +829,40 @@ fn llvm_unicode_output_matches() {
         b"",
     );
 }
+
+// ─── M6-2.1：LLVM 文件 I/O ───
+
+#[test]
+fn llvm_file_io_matches() {
+    let path = std::env::temp_dir().join(format!("freebird-m6-fileio-{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let source = format!(
+        r#"fn main() {{
+            file_write("{path}", "hello 世界\nline2");
+            let s = file_read("{path}");
+            print_str(s);
+            print(s.len());
+        }}"#,
+        path = path.display()
+    );
+    assert_same_output("file I/O", &source, b"");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn llvm_file_read_missing_fails() {
+    if llvm_skip() {
+        return;
+    }
+    let missing =
+        std::env::temp_dir().join(format!("freebird-m6-missing-{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&missing);
+    let source = format!(
+        r#"fn main() {{ let s = file_read("{p}"); print_str(s); }}"#,
+        p = missing.display()
+    );
+    assert!(
+        run_llvm(&source, b"").is_err(),
+        "reading a missing file should fail on the LLVM backend"
+    );
+}

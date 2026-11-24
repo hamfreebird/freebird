@@ -3,7 +3,7 @@
 > 更新日期：2026-11-24。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
 > 测试基线：`cargo test` = **232 unit + 196 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 35，`tests/m4_test.rs` 13，`tests/m5_test.rs` 5，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
-> 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 在 LLVM 目标上编译期拒绝；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。
+> 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 已在 LLVM 目标上支持（M6-2.1）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。
 
 ## 1. 语言与运行时
 
@@ -41,7 +41,7 @@
 | 用户 `impl`（关联函数 + `self` 方法） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
 | `&self` 接收者（只读方法） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
 | `&mut self` 接收者（写回） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
-| `file_read` / `file_write` | §9 | ✅ | ✅ | ❌ 编译期拒绝 | 集成 |
+| `file_read` / `file_write` | §9 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
 | `unsafe` + `stardust!` 宏 | §11 | ✅ 全部宏指令（Call 仅 Stardust/LLVM） | ✅ 全部宏指令 | ✅ 全部宏指令 | 集成 + `m1_test` + `m3_test` |
 | `stardust!` 的 `Mark`/`Jump`/`UncondJump`/`DropN`/`Pick`/`NumOut`/`NumIn`/`CharOut`/`CharIn`/`DumpStack`/`DumpState`/`Breakpoint`/`Nop`/`ShiftL`/`ShiftR`/`Rotate`/`Depth`/`Reverse`/`Call` | §10.3 | ✅ 语义与 Stardust 一致 | ✅ | ✅ | `m3_test` |
 | `extern "stardust"` FFI（`#[stardust(id = N)]`） | §10.4 | ❌ 明确报错（仅 Stardust/LLVM 可执行） | ✅ 生成 `Call(id, argc)` | ✅ `--link-stardust` 追加外部定义 | `m3_test` + `m6_test` |
@@ -121,9 +121,9 @@
 - **LLVM 覆盖范围**：标量、控制流、函数/递归/多值返回、函数指针、结构体、数组、枚举/`match`、
   引用与 `&mut` 写回、`Vec`/`String`/`Box`、`Option`/`Result`、`impl` 方法、`stardust!` 指令、
   `read_int`/`read_char`/`read_line`。`m3_test` 有 16 个 VM/LLVM 输出对比测试。
-- **LLVM 限制**：文件 I/O（`file_read`/`file_write`）在编译期明确拒绝；Unicode `CharOut` 已支持
-  （bundled Stardust 更新）；`read_line` 在 EOF 报 I/O 错误（与 VM 一致）；
-  Freebird 的运行时限制属性只影响 VM。
+- **LLVM 限制**：文件 I/O（`file_read`/`file_write`）已在 M6-2.1 支持（运行时按 UTF-8 编解码，
+  失败路径以非零状态退出）；Unicode `CharOut` 已支持（bundled Stardust 更新）；
+  `read_line` 在 EOF 报 I/O 错误（与 VM 一致）；Freebird 的运行时限制属性只影响 VM。
 - **Stardust FFI**：`extern "stardust"` + `#[stardust(id = N)]` 生成真实 `Call(id, argc)`；
   省略 `id` 时按函数名做 SipHash-2-4 并映射到 `1..=999`（ID 即 Stardust 前导空格数）。
   调用必须在 `unsafe` 块内；重复/过大 ID 编译期报错；内部函数名自动避开 extern ID。

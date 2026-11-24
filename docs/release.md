@@ -57,7 +57,7 @@ python3 scripts/check-docs.py
   `stardust!` 指令名、`freebird.toml` 的 `[package]`/`[dependencies]` 路径语义。
 - **可演进**：生成的 Stardust 源码细节（函数名分配、注释、堆槽编号）、LSP/DAP 的
   文本级行为、MIR 指令序列。
-- **已知限制**：LLVM 无文件 I/O/ASCII-only `CharOut`；包管理无版本解析/锁定文件；
+- **已知限制**：包管理无版本解析/锁定文件；
   DAP 单线程；LSP 为文本级 MVP。这些在 `STATUS.md`/`ROADMAP.md` 维护。
 
 ## 6. 文档一致性

@@ -203,7 +203,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 **M3 已知限制**
 
-- LLVM 目标不支持 `file_read`/`file_write`（编译期拒绝）；Unicode `CharOut` 已支持（M6-2.2）。
+- LLVM 目标已支持 `file_read`/`file_write`（M6-2.1：Stardust LLVM 运行时按 UTF-8 编解码）；Unicode `CharOut` 已支持（M6-2.2）。
 - FFI 在 VM 上明确报错；LLVM 目标需要外部 Stardust 函数定义参与链接。
 - `stardust!` 的 `Call(id, m)` 返回值个数由被调 Stardust 函数决定；M6-1.3 已增加可选的显式返回值个数 `Call(id, m, r)`（默认 0）。
 
@@ -286,7 +286,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | MIR 未知表达式只生成 TODO 注释 | M6-1.1 |
 | 项目 `check` 的跨文件诊断位置不准确 | M6-1.2 |
 | `stardust!` 的 `Call` 返回值不进入栈模型 | M6-1.3 |
-| LLVM 不支持文件 I/O | M6-2.1 |
+| LLVM 不支持文件 I/O | M6-2.1（已解决） |
 | LLVM `CharOut` 仅 ASCII | M6-2.2（已解决） |
 | `read_line` EOF 行为 VM/Stardust 不一致 | M6-2.3（已解决） |
 | FFI 需要外部定义链接；extern 不能作函数值；默认 ID 可能碰撞 | M6-2.4（已解决） |
@@ -317,7 +317,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 | ID | 工作项 | 验收标准 |
 |---|---|---|
-| M6-2.1 | LLVM 文件 I/O：Stardust LLVM 后端实现 `FileRead`/`FileWrite`，Freebird 移除编译期拒绝 | `--target llvm` 可运行 `file_read`/`file_write` 程序；VM/LLVM 差分测试；文档移除该限制 |
+| M6-2.1 | LLVM 文件 I/O：Stardust LLVM 后端实现 `FileRead`/`FileWrite`，Freebird 移除编译期拒绝 | `--target llvm` 可运行 `file_read`/`file_write` 程序；VM/LLVM 差分测试；文档移除该限制（已完成：Stardust `sd_file_read`/`sd_file_write` 运行时 + `m3_test` 差分） |
 | M6-2.2 | LLVM Unicode 输出：Stardust LLVM 支持 `char_mode=unicode` 或等价 UTF-8 输出 | 非 ASCII 字符串/字符程序在 LLVM 与 VM 输出一致；`m3_test` 增加用例（已完成） |
 | M6-2.3 | `read_line` EOF 对齐：规范选择“空串”或“明确 I/O 错误”，VM/Stardust/LLVM 一致 | `tests/m1_test.rs` 的 EOF 用例两端一致；文档更新（已完成：统一为 I/O 错误） |
 | M6-2.4 | FFI 闭环：提供外部 Stardust 定义的链接方式；extern 作为函数值明确支持或拒绝；默认 ID 分配避免碰撞 | `build --target llvm --link-stardust <file>`（或等价）可用；ID 冲突有明确诊断；新增测试（已完成：`--link-stardust` + extern 值拒绝） |
