@@ -10,7 +10,7 @@
 
 | 检查 | 结果 |
 |---|---|
-| `cargo test`（debug） | 232 unit + 192 integration，全绿 |
+| `cargo test`（debug） | 232 unit + 192 integration，全绿（审计时快照；当前基线见 `STATUS.md`） |
 | `cargo test --release` | 全绿；未发现 debug/release 行为差异（溢出路径已用 `checked_*` 处理优化期常量折叠） |
 | `cargo clippy --all-targets -- -D warnings` | 通过 |
 | Rust `unsafe` / `transmute` / `static mut` / `from_raw` / `as_ptr` | **无**（Freebird 语言中的 `unsafe` 关键字只是语法，VM 实现为安全的 Rust 指令） |

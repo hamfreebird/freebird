@@ -5,7 +5,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Commands
 
 - Build: `cargo build --release` (edition 2024, Rust 1.85+).
-- Test: `cargo test` — current baseline is 232 unit + 196 integration tests, all green (`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 58 + `tests/m3_test.rs` 35 + `tests/m4_test.rs` 13 + `tests/m5_test.rs` 5 + `tests/snapshot_test.rs` 1 + `tests/differential_test.rs` 2).
+- Test: `cargo test` — current baseline is 252 unit + 229 integration tests, all green (`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 58 + `tests/m3_test.rs` 38 + `tests/m4_test.rs` 17 + `tests/m5_test.rs` 7 + `tests/m6_test.rs` 24 + `tests/snapshot_test.rs` 1 + `tests/differential_test.rs` 2).
 - Single test: `cargo test <test_name>`; integration only: `cargo test --test integration_test test_fib_program`, `cargo test --test m0_test`, `cargo test --test m1_test`, `cargo test --test m2_test`, `cargo test --test m3_test`, `cargo test --test m4_test`, `cargo test --test differential_test`.
 - CLI: `run`/`check`/`build` accept `<file.fb>` or `--manifest-path <freebird.toml|dir>` (auto-detects `./freebird.toml` when no file is given); `build` also supports `--target stardust|llvm`, `-o`, `--emit ir|exe`, `--opt-level`, `--stardust-bin`, `--no-opt`, `--link-stardust <path>`. Other commands: `fmt`, `lsp`, `dap`, `repl`.
 - Run tests from the repo root: integration tests load fixtures via relative paths. `tests/programs/*.fb` and `examples/*.fb` are discovered automatically by `tests/differential_test.rs`; add a same-named `.in` file for stdin. Add explicit tests for new behavior, and keep fixtures runnable on both backends.

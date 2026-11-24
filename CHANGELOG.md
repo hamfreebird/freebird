@@ -93,6 +93,7 @@
 - LLVM 目标支持 `file_read`/`file_write`（Stardust LLVM 运行时按 UTF-8 编解码，bundled Stardust 同步更新）。
 - 语句 span 改用语句起始 token：此前 `parse_block` 在消费 `;` 之后才取 `current_span()`，
   把语句行号算到下一行，导致调试断点不命中、诊断位置偏移。
+- 优化期常量折叠改用 `checked_*`，避免优化器自身在溢出时 panic。
 
 ### Changed
 
@@ -100,10 +101,6 @@
   `build` 的 Stardust/LLVM 生成默认开启优化。
 - `read_line` 在 EOF 时统一报 I/O 错误（此前 VM 返回空字符串），与 Stardust/LLVM 一致；
   依赖空串判断输入结束的程序需要改为处理 I/O 错误。
-
-### Fixed
-
-- 优化期常量折叠改用 `checked_*`，避免优化器自身在溢出时 panic。
 
 ## [0.1.0] - 2026-11-24
 
