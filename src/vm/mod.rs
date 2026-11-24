@@ -61,6 +61,10 @@ pub struct Vm {
     debug_skip_line: Option<u32>,
     /// `stepOut` 的目标调用栈深度。
     debug_step_out_depth: Option<usize>,
+    /// 协作式分片预算：`Some(n)` 时最多再执行 n 条指令就返回（`pause` 请求用）。
+    ///
+    /// `None` 表示普通执行；`paused`/`finished` 都为 false 的返回即"仍在运行"。
+    debug_slice_budget: Option<u64>,
     /// 当前执行的源码行（0 表示尚未进入任何语句）。
     pub current_line: u32,
     /// 是否在断点/单步处暂停。
@@ -96,6 +100,7 @@ impl Vm {
             debug_step_anchor: 0,
             debug_skip_line: None,
             debug_step_out_depth: None,
+            debug_slice_budget: None,
             current_line: 0,
             paused: false,
             finished: false,
@@ -203,6 +208,44 @@ impl Vm {
 
     /// 从头运行到第一个断点/结束。
     pub fn run_debug(&mut self) -> Result<(), VmError> {
+        self.arm_start();
+        self.run()
+    }
+
+    /// 继续执行到下一个断点/结束。
+    pub fn continue_debug(&mut self) -> Result<(), VmError> {
+        self.arm_continue();
+        self.run()
+    }
+
+    /// 单步执行（一条 MIR 指令）。
+    pub fn step_debug(&mut self) -> Result<(), VmError> {
+        self.arm_step();
+        self.run()
+    }
+
+    /// 运行到当前函数的调用者（调用栈深度减一）或下一个断点。
+    pub fn step_out_debug(&mut self) -> Result<(), VmError> {
+        self.arm_step_out();
+        self.run()
+    }
+
+    /// 协作式分片执行：最多执行 `max_steps` 条 MIR 指令后返回。
+    ///
+    /// 返回 `Ok(())` 时：`paused` 为真表示命中断点/单步，`finished` 为真表示程序结束；
+    /// 两者都为假表示只是用完分片预算、程序仍在运行（供 DAP 的运行中 `pause` 使用）。
+    pub fn run_debug_slice(&mut self, max_steps: u64) -> Result<(), VmError> {
+        if self.paused || self.finished {
+            return Ok(());
+        }
+        self.debug_slice_budget = Some(max_steps);
+        let result = self.run();
+        self.debug_slice_budget = None;
+        result
+    }
+
+    /// 设置"从头运行"模式（不执行），配合 [`Vm::run_debug_slice`]。
+    pub fn arm_start(&mut self) {
         self.debug_step_mode = false;
         self.debug_step_out_depth = None;
         self.debug_skip_line = self
@@ -210,35 +253,31 @@ impl Vm {
             .contains(&self.current_line)
             .then_some(self.current_line);
         self.paused = false;
-        self.run()
     }
 
-    /// 继续执行到下一个断点/结束。
-    pub fn continue_debug(&mut self) -> Result<(), VmError> {
+    /// 设置"继续"模式（不执行）。
+    pub fn arm_continue(&mut self) {
         self.debug_step_mode = false;
         self.debug_step_out_depth = None;
         self.debug_skip_line = Some(self.current_line);
         self.paused = false;
-        self.run()
     }
 
-    /// 单步执行（一条 MIR 指令）。
-    pub fn step_debug(&mut self) -> Result<(), VmError> {
+    /// 设置"单步"模式（不执行）。
+    pub fn arm_step(&mut self) {
         self.debug_step_mode = true;
         self.debug_step_anchor = self.step_count;
         self.debug_skip_line = None;
         self.debug_step_out_depth = None;
         self.paused = false;
-        self.run()
     }
 
-    /// 运行到当前函数的调用者（调用栈深度减一）或下一个断点。
-    pub fn step_out_debug(&mut self) -> Result<(), VmError> {
+    /// 设置"步出"模式（不执行）。
+    pub fn arm_step_out(&mut self) {
         self.debug_step_mode = false;
         self.debug_skip_line = None;
         self.debug_step_out_depth = Some(self.call_stack.len().saturating_sub(1));
         self.paused = false;
-        self.run()
     }
 
     /// 主执行循环
@@ -265,6 +304,14 @@ impl Vm {
 
     fn run_loop(&mut self, start: std::time::Instant) -> Result<(), VmError> {
         loop {
+            // 协作式分片：预算耗尽就返回（`paused`/`finished` 都为 false 表示仍在运行）。
+            if let Some(budget) = self.debug_slice_budget {
+                if budget == 0 {
+                    return Ok(());
+                }
+                self.debug_slice_budget = Some(budget - 1);
+            }
+
             // 步数限制检查
             if self.config.max_steps > 0 && self.step_count >= self.config.max_steps {
                 return Err(VmError::StepLimitExceeded);
@@ -361,6 +408,7 @@ impl Vm {
             MirInst::Line(line) => {
                 self.current_line = *line;
                 let mut frame = self.pop_frame()?;
+                frame.current_line = *line;
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
@@ -1584,6 +1632,8 @@ impl Vm {
             return_arity,
             None,
         );
+        // 进入被调函数前，帧行号先指向调用点，便于 `pause` 时看到合理的调用栈。
+        new_frame.current_line = self.current_line;
 
         // 压入调用元素（被调函数 slot 0）
         new_frame
@@ -1633,6 +1683,7 @@ impl Vm {
 
         let mut new_frame =
             CallFrame::new_call(callee_stack_id, callee, ret_pc, return_arity, None);
+        new_frame.current_line = self.current_line;
         new_frame
             .data
             .push(self.id_alloc.alloc_element(), Value::CallElement { argc });

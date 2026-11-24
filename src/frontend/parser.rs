@@ -388,20 +388,22 @@ impl Parser {
                 self.parse_stmt()
             }
             _ => {
+                // 语句 span 取语句起始 token 的位置。
+                // 旧实现用解析后的 `current_span()`（通常是 `;` 或下一语句），
+                // 会把语句行号算到下一行，使调试断点与诊断位置偏移。
+                let stmt_span = self.current_span();
                 let expr = self.parse_expr(0)?;
                 if self.eat(TokenKind::Eq) && matches!(expr, Expr::Var(_, _)) {
                     let value = self.parse_expr(0)?;
-                    let span = self.current_span();
                     self.expect_semicolon()?;
                     Ok(Stmt::Assign {
                         target: expr,
                         value,
-                        span,
+                        span: stmt_span,
                     })
                 } else {
-                    let span = self.current_span();
                     self.expect_semicolon()?;
-                    Ok(Stmt::Expr(expr, span))
+                    Ok(Stmt::Expr(expr, stmt_span))
                 }
             }
         }
@@ -1075,6 +1077,9 @@ impl Parser {
             if self.check(TokenKind::Let) || self.check(TokenKind::Semicolon) {
                 stmts.push(self.parse_stmt()?);
             } else {
+                // 语句 span 取语句起始 token：旧实现在消费 `;` 之后才取
+                // `current_span()`，会把行号算到下一行（调试断点/诊断会偏移）。
+                let stmt_span = self.current_span();
                 // 块状表达式（块/if/match/循环）作为语句时到此结束，
                 // 避免把下一条语句开头的 `*`、`-`、`&` 等误当成
                 // 二元运算符继续解析（例如 `{ ... }\n*p = 4;`）。
@@ -1097,21 +1102,21 @@ impl Parser {
                     if tail.is_none() {
                         tail = Some(Box::new(expr));
                     } else {
-                        stmts.push(Stmt::Expr(expr, self.current_span()));
+                        stmts.push(Stmt::Expr(expr, stmt_span));
                     }
                     break;
                 } else if self.eat(TokenKind::Semicolon) {
-                    stmts.push(Stmt::Expr(expr, self.current_span()));
+                    stmts.push(Stmt::Expr(expr, stmt_span));
                 } else if self.eat(TokenKind::Eq) {
                     let value = self.parse_expr(0)?;
                     self.expect_semicolon()?;
                     stmts.push(Stmt::Assign {
                         target: expr,
                         value,
-                        span: self.current_span(),
+                        span: stmt_span,
                     });
                 } else {
-                    stmts.push(Stmt::Expr(expr, self.current_span()));
+                    stmts.push(Stmt::Expr(expr, stmt_span));
                 }
             }
         }

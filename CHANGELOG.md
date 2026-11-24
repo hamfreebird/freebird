@@ -25,6 +25,9 @@
   `run`/`check`/`build` 在锁文件存在时校验，缺失/路径变化/哈希不一致都会报错。
 - **CI Miri job**：nightly 上运行核心模块（`vm`/`mir`/`borrowck`）的 `cargo miri test`，
   过渡期 `continue-on-error`；门禁策略见 `docs/release.md` §7。
+- **M6-3.2 DAP**：运行中 `pause`（stdin 独立线程 + VM 分片执行，在分片边界停下）、
+  `variables` 展开数组/结构体/枚举载荷/Vec/`Box`（惰性子项、可继续展开）、
+  `stackTrace` 每帧返回自己的行号。
 
 ### Fixed
 
@@ -35,6 +38,8 @@
 - `build --link-stardust <file>` 可追加外部 Stardust 定义（FFI）；extern 函数作为值在编译期拒绝。
 - LSP 新增 references/rename，位置按 UTF-16 处理；非 BMP 字符位置正确。
 - LLVM 目标支持 `file_read`/`file_write`（Stardust LLVM 运行时按 UTF-8 编解码，bundled Stardust 同步更新）。
+- 语句 span 改用语句起始 token：此前 `parse_block` 在消费 `;` 之后才取 `current_span()`，
+  把语句行号算到下一行，导致调试断点不命中、诊断位置偏移。
 
 ### Changed
 

@@ -147,9 +147,14 @@ freebird dap
 ```
 
 通过 stdio 提供 DAP：`launch`（`program` 为 `.fb` 路径）、`setBreakpoints`、
-`configurationDone`、`stackTrace`/`scopes`/`variables`、`continue`/`next`/`stepIn`/`stepOut`。
+`configurationDone`、`stackTrace`/`scopes`/`variables`、`continue`/`next`/`stepIn`/`stepOut`、`pause`。
 断点按源码行设置；`next`/`stepIn` 为指令级单步，`stepOut` 运行到调用者。
-当前是单线程适配器，运行期间不支持 `pause`；VM 的 stdout 通过 `output` 事件返回。
+运行期间可以发 `pause`：stdin 由独立线程读取，执行按分片推进，暂停在下一个分片边界生效
+（`stopped` 事件的 `reason` 为 `pause`）。
+
+`variables` 支持展开：数组/结构体/枚举载荷/Vec（VM 中都是单槽 `Tuple`）按 `[0]`/`[1]`…
+逐项展开，`Box<T>` 展开为 `*`，子项可继续展开；`stackTrace` 的每一帧都带自己的当前行。
+VM 的 stdout 通过 `output` 事件返回。
 
 ### 交互式 REPL
 

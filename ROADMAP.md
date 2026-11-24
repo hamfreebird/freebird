@@ -220,7 +220,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | ID | 工作项 | 验收标准 | 状态 |
 |---|---|---|---|
 | M4-1 | LSP：诊断、hover、补全、跳转定义、引用、文档符号 | VS Code 扩展接入 LSP；打开坏文件能显示行内诊断 | ✅ 诊断/hover/定义/符号/补全 + VS Code 接入；references 未实现 |
-| M4-2 | 调试器：DAP 断点、单步、调用栈、变量查看；先覆盖 VM | `freebird run --debug` 或独立 `freebird dap` 可用；有端到端调试测试 | ✅ `freebird dap`（断点/单步/栈/变量）；单线程，无 pause |
+| M4-2 | 调试器：DAP 断点、单步、调用栈、变量查看；先覆盖 VM | `freebird run --debug` 或独立 `freebird dap` 可用；有端到端调试测试 | ✅ `freebird dap`（断点/单步/栈/变量）；运行中 `pause` 与变量展开在 M6-3.2 补齐 |
 | M4-3 | REPL 增强：多行输入、历史、`:load`、`:type`、错误恢复 | 交互测试/脚本测试；REPL 与文件执行语义一致 | ✅ |
 | M4-4 | 格式化器与 lint 门禁：`freebird fmt`；清理既有 fmt/clippy 问题后加入 CI | `cargo fmt --check`、`cargo clippy --all-targets` 通过并成为 CI 门禁 | ✅ |
 | M4-5 | 包管理器/项目清单：最小 `freebird.toml`、路径依赖、构建入口；暂不做中心化 registry | 本地多包示例可构建；锁定文件/版本解析行为有测试 | ✅ 路径依赖 MVP；无版本解析/锁定文件（文档说明） |
@@ -236,7 +236,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 **M4 已知限制**
 
 - LSP 为文本级 MVP：hover/定义/符号基于文本扫描，列号按 Unicode 标量而非 UTF-16；未实现 references/rename/语义补全。
-- DAP 单线程：运行期间不能处理 `pause`；`next`/`stepIn` 为指令级单步。
+- DAP：M6-3.2 起支持运行中 `pause`（协作式分片）与变量展开；`next`/`stepIn` 仍为指令级单步。
 - 包管理仅支持单层路径依赖，无 registry、版本解析或锁定文件。
 - `freebird fmt` 仅规范化缩进/空白，不重排表达式。
 
@@ -292,7 +292,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | FFI 需要外部定义链接；extern 不能作函数值；默认 ID 可能碰撞 | M6-2.4（已解决） |
 | Stardust 堆对数组/嵌套容器保守不回收 | M6-2.5 |
 | LSP 无 references/rename，列号非 UTF-16 | M6-3.1（已解决） |
-| DAP 单线程无 pause、变量不可展开 | M6-3.2 |
+| DAP 单线程无 pause、变量不可展开 | M6-3.2（已解决：协作式 pause + 变量展开 + 每帧行号） |
 | 包管理仅单层路径依赖、无锁定文件 | M6-3.3（已解决：递归依赖 + `freebird.lock`） |
 | REPL 变量不跨输入保留、无持久历史 | M6-3.4 |
 | `fmt` 只做空白/缩进规范化 | M6-3.5 |
@@ -330,7 +330,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | ID | 工作项 | 验收标准 |
 |---|---|---|
 | M6-3.1 | LSP：references、rename、UTF-16 列转换、变量/字段语义补全 | VS Code 中可查找引用/重命名；非 ASCII 行列正确；LSP 测试覆盖（P1） |
-| M6-3.2 | DAP：运行中 `pause`（协作式检查或执行线程）、结构体/枚举/Vec 变量展开、每帧行号 | `pause` 在长程序中生效；变量可展开；栈帧行号正确（P2） |
+| M6-3.2 | DAP：运行中 `pause`（协作式检查或执行线程）、结构体/枚举/Vec 变量展开、每帧行号 | `pause` 在长程序中生效；变量可展开；栈帧行号正确（P2，已完成：VM 分片执行 + `pause` 请求、`variables` 惰性展开、`CallFrame.current_line`；顺带修复语句 span 偏移） |
 | M6-3.3 | 包管理：`freebird.lock`（依赖路径/哈希）、多层依赖递归、锁定文件校验 | 多包/传递依赖可构建；lock 文件可复现；`m4_test` 扩展（P1，已完成：`dependency` 模块 + `freebird lock`） |
 | M6-3.4 | REPL：变量跨输入保留、持久历史文件、可选行编辑 | 变量在后续输入可用；历史可跨会话；离线可构建（P2） |
 | M6-3.5 | `fmt`：token 级行内空白/换行重排，保留注释与语义 | 幂等、可解析；对 `examples/` 全量格式化后测试通过（P2） |
