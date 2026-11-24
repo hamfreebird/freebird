@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::fs;
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process;
 
@@ -41,6 +42,20 @@ enum Command {
     },
     /// 交互式 REPL
     Repl,
+    /// 格式化 Freebird 源码（缩进/空白规范化）
+    Fmt {
+        /// 源文件路径；省略或使用 --stdin 时从标准输入读取
+        file: Option<PathBuf>,
+        /// 只检查是否已格式化（不一致时退出码 1）
+        #[arg(long, conflicts_with = "write")]
+        check: bool,
+        /// 写回文件
+        #[arg(long)]
+        write: bool,
+        /// 从标准输入读取
+        #[arg(long, conflicts_with = "file")]
+        stdin: bool,
+    },
     /// 编译为 Stardust 源码或 LLVM IR / 可执行文件
     Build {
         /// 源文件路径 (.fb)
@@ -136,6 +151,53 @@ fn main() {
                 || !borrow_errors.is_empty()
             {
                 process::exit(1);
+            }
+        }
+        Some(Command::Fmt {
+            file,
+            check,
+            write,
+            stdin,
+        }) => {
+            if write && (stdin || file.is_none()) {
+                eprintln!("Error: `--write` requires a file path.");
+                process::exit(1);
+            }
+            let (path, source) = if stdin || file.is_none() {
+                let mut source = String::new();
+                if let Err(e) = io::stdin().read_to_string(&mut source) {
+                    eprintln!("Error reading stdin: {e}");
+                    process::exit(1);
+                }
+                (None, source)
+            } else {
+                let path = file.unwrap();
+                let source = fs::read_to_string(&path).unwrap_or_else(|e| {
+                    eprintln!("Error reading {}: {e}", path.display());
+                    process::exit(1);
+                });
+                (Some(path), source)
+            };
+
+            let result = freebird::fmt::format_source_checked(&source);
+            if check {
+                if result.changed {
+                    let name = path
+                        .as_ref()
+                        .map_or_else(|| "<stdin>".to_string(), |p| p.display().to_string());
+                    eprintln!("not formatted: {name}");
+                    process::exit(1);
+                }
+            } else if write {
+                if result.changed {
+                    let path = path.expect("write requires a file path");
+                    if let Err(e) = fs::write(&path, result.output) {
+                        eprintln!("Error writing {}: {e}", path.display());
+                        process::exit(1);
+                    }
+                }
+            } else {
+                print!("{}", result.output);
             }
         }
         Some(Command::Repl) => {

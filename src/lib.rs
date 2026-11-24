@@ -5,6 +5,7 @@
 pub mod borrowck;
 pub mod codegen;
 pub mod diagnostics;
+pub mod fmt;
 pub mod frontend;
 pub mod hir;
 pub mod io;
@@ -16,6 +17,7 @@ pub mod vm;
 
 // 重导出常用类型
 pub use diagnostics::{generate_diagnostic_json, generate_diagnostic_json_with_warnings};
+pub use fmt::{FormatResult, format_source, format_source_checked};
 pub use frontend::parse;
 pub use hir::lower;
 pub use io::{IoLib, std_library};
