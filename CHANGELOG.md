@@ -49,6 +49,10 @@
 - **M6-2.5 堆回收上限**：明确维持 Stardust 的保守回收策略，并测量 COW 写入的堆增长
   （约 10 个堆元素/次，1M 上限 ≈ 10 万次写入）；数据与结论写入 ADR 0002，
   `tests/m6_test.rs` 增加 1000 次 COW 压力的双后端一致性护栏。
+- **CI 门禁收紧**：`miri` job 从 `continue-on-error` 转为阻塞；新增 `asan`/`ubsan`
+  过渡期告警 job（nightly + `rust-src` + `-Zbuild-std`，分别跑 `address`/`undefined`
+  sanitizer 的核心模块测试）。本地工具链目录只读，无法安装 `miri`/`rust-src`，
+  实际验证依赖 CI；策略见 `docs/release.md` §7。
 - **Stardust 运行时限制注解**：`main` 上的 `#[max_stack]`/`#[max_call_depth]`/`#[max_steps]`/
   `#[time_limit]` 现在会写入生成源码顶部（如 `#[max_steps=1000]`），由 Stardust 解释器在
   词法分析前读取并执行；VM 与 Stardust 均生效（`m6_test`）。LLVM 路径未验证。

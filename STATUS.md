@@ -156,8 +156,8 @@
 - **基准**：`freebird-bench`（VM fib/循环/Vec、Stardust 体积与耗时、LLVM 可选）+ `bench/baseline.json`；计时项三次取中位数；`--check` 阈值比较，CI 非阻塞 job；噪声基线、阈值策略与复现步骤见 `bench/README.md`。
 - **MIR 优化**：`CompileOptions`/`--no-opt`；常量折叠（算术/Div/Mod/比较/逻辑）、常量条件跳转、无用跳转、死代码消除、冗余 roll；M6-4.3 起对「零参数、返回单个常量」的叶子函数做调用点内联；`Line` 保留；`tests/m5_test.rs` 验证优化/非优化输出一致。
 - **fuzz**：`tests/fuzz/corpus/` 固定语料（深层递归/长循环/嵌套容器/枚举 match/深表达式）在 VM/Stardust 两端差分；随机程序与坏输入规模由 `FREEBIRD_FUZZ_SCALE` 控制（默认 30 + 60，主门禁保持快速）；失败最小化并归档到 `target/fuzz-failures`。CI 每周定时 job 用 `FREEBIRD_FUZZ_SCALE=10` 扩展运行，失败上传归档产物。
-- **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri 已在 CI 的非阻塞 `miri` job 运行（本地 stable 无组件），ASan/UBSan 未接入已记录。
+- **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri 已在 CI 的阻塞 `miri` job 运行（本地工具链目录只读，无法安装组件）；ASan/UBSan 已接入 CI 的 `asan`/`ubsan` 过渡期告警 job。
 - **测试基础设施**：`scripts/check-fixtures.py`、`tests/snapshot_test.rs` + `UPDATE_SNAPSHOTS`。
 - **发布**：`CHANGELOG.md`、`docs/release.md`、`scripts/check-docs.py`；release workflow 校验 tag/版本。
 - **测试基线**：232 unit + 196 integration。
-- **已知限制**：Miri 仅 CI 非阻塞运行（过渡期）、ASan/UBSan 未接入；fuzz 主门禁为默认规模（定时 job 扩展）、内联未实现；bench 仅告警。
+- **已知限制**：Miri 已在 CI 阻塞运行（本地只读工具链无法安装组件）；ASan/UBSan 已接入 CI 但为过渡期告警；fuzz 主门禁为默认规模（定时 job 扩展）；bench 仅告警。

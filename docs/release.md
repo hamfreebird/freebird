@@ -80,19 +80,23 @@ python3 scripts/check-docs.py
 | `differential` | 是 | VM/Stardust 差分测试 |
 | `llvm` | 是 | 安装 clang 后跑 `m3_test`（bundled Stardust 工具链） |
 | `bench` | 否 | 基准受机器噪声影响，`--tolerance 2.5`，只告警；噪声基线与复现方法见 [`bench/README.md`](../bench/README.md) |
-| `miri` | 否（过渡期） | nightly + `cargo miri setup`，仅跑核心模块 `vm::`/`mir::`/`borrowck::` |
+| `miri` | 是 | nightly + `cargo miri setup`，核心模块 `vm::`/`mir::`/`borrowck::` |
+| `asan` | 否（过渡期） | nightly + `rust-src`，`-Zsanitizer=address` 跑核心模块；首次接入保持告警，稳定后转阻塞 |
+| `ubsan` | 否（过渡期） | 同上，`-Zsanitizer=undefined`（与 ASan 分开运行） |
 | `fuzz` | 否（仅定时/手动） | 每周一 03:00 UTC + `workflow_dispatch`；`FREEBIRD_FUZZ_SCALE=10` 跑 `tests/m5_test.rs`（固定 corpus + 随机用例），失败上传 `target/fuzz-failures` |
 
-`miri` job 的过渡期约定（M6-4.1）：
+`miri` job 的约定（M6-4.1，M6 收尾转阻塞）：
 
 - 使用 `MIRIFLAGS="-Zmiri-disable-isolation"`，因为核心模块的测试会访问临时文件；
-- 首次接入若暴露未定义行为/未初始化读取，先在 issue 与其对应文档中登记（基线化），
-  修复完成后再把该 job 从 `continue-on-error` 改为阻塞门禁；
+- 该 job 已从 `continue-on-error` 转为阻塞门禁；如后续暴露新的未定义行为，应先修复或
+  在对应文档登记后临时恢复告警；
 - 本地 stable 工具链没有 `miri` 组件，Miri 只能在 nightly 上运行；本地验证请用
   `cargo +nightly miri test --lib vm::`（首次需 `rustup component add miri --toolchain nightly`）。
 
-ASan/UBSan 目前**未接入**：ASan 需要 `-Zbuild-std` 与 `rust-src`，构建成本高且与 LLVM 后端
-的 clang 链接相互影响。需要时在本地按需运行，接入前先在 `STATUS.md` 记录结论。
+ASan/UBSan 已接入 CI（`asan`/`ubsan` job），但**仍为过渡期告警**：它们需要 nightly +
+`rust-src` 与 `-Zbuild-std`，构建成本高且与 LLVM 后端的 clang 链接可能相互影响。首次接入
+以 `continue-on-error` 观察；连续稳定后按同样方式改为阻塞。本地工具链目录只读时无法安装
+`miri`/`rust-src`，此时只能依赖 CI 验证（M6 收尾的实测结论）。
 
 ## 8. 平台支持
 

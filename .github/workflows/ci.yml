@@ -69,9 +69,8 @@ jobs:
 
   miri:
     runs-on: ubuntu-latest
-    # Miri 需要 nightly 组件，且首次接入可能需要清理历史告警：
-    # 过渡期作为非阻塞检查，策略见 docs/release.md「CI 门禁策略」。
-    continue-on-error: true
+    # Miri 需要 nightly 组件；核心模块的 Miri 已稳定，作为阻塞门禁。
+    # 策略与本地复现方法见 docs/release.md「CI 门禁策略」。
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -84,6 +83,36 @@ jobs:
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib vm::
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib mir::
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib borrowck::
+
+  asan:
+    runs-on: ubuntu-latest
+    # 消毒器需要 nightly + rust-src（-Zbuild-std）；首次接入保持告警，稳定后转阻塞。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: AddressSanitizer（核心模块）
+        run: |
+          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib vm::
+          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib mir::
+          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib borrowck::
+
+  ubsan:
+    runs-on: ubuntu-latest
+    # UBSan 与 ASan 分开运行（Rust 一次只启用一个 sanitizer）；过渡期告警。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: UndefinedBehaviorSanitizer（核心模块）
+        run: |
+          RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib vm::
+          RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib mir::
+          RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib borrowck::
 
   fuzz:
     # 定时/手动触发：固定 corpus + 更大规模的随机用例（FREEBIRD_FUZZ_SCALE）。
