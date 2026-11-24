@@ -5,13 +5,18 @@ use std::path::PathBuf;
 use std::process;
 
 use freebird::borrowck::check_borrow;
-use freebird::codegen::llvm::{LlvmArtifact, LlvmEmit, LlvmOptions, compile_llvm};
+use freebird::codegen::llvm::{
+    LlvmArtifact, LlvmEmit, LlvmOptions, compile_llvm, compile_llvm_compiled,
+};
 use freebird::diagnostics;
 use freebird::frontend::parse;
 use freebird::hir::lower;
 use freebird::repl::Repl;
 use freebird::typeck::{TypeTable, check_program_with_warnings};
-use freebird::{RuntimeConfig, build_stardust, run_file};
+use freebird::{
+    RuntimeConfig, build_project, build_stardust, check_project, compile_project, run_file,
+    run_project,
+};
 
 /// Freebird — 一门基于双栈虚拟机的高级系统编程语言
 #[derive(Parser)]
@@ -29,16 +34,22 @@ struct Cli {
 enum Command {
     /// 解释执行 Freebird 程序
     Run {
-        /// 源文件路径 (.fb)
-        file: PathBuf,
+        /// 源文件路径 (.fb)；省略时读取当前目录的 freebird.toml
+        file: Option<PathBuf>,
         /// 调试模式
         #[arg(long)]
         debug: bool,
+        /// 项目清单路径（freebird.toml 或其所在目录）
+        #[arg(long)]
+        manifest_path: Option<PathBuf>,
     },
     /// 语法和类型检查（JSON 诊断输出）
     Check {
-        /// 源文件路径 (.fb)
-        file: PathBuf,
+        /// 源文件路径 (.fb)；省略时读取当前目录的 freebird.toml
+        file: Option<PathBuf>,
+        /// 项目清单路径（freebird.toml 或其所在目录）
+        #[arg(long)]
+        manifest_path: Option<PathBuf>,
     },
     /// 交互式 REPL
     Repl,
@@ -62,8 +73,11 @@ enum Command {
     },
     /// 编译为 Stardust 源码或 LLVM IR / 可执行文件
     Build {
-        /// 源文件路径 (.fb)
-        file: PathBuf,
+        /// 源文件路径 (.fb)；省略时读取当前目录的 freebird.toml
+        file: Option<PathBuf>,
+        /// 项目清单路径（freebird.toml 或其所在目录）
+        #[arg(long)]
+        manifest_path: Option<PathBuf>,
         /// 编译目标（默认 stardust）
         #[arg(long, value_enum)]
         target: Option<Target>,
@@ -94,18 +108,59 @@ enum EmitOption {
     Exe,
 }
 
+enum SourceTarget {
+    File(PathBuf),
+    Project(PathBuf),
+}
+
+/// 解析输入：显式 `--manifest-path` → 显式文件 → 当前目录的 `freebird.toml`。
+fn resolve_target(
+    file: Option<PathBuf>,
+    manifest_path: Option<PathBuf>,
+) -> Result<SourceTarget, String> {
+    if let Some(path) = manifest_path {
+        return Ok(SourceTarget::Project(path));
+    }
+    if let Some(file) = file {
+        return Ok(SourceTarget::File(file));
+    }
+    let default = PathBuf::from("freebird.toml");
+    if default.exists() {
+        Ok(SourceTarget::Project(default))
+    } else {
+        Err(
+            "no input file: pass <file.fb>, or run in a directory containing freebird.toml"
+                .to_string(),
+        )
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Run { file, debug }) => {
+        Some(Command::Run {
+            file,
+            debug,
+            manifest_path,
+        }) => {
             let config = if debug {
                 RuntimeConfig::debug()
             } else {
                 RuntimeConfig::default()
             };
-
-            match run_file(&file, config) {
+            let target = match resolve_target(file, manifest_path) {
+                Ok(target) => target,
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    process::exit(1);
+                }
+            };
+            let result = match target {
+                SourceTarget::File(path) => run_file(&path, config),
+                SourceTarget::Project(path) => run_project(&path, config),
+            };
+            match result {
                 Ok(output) => {
                     if !output.is_empty() {
                         print!("{}", String::from_utf8_lossy(&output));
@@ -117,44 +172,73 @@ fn main() {
                 }
             }
         }
-        Some(Command::Check { file }) => {
-            let source = fs::read_to_string(&file).unwrap_or_else(|e| {
-                eprintln!("Error reading {}: {e}", file.display());
-                process::exit(1);
-            });
-
-            // JSON 诊断输出
-            let (ast, parse_errors) = parse(&source);
-            let (hir, resolve_errors) = lower(&ast);
-            let mut type_errors = Vec::new();
-            let mut type_warnings = Vec::new();
-            let mut borrow_errors = Vec::new();
-            if parse_errors.is_empty() && resolve_errors.is_empty() {
-                let type_table = TypeTable::from_ast_decls(&ast.decls);
-                let (errors, warnings) = check_program_with_warnings(&hir, &type_table);
-                type_errors = errors;
-                type_warnings = warnings;
-                // 与 run/build 保持一致：类型检查通过后继续做借用/移动检查。
-                if type_errors.is_empty() {
-                    borrow_errors = check_borrow(&hir);
+        Some(Command::Check {
+            file,
+            manifest_path,
+        }) => {
+            let target = match resolve_target(file, manifest_path) {
+                Ok(target) => target,
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    process::exit(1);
                 }
-            }
-            let json = diagnostics::generate_diagnostic_json_with_warnings(
-                &source,
-                &parse_errors,
-                &resolve_errors,
-                &type_errors,
-                &borrow_errors,
-                &type_warnings,
-            );
-            println!("{json}");
+            };
+            match target {
+                SourceTarget::Project(path) => {
+                    let (diagnostics, source) = match check_project(&path) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            eprintln!("Check error: {error}");
+                            process::exit(1);
+                        }
+                    };
+                    let (json, error_count, _warning_count) =
+                        diagnostics::diagnostics_json(diagnostics, &source);
+                    println!("{json}");
+                    if error_count > 0 {
+                        process::exit(1);
+                    }
+                }
+                SourceTarget::File(file) => {
+                    let source = fs::read_to_string(&file).unwrap_or_else(|e| {
+                        eprintln!("Error reading {}: {e}", file.display());
+                        process::exit(1);
+                    });
 
-            if !parse_errors.is_empty()
-                || !resolve_errors.is_empty()
-                || !type_errors.is_empty()
-                || !borrow_errors.is_empty()
-            {
-                process::exit(1);
+                    // JSON 诊断输出
+                    let (ast, parse_errors) = parse(&source);
+                    let (hir, resolve_errors) = lower(&ast);
+                    let mut type_errors = Vec::new();
+                    let mut type_warnings = Vec::new();
+                    let mut borrow_errors = Vec::new();
+                    if parse_errors.is_empty() && resolve_errors.is_empty() {
+                        let type_table = TypeTable::from_ast_decls(&ast.decls);
+                        let (errors, warnings) = check_program_with_warnings(&hir, &type_table);
+                        type_errors = errors;
+                        type_warnings = warnings;
+                        // 与 run/build 保持一致：类型检查通过后继续做借用/移动检查。
+                        if type_errors.is_empty() {
+                            borrow_errors = check_borrow(&hir);
+                        }
+                    }
+                    let json = diagnostics::generate_diagnostic_json_with_warnings(
+                        &source,
+                        &parse_errors,
+                        &resolve_errors,
+                        &type_errors,
+                        &borrow_errors,
+                        &type_warnings,
+                    );
+                    println!("{json}");
+
+                    if !parse_errors.is_empty()
+                        || !resolve_errors.is_empty()
+                        || !type_errors.is_empty()
+                        || !borrow_errors.is_empty()
+                    {
+                        process::exit(1);
+                    }
+                }
             }
         }
         Some(Command::Fmt {
@@ -227,18 +311,22 @@ fn main() {
         }
         Some(Command::Build {
             file,
+            manifest_path,
             target,
             output,
             emit,
             opt_level,
             stardust_bin,
         }) => {
-            let source = fs::read_to_string(&file).unwrap_or_else(|e| {
-                eprintln!("Error reading {}: {e}", file.display());
-                process::exit(1);
-            });
-
             let target_name = target.unwrap_or(Target::Stardust);
+            let source_target = match resolve_target(file, manifest_path) {
+                Ok(target) => target,
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    process::exit(1);
+                }
+            };
+
             match target_name {
                 Target::Stardust => {
                     if matches!(emit, Some(EmitOption::Exe)) {
@@ -247,7 +335,17 @@ fn main() {
                         );
                         process::exit(1);
                     }
-                    let code = match build_stardust(&source) {
+                    let code = match &source_target {
+                        SourceTarget::File(path) => {
+                            let source = fs::read_to_string(path).unwrap_or_else(|e| {
+                                eprintln!("Error reading {}: {e}", path.display());
+                                process::exit(1);
+                            });
+                            build_stardust(&source)
+                        }
+                        SourceTarget::Project(path) => build_project(path),
+                    };
+                    let code = match code {
                         Ok(code) => code,
                         Err(e) => {
                             eprintln!("Build error: {e}");
@@ -289,7 +387,20 @@ fn main() {
                         stardust_bin,
                         opt_level: opt_level as u8,
                     };
-                    match compile_llvm(&source, &options) {
+                    let artifact = match &source_target {
+                        SourceTarget::File(path) => {
+                            let source = fs::read_to_string(path).unwrap_or_else(|e| {
+                                eprintln!("Error reading {}: {e}", path.display());
+                                process::exit(1);
+                            });
+                            compile_llvm(&source, &options)
+                        }
+                        SourceTarget::Project(path) => match compile_project(path) {
+                            Ok(compiled) => compile_llvm_compiled(&compiled, &options),
+                            Err(e) => Err(e),
+                        },
+                    };
+                    match artifact {
                         Ok(LlvmArtifact::Ir(ir)) => match output {
                             Some(path) => {
                                 if let Err(e) = fs::write(&path, ir) {

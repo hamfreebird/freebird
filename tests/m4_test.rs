@@ -345,3 +345,92 @@ fn dap_stdio_breakpoint_and_continue() {
     let _ = child.wait();
     let _ = std::fs::remove_file(path);
 }
+
+// ─── M4-5：freebird.toml 项目 ───
+
+fn create_project(name: &str) -> PathBuf {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join(format!("m4-project-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(base.join("app/src")).unwrap();
+    std::fs::create_dir_all(base.join("util/src")).unwrap();
+    std::fs::write(
+        base.join("app/freebird.toml"),
+        "[package]\nname = \"app\"\nentry = \"src/main.fb\"\n\n[dependencies]\nutil = { path = \"../util\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("app/src/main.fb"),
+        "use util::double;\n\nfn main() {\n    print(double(21));\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("util/freebird.toml"),
+        "[package]\nname = \"util\"\nentry = \"src/lib.fb\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("util/src/lib.fb"),
+        "pub fn double(x: i64) -> i64 {\n    x * 2\n}\n",
+    )
+    .unwrap();
+    base
+}
+
+#[test]
+fn project_run_check_and_build() {
+    let base = create_project("main");
+    let manifest = base.join("app/freebird.toml");
+
+    let run = freebird()
+        .args(["run", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
+
+    let check = freebird()
+        .args(["check", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(check.status.success());
+    let json = String::from_utf8_lossy(&check.stdout);
+    assert!(json.contains("\"error_count\": 0"), "stdout: {json}");
+
+    let build = freebird()
+        .args(["build", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(String::from_utf8_lossy(&build.stdout).contains("util::double"));
+
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn project_is_found_from_current_directory() {
+    let base = create_project("cwd");
+    let run = freebird()
+        .current_dir(base.join("app"))
+        .arg("run")
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
+    let _ = std::fs::remove_dir_all(base);
+}

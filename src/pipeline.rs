@@ -32,6 +32,35 @@ pub fn run_file(path: &Path, config: RuntimeConfig) -> Result<Vec<u8>, String> {
     run_ast(ast, config)
 }
 
+/// 从 `freebird.toml` 加载项目（入口 + 路径依赖）。
+///
+/// 依赖先于根程序加载，`use dep::item;` 与 `dep::item` 全名访问均可解析。
+/// 当前只支持单层路径依赖（依赖的依赖不递归展开）。
+pub fn load_project(manifest_path: &Path) -> Result<crate::frontend::ast::Program, String> {
+    let manifest = crate::manifest::Manifest::load(manifest_path)?;
+    let mut loading: Vec<std::path::PathBuf> = Vec::new();
+    let mut pub_names: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut decls = Vec::new();
+
+    for dependency in &manifest.dependencies {
+        let entry = dependency.entry_path()?;
+        let module = load_module(&entry, Some(&dependency.name), &mut loading, &mut pub_names)?;
+        decls.extend(module.decls);
+    }
+
+    let entry = manifest.root.join(&manifest.entry);
+    let root = load_module(&entry, None, &mut loading, &mut pub_names)?;
+    decls.extend(root.decls);
+
+    Ok(crate::frontend::ast::Program { decls })
+}
+
+/// 运行 `freebird.toml` 项目。
+pub fn run_project(manifest_path: &Path, config: RuntimeConfig) -> Result<Vec<u8>, String> {
+    let ast = load_project(manifest_path)?;
+    run_ast(ast, config)
+}
+
 /// 递归加载模块：`mod foo;` 读取同目录 `foo.fb`，其顶层函数以 `foo::name` 注册。
 fn load_program(path: &Path) -> Result<crate::frontend::ast::Program, String> {
     let mut loading: Vec<std::path::PathBuf> = Vec::new();
@@ -917,7 +946,11 @@ pub fn compile_program(source: &str) -> Result<CompiledProgram, String> {
         let msg: Vec<String> = ast_errors.iter().map(|e| e.to_string()).collect();
         return Err(format!("Parse errors:\n{}", msg.join("\n")));
     }
+    compile_ast(ast)
+}
 
+/// 对已解析的 AST 执行名称解析、类型/借用检查与 MIR/Stardust 生成。
+pub fn compile_ast(ast: crate::frontend::ast::Program) -> Result<CompiledProgram, String> {
     let type_table = TypeTable::from_ast_decls(&ast.decls);
 
     let (hir, hir_errors) = lower(&ast);
@@ -989,6 +1022,31 @@ pub fn compile_program(source: &str) -> Result<CompiledProgram, String> {
 /// 编译到 Stardust 源码
 pub fn build_stardust(source: &str) -> Result<String, String> {
     Ok(compile_program(source)?.stardust)
+}
+
+/// 检查 `freebird.toml` 项目，返回诊断与入口源码。
+pub fn check_project(
+    manifest_path: &Path,
+) -> Result<(Vec<crate::diagnostics::Diagnostic>, String), String> {
+    let manifest = crate::manifest::Manifest::load(manifest_path)?;
+    let ast = load_project(manifest_path)?;
+    let entry = manifest.root.join(&manifest.entry);
+    let source = std::fs::read_to_string(&entry)
+        .map_err(|error| format!("failed to read `{}`: {error}", entry.display()))?;
+    Ok((
+        crate::diagnostics::collect_diagnostics_for_program(&ast),
+        source,
+    ))
+}
+
+/// 编译 `freebird.toml` 项目到 MIR/Stardust。
+pub fn compile_project(manifest_path: &Path) -> Result<CompiledProgram, String> {
+    compile_ast(load_project(manifest_path)?)
+}
+
+/// 编译 `freebird.toml` 项目到 Stardust 源码。
+pub fn build_project(manifest_path: &Path) -> Result<String, String> {
+    Ok(compile_project(manifest_path)?.stardust)
 }
 
 #[cfg(test)]

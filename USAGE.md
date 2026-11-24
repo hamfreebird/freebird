@@ -47,6 +47,24 @@ freebird check hello.fb        # JSON 诊断输出
 
 每条诊断包含 `level`、`code`、`message`、`span`（1-based 行列），以及可选的 `notes`、`suggestion`、`related`（相关位置）。`code` 为稳定错误码：`P` 词法/语法、`R` 名称解析、`T` 类型、`B` 借用、`W` 警告（如 `T001` 类型不匹配、`R003` 重复定义）。
 
+### 项目清单（freebird.toml）
+
+最小项目清单：
+
+```toml
+[package]
+name = "app"
+entry = "src/main.fb"
+
+[dependencies]
+util = { path = "../util" }
+```
+
+- `run`/`check`/`build` 支持 `--manifest-path <freebird.toml|目录>`；省略文件参数时自动读取当前目录的 `freebird.toml`。
+- 依赖只支持路径（`{ path = "..." }` 或字符串简写），当前没有版本解析、registry 或锁定文件。
+- 依赖入口：依赖目录自带 `freebird.toml` 时使用其 `entry`，否则依次查找 `src/lib.fb`、`src/main.fb`、`lib.fb`、`main.fb`；依赖的顶层项以 `<依赖名>::` 前缀注册。
+- 项目 `check` 的 JSON 使用入口文件作为 `source`；跨文件诊断的行号来自各自文件。
+
 ### 格式化
 
 ```bash

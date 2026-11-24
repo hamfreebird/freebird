@@ -1037,6 +1037,8 @@ fn use_ffi() -> i32 {
 
 源文件扩展名：`.fb`
 
+`freebird.toml` 是最小项目清单：`[package]` 的 `name`/`entry` 指定入口，`[dependencies]` 使用路径依赖（`util = { path = "../util" }`）。`run`/`check`/`build` 可通过 `--manifest-path` 指定清单，省略文件参数时自动读取当前目录的清单。
+
 `freebird check` 输出 JSON：顶层 `schema_version`（当前 1）、`source`、`errors`、`error_count`、`warning_count`；每条诊断含 `level`、`code`、`message`、`span`、可选 `suggestion`/`related`。错误码前缀：`P` 词法/语法、`R` 名称解析、`T` 类型、`B` 借用、`W` 警告。
 
 ---

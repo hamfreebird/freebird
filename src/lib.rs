@@ -11,6 +11,7 @@ pub mod frontend;
 pub mod hir;
 pub mod io;
 pub mod lsp;
+pub mod manifest;
 pub mod mir;
 pub mod pipeline;
 pub mod repl;
@@ -24,8 +25,9 @@ pub use frontend::parse;
 pub use hir::lower;
 pub use io::{IoLib, std_library};
 pub use pipeline::{
-    CompiledProgram, build_stardust, check_source, check_source_with_warnings, compile_program,
-    run_file, run_source,
+    CompiledProgram, build_project, build_stardust, check_project, check_source,
+    check_source_with_warnings, compile_ast, compile_program, compile_project, load_project,
+    run_file, run_project, run_source,
 };
 pub use vm::Vm;
 pub use vm::config::RuntimeConfig;

@@ -536,3 +536,46 @@ pub fn collect_diagnostics(source: &str) -> Vec<Diagnostic> {
 
     diagnostics
 }
+
+/// 对已解析的项目 AST 收集诊断（名称解析 → 类型 → 借用）。
+///
+/// 多文件项目的行号来自各自文件；JSON 的 `source` 使用入口文件内容，
+/// 因此跨文件诊断的位置需要结合文件名理解。
+pub fn collect_diagnostics_for_program(ast: &crate::frontend::ast::Program) -> Vec<Diagnostic> {
+    let (hir, resolve_errors) = crate::hir::lower(ast);
+    let type_table = crate::typeck::TypeTable::from_ast_decls(&ast.decls);
+
+    let mut diagnostics = resolve_to_diagnostics(&resolve_errors);
+    if resolve_errors.is_empty() {
+        let (type_errors, warnings) = crate::typeck::check_program_with_warnings(&hir, &type_table);
+        diagnostics.extend(type_to_diagnostics(&type_errors));
+        diagnostics.extend(type_warnings_to_diagnostics(&warnings));
+        if type_errors.is_empty() {
+            diagnostics.extend(borrow_to_diagnostics(&crate::borrowck::check_borrow(&hir)));
+        }
+    }
+    diagnostics
+}
+
+/// 把诊断数组序列化为 `check --json` 的完整报告。
+///
+/// 返回 `(json, error_count, warning_count)`。
+pub fn diagnostics_json(diagnostics: Vec<Diagnostic>, source: &str) -> (String, usize, usize) {
+    let error_count = diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Error))
+        .count();
+    let warning_count = diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Warning))
+        .count();
+    let report = DiagnosticReport {
+        schema_version: 1,
+        source: source.to_string(),
+        errors: diagnostics,
+        error_count,
+        warning_count,
+    };
+    let json = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    (json, error_count, warning_count)
+}

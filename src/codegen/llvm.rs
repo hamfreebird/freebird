@@ -83,7 +83,15 @@ pub enum LlvmArtifact {
 /// 编译源码到 LLVM IR 或可执行文件。
 pub fn compile_llvm(source: &str, options: &LlvmOptions) -> Result<LlvmArtifact, String> {
     let program = compile_program(source)?;
-    check_llvm_supported(&program)?;
+    compile_llvm_compiled(&program, options)
+}
+
+/// 从已编译的 MIR/Stardust 产物构建 LLVM IR 或可执行文件（项目模式复用）。
+pub fn compile_llvm_compiled(
+    program: &CompiledProgram,
+    options: &LlvmOptions,
+) -> Result<LlvmArtifact, String> {
+    check_llvm_supported(program)?;
 
     let stardust = locate_stardust(options.stardust_bin.as_deref())?;
     let temp = TempFiles::new()?;
