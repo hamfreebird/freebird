@@ -115,3 +115,54 @@ fn check_json_reports_related_locations() {
     assert!(text.contains("first defined here"));
     let _ = std::fs::remove_file(path);
 }
+
+// ─── M4-3：REPL 增强 ───
+
+fn run_repl(input: &str) -> std::process::Output {
+    let mut child = freebird()
+        .arg("repl")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn repl_multiline_type_and_history() {
+    let output = run_repl(
+        "fn add(a: i64, b: i64) -> i64 {\nreturn a + b;\n}\n:type add(1, 2)\n:history\n:q\n",
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[declared]"), "stdout: {stdout}");
+    assert!(stdout.contains("=> i64"), "stdout: {stdout}");
+    assert!(stdout.contains("fn add"), "stdout: {stdout}");
+}
+
+#[test]
+fn repl_load_and_type() {
+    let path = temp_path("repl-load.fb");
+    std::fs::write(&path, "fn double(x: i64) -> i64 { x * 2 }\n").unwrap();
+    let input = format!(":load {}\n:type double(2)\n:q\n", path.display());
+    let output = run_repl(&input);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[declared]"), "stdout: {stdout}");
+    assert!(stdout.contains("=> i64"), "stdout: {stdout}");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn repl_reports_type_errors_and_recovers() {
+    let output = run_repl("let x: i32 = true;\n:type 1 + 1\n:q\n");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("type error"), "stderr: {stderr}");
+    assert!(stdout.contains("=> i32"), "stdout: {stdout}");
+}

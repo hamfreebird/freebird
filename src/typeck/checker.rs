@@ -441,6 +441,15 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// 检查整个程序，返回所有发现的类型错误（丢弃警告，兼容旧调用）。
+    /// 在空局部作用域中推断表达式类型；返回推断结果与本次检查产生的错误。
+    pub fn infer_standalone_expr(&mut self, expr: &HirExpr) -> (HirType, Vec<TypeCheckError>) {
+        self.scopes.push(HashMap::new());
+        let ty = self.check_expr(expr);
+        self.scopes.pop();
+        let errors = std::mem::take(&mut self.errors);
+        (ty, errors)
+    }
+
     pub fn check_program(self, program: &HirProgram) -> Vec<TypeCheckError> {
         self.check_program_with_warnings(program).0
     }
