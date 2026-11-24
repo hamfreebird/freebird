@@ -13,6 +13,8 @@ use std::io::{self, BufRead, Write};
 use serde_json::{Value, json};
 
 use crate::diagnostics::{Diagnostic as FbDiagnostic, DiagnosticLevel, collect_diagnostics};
+use crate::frontend::ast::{Block, CallArg, Decl, Expr, ExternItem, FnDecl, Pattern, Stmt};
+use crate::frontend::token::Span;
 use crate::io::BUILTINS;
 
 /// LSP 服务器状态。
@@ -254,7 +256,7 @@ impl LspServer {
             .and_then(Value::as_str)
             .unwrap_or("");
         Value::Array(
-            word_occurrences(&text, &word)
+            identifier_occurrences(&text, &word)
                 .into_iter()
                 .map(|(line, start, end)| {
                     json!({
@@ -287,7 +289,7 @@ impl LspServer {
             .pointer("/params/textDocument/uri")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let edits: Vec<Value> = word_occurrences(&text, &word)
+        let edits: Vec<Value> = identifier_occurrences(&text, &word)
             .into_iter()
             .map(|(line, start, end)| {
                 json!({
@@ -465,6 +467,220 @@ fn is_identifier(name: &str) -> bool {
 }
 
 /// 查找完整标识符出现位置；返回（0-based 行，UTF-16 起止列）。
+/// 语义优先的标识符出现位置：解析成功时只返回 AST 中的变量引用/绑定，
+/// 解析失败时回退到纯文本匹配。
+fn identifier_occurrences(text: &str, word: &str) -> Vec<(usize, usize, usize)> {
+    match semantic_occurrences(text, word) {
+        Some(occurrences) if !occurrences.is_empty() => occurrences,
+        _ => word_occurrences(text, word),
+    }
+}
+
+/// 基于 AST 收集 `word` 的引用与绑定位置（排除注释/字符串中的同名文本）。
+fn semantic_occurrences(text: &str, word: &str) -> Option<Vec<(usize, usize, usize)>> {
+    let (program, errors) = crate::frontend::parse(text);
+    if !errors.is_empty() {
+        return None;
+    }
+    let mut spans: Vec<Span> = Vec::new();
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => collect_fn_occurrences(f, word, &mut spans),
+            Decl::Impl(i) => {
+                for f in &i.fns {
+                    collect_fn_occurrences(f, word, &mut spans);
+                }
+            }
+            Decl::Trait(t) => {
+                for f in &t.methods {
+                    collect_fn_occurrences(f, word, &mut spans);
+                }
+            }
+            Decl::Extern(e) => {
+                for item in &e.items {
+                    let ExternItem::Fn(f) = item;
+                    collect_fn_occurrences(f, word, &mut spans);
+                }
+            }
+            Decl::Const(c) => collect_expr_occurrences(&c.value, word, &mut spans),
+            _ => {}
+        }
+    }
+    let mut occurrences: Vec<(usize, usize, usize)> = spans
+        .into_iter()
+        .map(|span| {
+            let line = span.line.saturating_sub(1);
+            let start = span.column.saturating_sub(1);
+            let end = start + word.chars().map(|c| c.len_utf16()).sum::<usize>();
+            (line, start, end)
+        })
+        .collect();
+    occurrences.sort_unstable();
+    occurrences.dedup();
+    Some(occurrences)
+}
+
+fn collect_fn_occurrences(f: &FnDecl, word: &str, out: &mut Vec<Span>) {
+    // 函数名本身不是 `Expr::Var`；`fn` 关键字后紧跟一个空格和函数名。
+    if f.name == word {
+        out.push(Span {
+            line: f.span.line,
+            column: f.span.column + 3,
+            byte_pos: f.span.byte_pos + 3,
+            file_id: f.span.file_id,
+        });
+    }
+    for param in &f.params {
+        if param.name == word {
+            out.push(param.span);
+        }
+    }
+    if let Some(body) = &f.body {
+        collect_block_occurrences(body, word, out);
+    }
+}
+
+fn collect_block_occurrences(block: &Block, word: &str, out: &mut Vec<Span>) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let { pattern, init, .. } => {
+                collect_pattern_occurrences(pattern, word, out);
+                if let Some(init) = init {
+                    collect_expr_occurrences(init, word, out);
+                }
+            }
+            Stmt::Expr(expr, _) => collect_expr_occurrences(expr, word, out),
+            Stmt::Assign { target, value, .. } => {
+                collect_expr_occurrences(target, word, out);
+                collect_expr_occurrences(value, word, out);
+            }
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_expr_occurrences(tail, word, out);
+    }
+}
+
+fn collect_pattern_occurrences(pattern: &Pattern, word: &str, out: &mut Vec<Span>) {
+    match pattern {
+        Pattern::Var(name, span) if name == word => out.push(*span),
+        Pattern::Tuple(patterns, _, _) => {
+            for p in patterns {
+                collect_pattern_occurrences(p, word, out);
+            }
+        }
+        Pattern::Struct { fields, .. } => {
+            for p in fields.iter().filter_map(|(_, p)| p.as_ref()) {
+                collect_pattern_occurrences(p, word, out);
+            }
+        }
+        Pattern::Enum {
+            inner: Some(inner), ..
+        } => collect_pattern_occurrences(inner, word, out),
+        Pattern::Enum { inner: None, .. } => {}
+        Pattern::Ref(inner, _, _) => collect_pattern_occurrences(inner, word, out),
+        Pattern::Or(patterns, _) => {
+            for p in patterns {
+                collect_pattern_occurrences(p, word, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_expr_occurrences(expr: &Expr, word: &str, out: &mut Vec<Span>) {
+    match expr {
+        Expr::Var(name, span) if name == word => out.push(*span),
+        Expr::Closure { params, body, .. } => {
+            for param in params {
+                if param.name == word {
+                    out.push(param.span);
+                }
+            }
+            collect_expr_occurrences(body, word, out);
+        }
+        Expr::Deref(e, _)
+        | Expr::Ref(e, _, _)
+        | Expr::Unary(_, e, _)
+        | Expr::FieldAccess(e, _, _)
+        | Expr::As(e, _, _)
+        | Expr::TypeArgs(e, _, _) => collect_expr_occurrences(e, word, out),
+        Expr::Binary(l, _, r, _) | Expr::Index(l, r, _) | Expr::Repeat(l, r, _) => {
+            collect_expr_occurrences(l, word, out);
+            collect_expr_occurrences(r, word, out);
+        }
+        Expr::Call { func, args, .. } => {
+            collect_expr_occurrences(func, word, out);
+            for arg in args {
+                match arg {
+                    CallArg::Pos(e, _) | CallArg::Named(_, e, _) => {
+                        collect_expr_occurrences(e, word, out);
+                    }
+                }
+            }
+        }
+        Expr::Tuple(exprs, _) | Expr::Array(exprs, _) => {
+            for e in exprs {
+                collect_expr_occurrences(e, word, out);
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for (_, e) in fields {
+                collect_expr_occurrences(e, word, out);
+            }
+        }
+        Expr::EnumLit { data: Some(e), .. } => {
+            collect_expr_occurrences(e, word, out);
+        }
+        Expr::EnumLit { data: None, .. } => {}
+        Expr::If(cond, then, else_, _) => {
+            collect_expr_occurrences(cond, word, out);
+            collect_block_occurrences(then, word, out);
+            if let Some(else_) = else_ {
+                collect_block_occurrences(else_, word, out);
+            }
+        }
+        Expr::Match(scrutinee, arms, _) => {
+            collect_expr_occurrences(scrutinee, word, out);
+            for arm in arms {
+                collect_pattern_occurrences(&arm.pattern, word, out);
+                if let Some(guard) = &arm.guard {
+                    collect_expr_occurrences(guard, word, out);
+                }
+                collect_expr_occurrences(&arm.body, word, out);
+            }
+        }
+        Expr::Loop(block, _) | Expr::Unsafe(block, _) => {
+            collect_block_occurrences(block, word, out);
+        }
+        Expr::While(cond, block, _) => {
+            collect_expr_occurrences(cond, word, out);
+            collect_block_occurrences(block, word, out);
+        }
+        Expr::For {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => {
+            collect_pattern_occurrences(pattern, word, out);
+            collect_expr_occurrences(iterable, word, out);
+            collect_block_occurrences(body, word, out);
+        }
+        Expr::Block(block, _) => collect_block_occurrences(block, word, out),
+        Expr::Labelled(_, e, _) => collect_expr_occurrences(e, word, out),
+        Expr::Break(Some(e), _) | Expr::BreakLabel(_, Some(e), _) => {
+            collect_expr_occurrences(e, word, out);
+        }
+        Expr::Return(exprs, _) => {
+            for e in exprs {
+                collect_expr_occurrences(e, word, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn word_occurrences(text: &str, word: &str) -> Vec<(usize, usize, usize)> {
     let mut occurrences = Vec::new();
     if word.is_empty() {
@@ -754,6 +970,19 @@ mod tests {
         let mut reader = std::io::Cursor::new(buffer);
         let parsed = read_message(&mut reader).unwrap().unwrap();
         assert_eq!(parsed, message);
+    }
+
+    #[test]
+    fn semantic_occurrences_ignore_comments_and_strings() {
+        let source = "fn main() {\n    let x = 1;\n    // x in a comment\n    print_str(\"x\");\n    print(x);\n}\n";
+        let occurrences = identifier_occurrences(source, "x");
+        assert_eq!(occurrences.len(), 2, "occurrences: {occurrences:?}");
+        assert!(
+            occurrences
+                .iter()
+                .all(|(line, _, _)| *line == 1 || *line == 4),
+            "unexpected lines: {occurrences:?}"
+        );
     }
 
     #[test]

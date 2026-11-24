@@ -140,7 +140,7 @@
 
 ## 8. M4 工具链与开发者体验（已完成，2026-11-24）
 
-- **M4-1 LSP**：`freebird lsp`（stdio JSON-RPC）：诊断、hover、跳转定义、文档符号、补全；VS Code 扩展通过 `vscode-languageclient` 接入，`freebird.serverPath` 可配置。
+- **M4-1 LSP**：`freebird lsp`（stdio JSON-RPC）：诊断、hover、跳转定义、文档符号、补全；references/rename 基于 AST 的变量/函数绑定（注释与字符串不误报），解析失败时回退文本匹配；hover/definition/documentSymbol/completion 仍为文本级。VS Code 扩展通过 `vscode-languageclient` 接入，`freebird.serverPath` 可配置。
 - **M4-2 DAP**：`freebird dap`（stdio DAP）：launch、setBreakpoints、configurationDone、stackTrace/scopes/variables、continue/next/stepIn/stepOut、pause；基于 `MirInst::Line` 行标记。M6-3.2 起 stdin 由独立线程读取、执行按分片推进，运行中可 `pause`；`variables` 可展开数组/结构体/枚举Payload/Vec/Box，`stackTrace` 每帧带自己的行号。
 - **M4-3 REPL**：多行输入（括号/字符串/块注释未闭合继续）、`:history`/`:run n`、`:load`、`:type`（复用 `typeck::infer_expression_type`）、类型/借用检查后的错误恢复。M6-3.4 起 `let` 绑定跨输入保留（整段会话重放）、历史持久化到状态目录（`FREEBIRD_REPL_HISTORY`/`XDG_STATE_HOME`），不内置行编辑。
 - **M4-4 fmt/lint**：`freebird fmt [--check|--write|--stdin]`；M6-3.5 起除缩进/空行外还做 token 级行内空白整理与 `}`/`else` 合并（保留注释与字符串、幂等、`examples/` 全量可解析）；全树 `cargo fmt` 清理；clippy 清零并纳入 CI（`-D warnings`）。
@@ -148,7 +148,7 @@
 - **M4-6 诊断**：JSON `schema_version: 1`、稳定错误码（P/R/T/B/W）、`related` 位置与修复建议。
 - **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。M6-4.5 起 CI 增加 macOS/Windows 的 `cargo check` 探测（非阻塞）；发布仍只覆盖 Linux x86_64（见 `docs/release.md` §8）。
 - **M4 完成时测试基线**：227 unit + 190 integration；`tests/m4_test.rs` 13 项。
-- **已知限制**：LSP 为文本级 MVP（UTF-16 列近似）；包管理仅单层路径依赖、无锁定文件；格式化器只规范化空白/缩进。
+- **已知限制**：LSP 的 references/rename 已基于 AST 绑定（解析失败回退文本），hover/definition/documentSymbol/completion 仍为文本级（UTF-16 列近似）；包管理仅单层路径依赖、无锁定文件；格式化器只规范化空白/缩进。
 
 ## 9. M5 质量基线（基线已完成，2026-11-24）
 

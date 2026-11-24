@@ -49,6 +49,9 @@
 - **M6-2.5 堆回收上限**：明确维持 Stardust 的保守回收策略，并测量 COW 写入的堆增长
   （约 10 个堆元素/次，1M 上限 ≈ 10 万次写入）；数据与结论写入 ADR 0002，
   `tests/m6_test.rs` 增加 1000 次 COW 压力的双后端一致性护栏。
+- **LSP references/rename 语义化**：references/rename 改为基于 AST 的变量绑定与函数名位置
+  （注释/字符串中的同名文本不再误报），解析失败时回退到原有文本匹配；
+  hover/definition/documentSymbol/completion 仍为文本级。
 - **M6-5.3 trait 静态分发**：新增 `trait Name { fn ...; }` 声明与 `impl Trait for Type { ... }`。
   impl 方法沿用 `Type::name` 扁平化，调用点复用现有用户方法解析（静态分发）；暂不做
   trait 约束检查、`dyn Trait`/vtable 或关联类型。`m6_test` 覆盖双后端输出。
