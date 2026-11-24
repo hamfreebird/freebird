@@ -24,6 +24,11 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 - `typeck` and `borrowck` are wired into `run_source` and `build_stardust`. Do not bypass them when adding new pipeline entry points.
 - `build --target stardust` runs and covers numeric/char values, variables, control flow (`for`/`while`/`loop`, `break`/`continue`), calls, recursion, I/O, `ret n`, scalar `as` casts, and heap-backed arrays/structs/enums/strings/Box/Vec. `file_read`/`file_write` use the bundled interpreter's `FileRead`/`FileWrite` instructions (`,` with 2/3 leading spaces), passing strings as `[chars..., len]`. `Vec`/`String`/`Box` use global heap blocks (`[len, cap, elems...]`), documented in `docs/adr/0001-logical-remote-stack.md`; `&mut` references are backed by heap cells, so writes through `*p = v` propagate back to the original variable (including when the reference is passed to another function). `--target llvm` reuses Stardust's LLVM compiler: it emits Stardust source to a temp file, runs `stardust --compile` (or `clang` for `--emit exe`), and returns the IR/binary. The Stardust binary is looked up via `--stardust-bin` → `STARDUST_BIN` → `PATH` → bundled `stardust/stardust-linux-x86_64` → sibling `../esolang_stardust/target/{release,debug}`. LLVM rejects `file_read`/`file_write` at compile time and inherits Stardust's ASCII-only `CharOut`.
 
+## Tooling
+
+- `freebird fmt` normalises indentation/blank lines (idempotent, comment-preserving).
+- `freebird lsp` serves stdio JSON-RPC (Content-Length framing): diagnostics via `diagnostics::collect_diagnostics`, hover/definition/documentSymbol/completion are text-based MVP implementations in `src/lsp.rs`.
+
 ## Language surface
 
 - Builtins are registered from `src/io.rs::BUILTINS`: `print`/`print_int`, `print_char`, `print_str`, `println_str`, `read_int`, `read_char`, `read_line`, `file_read`, `file_write`, `abs`, `min`, and `max`.

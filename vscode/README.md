@@ -31,3 +31,21 @@ ln -s $(pwd)/vscode ~/.vscode/extensions/freebird-language
 
 Freebird is a stack-based systems programming language with a dual-stack VM.
 See the [Freebird Language Specification](../../readme.md) for details.
+
+## Language server (LSP)
+
+The extension starts `freebird lsp` over stdio and provides:
+
+- diagnostics (parse / resolve / type / borrow) with stable error codes
+- hover (function signatures, builtins, `let` type annotations)
+- go-to-definition for functions, structs, enums, impls and `let` bindings
+- document symbols
+- completion (keywords, builtins, document symbols)
+
+Set `freebird.serverPath` if the binary is not on `PATH`. Build the extension with:
+
+```bash
+cd vscode
+npm install
+npx vsce package
+```

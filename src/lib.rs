@@ -9,6 +9,7 @@ pub mod fmt;
 pub mod frontend;
 pub mod hir;
 pub mod io;
+pub mod lsp;
 pub mod mir;
 pub mod pipeline;
 pub mod repl;

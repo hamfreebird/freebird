@@ -1030,6 +1030,7 @@ fn use_ffi() -> i32 {
 | `freebird build --target llvm --emit exe -o <out> <file.fb>` | 生成 LLVM IR → 可执行文件 |
 | `freebird check <file.fb>` | 语法和类型检查（JSON 诊断输出，含 `schema_version` 与稳定错误码） |
 | `freebird fmt <file.fb>` | 源码格式化（`--check`/`--write`/`--stdin`） |
+| `freebird lsp` | LSP 语言服务（诊断/hover/跳转/符号/补全） |
 | `freebird repl` | 交互式 REPL |
 | `freebird package` | 包管理 |
 

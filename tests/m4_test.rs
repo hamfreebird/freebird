@@ -166,3 +166,81 @@ fn repl_reports_type_errors_and_recovers() {
     assert!(stderr.contains("type error"), "stderr: {stderr}");
     assert!(stdout.contains("=> i32"), "stdout: {stdout}");
 }
+
+// ─── M4-1：LSP ───
+
+fn write_lsp(writer: &mut impl Write, value: &serde_json::Value) {
+    let body = serde_json::to_vec(value).unwrap();
+    write!(writer, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
+    writer.write_all(&body).unwrap();
+    writer.flush().unwrap();
+}
+
+fn read_lsp(reader: &mut impl std::io::BufRead) -> serde_json::Value {
+    let mut length = 0usize;
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(value) = trimmed.strip_prefix("Content-Length:") {
+            length = value.trim().parse().unwrap();
+        }
+    }
+    let mut body = vec![0u8; length];
+    std::io::Read::read_exact(reader, &mut body).unwrap();
+    serde_json::from_slice(&body).unwrap()
+}
+
+#[test]
+fn lsp_stdio_initialize_and_diagnostics() {
+    let mut child = freebird()
+        .arg("lsp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+
+    write_lsp(
+        &mut stdin,
+        &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+    );
+    let initialize = read_lsp(&mut stdout);
+    assert_eq!(initialize["result"]["capabilities"]["hoverProvider"], true);
+    assert_eq!(initialize["result"]["capabilities"]["textDocumentSync"], 1);
+
+    write_lsp(
+        &mut stdin,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": { "textDocument": {
+                "uri": "file:///lsp-test.fb",
+                "languageId": "freebird",
+                "version": 1,
+                "text": "fn main() { let x: i32 = true; }\n"
+            }}
+        }),
+    );
+    let published = read_lsp(&mut stdout);
+    assert_eq!(published["method"], "textDocument/publishDiagnostics");
+    let diagnostics = published["params"]["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics[0]["code"], "T001");
+
+    write_lsp(
+        &mut stdin,
+        &serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "shutdown" }),
+    );
+    let _ = read_lsp(&mut stdout);
+    write_lsp(
+        &mut stdin,
+        &serde_json::json!({ "jsonrpc": "2.0", "method": "exit" }),
+    );
+    drop(stdin);
+    let _ = child.wait();
+}

@@ -42,6 +42,8 @@ enum Command {
     },
     /// 交互式 REPL
     Repl,
+    /// 启动 LSP 语言服务（stdio JSON-RPC，供编辑器使用）
+    Lsp,
     /// 格式化 Freebird 源码（缩进/空白规范化）
     Fmt {
         /// 源文件路径；省略或使用 --stdin 时从标准输入读取
@@ -200,6 +202,12 @@ fn main() {
                 }
             } else {
                 print!("{}", result.output);
+            }
+        }
+        Some(Command::Lsp) => {
+            if let Err(e) = freebird::lsp::LspServer::new().run_stdio() {
+                eprintln!("LSP error: {e}");
+                process::exit(1);
             }
         }
         Some(Command::Repl) => {

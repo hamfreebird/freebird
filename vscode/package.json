@@ -12,21 +12,40 @@
     "Programming Languages"
   ],
   "contributes": {
-    "languages": [{
-      "id": "freebird",
-      "aliases": ["Freebird", "freebird"],
-      "extensions": [".fb"],
-      "configuration": "./language-configuration.json",
-      "icon": {
-        "dark": "./icons/freebird-dark.svg",
-        "light": "./icons/freebird-light.svg"
+    "languages": [
+      {
+        "id": "freebird",
+        "aliases": [
+          "Freebird",
+          "freebird"
+        ],
+        "extensions": [
+          ".fb"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "dark": "./icons/freebird-dark.svg",
+          "light": "./icons/freebird-light.svg"
+        }
       }
-    }],
-    "grammars": [{
-      "language": "freebird",
-      "scopeName": "source.freebird",
-      "path": "./syntaxes/freebird.tmLanguage.json"
-    }]
+    ],
+    "grammars": [
+      {
+        "language": "freebird",
+        "scopeName": "source.freebird",
+        "path": "./syntaxes/freebird.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Freebird",
+      "properties": {
+        "freebird.serverPath": {
+          "type": "string",
+          "default": "freebird",
+          "description": "Path to the freebird executable used for the language server (`freebird lsp`)."
+        }
+      }
+    }
   },
   "repository": {
     "type": "git",
@@ -34,5 +53,18 @@
   },
   "bugs": {
     "url": "https://github.com/hamfreebird/freebird/issues"
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:freebird"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
+  },
+  "scripts": {
+    "vscode:prepublish": "npm install"
   }
 }

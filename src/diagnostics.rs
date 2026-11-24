@@ -447,7 +447,7 @@ pub fn generate_diagnostic_json_with_warnings(
     serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{{}}".to_string())
 }
 
-fn type_warnings_to_diagnostics(warnings: &[TypeCheckWarning]) -> Vec<Diagnostic> {
+pub fn type_warnings_to_diagnostics(warnings: &[TypeCheckWarning]) -> Vec<Diagnostic> {
     warnings
         .iter()
         .map(|warning| {
@@ -511,4 +511,28 @@ mod tests {
         assert!(json.contains("\"error_count\": 1"));
         assert!(json.contains("\"code\": \"T003\""));
     }
+}
+
+/// 收集源码的全部诊断（parse → resolve → type → borrow），供 LSP 复用。
+///
+/// 与 `freebird check` 使用同一套检查顺序：解析/名称解析失败时不再做
+/// 类型与借用检查，避免级联误报。
+pub fn collect_diagnostics(source: &str) -> Vec<Diagnostic> {
+    let (ast, parse_errors) = crate::frontend::parse(source);
+    let (hir, resolve_errors) = crate::hir::lower(&ast);
+
+    let mut diagnostics = frontend_to_diagnostics(&parse_errors);
+    diagnostics.extend(resolve_to_diagnostics(&resolve_errors));
+
+    if parse_errors.is_empty() && resolve_errors.is_empty() {
+        let type_table = crate::typeck::TypeTable::from_ast_decls(&ast.decls);
+        let (type_errors, warnings) = crate::typeck::check_program_with_warnings(&hir, &type_table);
+        diagnostics.extend(type_to_diagnostics(&type_errors));
+        diagnostics.extend(type_warnings_to_diagnostics(&warnings));
+        if type_errors.is_empty() {
+            diagnostics.extend(borrow_to_diagnostics(&crate::borrowck::check_borrow(&hir)));
+        }
+    }
+
+    diagnostics
 }

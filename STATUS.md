@@ -80,6 +80,8 @@
 | `freebird check`（parse → resolve → type → borrow） | ✅ | ✅ | — | `m0_test` + `m4_test`；JSON 含 `schema_version`、稳定错误码、`related` |
 | `freebird build --target stardust` | — | ✅ | — | 集成 |
 | `freebird build --target llvm` | — | — | ✅ IR / 可执行文件 | `m3_test`；支持 `--output`、`--emit ir\|exe`、`--opt-level` |
+| `freebird fmt` | — | — | — | `m4_test`；缩进/空白规范化，`--check/--write/--stdin` |
+| `freebird lsp`（诊断/hover/跳转/符号/补全） | ✅ | ✅ | ✅ | `m4_test` + LSP 单元测试 |
 
 ## 4. M0 退出标准核对
 

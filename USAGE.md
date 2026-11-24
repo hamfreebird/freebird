@@ -109,6 +109,15 @@ LLVM 后端复用 Stardust 的 LLVM 编译器。Stardust 可执行文件按
 - LLVM 后端：`build --target llvm` 生成 LLVM IR 或可执行文件（复用 Stardust 的 LLVM 编译器）。标量/控制流/函数、结构体/数组/枚举/引用/`Vec`/`String`/`Box`、`Option`/`Result`、`impl`、`stardust!` 与 `read_*` 均已与 VM 输出对比通过。**限制**：`file_read`/`file_write` 在 LLVM 目标上编译期拒绝；非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 模式限制；Freebird 的运行时限制属性只影响 VM。
 - 完整的能力矩阵见 `STATUS.md`；VM/Stardust 差分测试见 `tests/differential_test.rs` 与 `tests/m1_test.rs`。
 
+### 语言服务（LSP）
+
+```bash
+freebird lsp
+```
+
+通过 stdio JSON-RPC 提供诊断、hover、跳转定义、文档符号与补全。VS Code 扩展（`vscode/`）
+通过 `freebird.serverPath` 指向该二进制；安装扩展后打开 `.fb` 文件会自动启动服务。
+
 ### 交互式 REPL
 
 ```bash
