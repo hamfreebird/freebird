@@ -5,7 +5,7 @@ use std::rc::Rc;
 use crate::borrowck::check_borrow;
 use crate::codegen::ffi::{stardust_id_for_fn, validate_stardust_id};
 use crate::codegen::stardust::FnInfo;
-use crate::codegen::{StardustGen, optimize_mir};
+use crate::codegen::{StardustGen, constant_leaf_functions, inline_constant_calls, optimize_mir};
 use crate::frontend::{SourceMap, parse, parse_with_file};
 use crate::hir::lower;
 use crate::mir::MirGen;
@@ -1047,12 +1047,18 @@ pub fn compile_ast_with_options(
     let entry = entry.or_else(|| functions.first().map(|(id, _)| *id));
 
     let mut optimized_functions = Vec::with_capacity(functions.len());
-    for (fn_id, mir) in &functions {
-        let mut optimized = mir.clone();
-        if options.optimize {
+    if options.optimize {
+        // 跨函数内联：先收集「零参数、返回常量」的叶子函数，
+        // 再在每个调用点替换为常量 Push（保留 Line 调试标记）。
+        let constants = constant_leaf_functions(&functions);
+        for (fn_id, mir) in &functions {
+            let mut optimized = mir.clone();
+            inline_constant_calls(&mut optimized, &constants);
             optimize_mir(&mut optimized);
+            optimized_functions.push((*fn_id, optimized));
         }
-        optimized_functions.push((*fn_id, optimized));
+    } else {
+        optimized_functions = functions.clone();
     }
 
     // extern 的 Stardust ID 与内部函数名共用同一命名空间（前导空格数）：

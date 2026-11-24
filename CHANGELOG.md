@@ -37,6 +37,9 @@
 - **M6-4.2 持续 fuzz**：`tests/fuzz/corpus/` 内的固定语料（深层递归、长循环、嵌套容器、
   枚举 match、深表达式）在 VM/Stardust 两端差分；`FREEBIRD_FUZZ_SCALE` 控制随机用例数量与
   表达式深度；CI 新增每周定时 `fuzz` job（手动可触发），失败上传最小化后的归档产物。
+- **M6-4.3 MIR 内联**：跨函数识别「零参数、返回单个常量」的叶子函数，在调用点把
+  `CallElement + Call` 替换为常量 `Push`（保留 `Line`）；`--no-opt` 可关闭，
+  `tests/m5_test.rs` 验证调用被消除且 VM/Stardust 输出不变。
 
 ### Fixed
 

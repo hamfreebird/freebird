@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+
+use crate::vm::id::FnId;
 use crate::vm::mir::{MirInst, TypeId};
+use crate::vm::value::Value;
 
 /// MIR 优化器 — 对 MIR 指令序列进行基本优化
 pub fn optimize_mir(mir: &mut Vec<MirInst>) {
@@ -17,6 +21,90 @@ pub fn optimize_mir(mir: &mut Vec<MirInst>) {
             break;
         }
     }
+}
+
+/// 收集「零参数、返回单个常量」的叶子函数：FnId → 常量值。
+///
+/// 判定时忽略调试标记（`Line`）、注释与作用域/标记指令，要求剩余指令恰为
+/// `Push(常量)` + `Ret { argc: 1 }`。这类函数体没有副作用，可以安全内联。
+pub fn constant_leaf_functions(functions: &[(FnId, Vec<MirInst>)]) -> HashMap<FnId, Value> {
+    let mut constants = HashMap::new();
+    for (fn_id, mir) in functions {
+        let mut significant = mir.iter().filter(|inst| {
+            !matches!(
+                inst,
+                MirInst::Line(_)
+                    | MirInst::Comment(_)
+                    | MirInst::EnterScope
+                    | MirInst::ExitScope
+                    | MirInst::Mark(_)
+            )
+        });
+        let Some(MirInst::Push { value, .. }) = significant.next() else {
+            continue;
+        };
+        if matches!(value, Value::CallElement { .. }) {
+            continue;
+        }
+        let Some(MirInst::Ret { argc: 1 }) = significant.next() else {
+            continue;
+        };
+        if significant.next().is_some() {
+            continue;
+        }
+        constants.insert(*fn_id, value.clone());
+    }
+    constants
+}
+
+/// 把「零参数、返回单个常量」的叶子函数调用内联为 `Push(常量)`。
+///
+/// 生成期零参数调用先压 `CallElement { argc: 0 }` 再发 `Call`；命中常量叶子
+/// 函数时把前者替换为常量 `Push` 并删除 `Call`，中间的 `Line`/`Comment` 保留。
+pub fn inline_constant_calls(mir: &mut Vec<MirInst>, constants: &HashMap<FnId, Value>) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    while i < mir.len() {
+        let is_zero_arg_call = matches!(
+            &mir[i],
+            MirInst::Push {
+                value: Value::CallElement { argc: 0 },
+                ..
+            }
+        );
+        if !is_zero_arg_call {
+            i += 1;
+            continue;
+        }
+        let mut call_index = i + 1;
+        while call_index < mir.len()
+            && matches!(mir[call_index], MirInst::Line(_) | MirInst::Comment(_))
+        {
+            call_index += 1;
+        }
+        let target = match mir.get(call_index) {
+            Some(MirInst::Call {
+                fn_id,
+                return_arity: 1,
+            }) => *fn_id,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let Some(value) = constants.get(&target).cloned() else {
+            i += 1;
+            continue;
+        };
+        mir[i] = MirInst::Push {
+            value,
+            ty: TypeId::Unknown,
+        };
+        mir.remove(call_index);
+        changed = true;
+        i += 1;
+    }
+    changed
 }
 
 /// 无副作用跳转消除：
@@ -389,5 +477,81 @@ mod tests {
         optimize_mir(&mut mir);
         assert!(matches!(mir[0], MirInst::Line(7)));
         assert_eq!(mir.len(), 2);
+    }
+
+    #[test]
+    fn inline_constant_calls_replaces_zero_arg_call() {
+        let mut caller = vec![
+            MirInst::Line(3),
+            MirInst::Push {
+                value: Value::CallElement { argc: 0 },
+                ty: TypeId::Unknown,
+            },
+            MirInst::Call {
+                fn_id: FnId(2),
+                return_arity: 1,
+            },
+        ];
+        let mut constants = HashMap::new();
+        constants.insert(FnId(2), Value::I64(7));
+        assert!(inline_constant_calls(&mut caller, &constants));
+        assert_eq!(caller.len(), 2);
+        assert!(matches!(caller[0], MirInst::Line(3)));
+        assert!(matches!(
+            &caller[1],
+            MirInst::Push {
+                value: Value::I64(7),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn constant_leaf_functions_only_accepts_constant_bodies() {
+        let functions = vec![
+            (
+                FnId(1),
+                vec![
+                    MirInst::Line(1),
+                    MirInst::EnterScope,
+                    MirInst::Push {
+                        value: Value::I64(5),
+                        ty: TypeId::Unknown,
+                    },
+                    MirInst::Ret { argc: 1 },
+                ],
+            ),
+            (
+                FnId(2),
+                vec![
+                    MirInst::Push {
+                        value: Value::I64(1),
+                        ty: TypeId::Unknown,
+                    },
+                    MirInst::Push {
+                        value: Value::I64(2),
+                        ty: TypeId::Unknown,
+                    },
+                    MirInst::Add {
+                        ty: TypeId::Unknown,
+                    },
+                    MirInst::Ret { argc: 1 },
+                ],
+            ),
+            (
+                FnId(3),
+                vec![
+                    MirInst::Push {
+                        value: Value::I64(0),
+                        ty: TypeId::Unknown,
+                    },
+                    MirInst::Ret { argc: 0 },
+                ],
+            ),
+        ];
+        let constants = constant_leaf_functions(&functions);
+        assert_eq!(constants.get(&FnId(1)), Some(&Value::I64(5)));
+        assert!(!constants.contains_key(&FnId(2)));
+        assert!(!constants.contains_key(&FnId(3)));
     }
 }

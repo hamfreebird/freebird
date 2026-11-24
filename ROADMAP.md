@@ -253,7 +253,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | ID | 工作项 | 验收标准 | 状态 |
 |---|---|---|---|
 | M5-1 | 基准套件：VM 启动/算术/调用/集合；Stardust 生成代码体积与运行时间；LLVM 对比 | 基准数据入库；回归超过阈值时 CI 警告 | ✅ `freebird-bench` + `bench/baseline.json` + 非阻塞 CI job |
-| M5-2 | MIR 优化：常量折叠、死代码消除、分支简化、内联（谨慎）；保持可关闭 | 优化前后输出一致；有优化开关和测试 | ✅ `--no-opt`；常量跳转/无用跳转/比较折叠；内联暂缓 |
+| M5-2 | MIR 优化：常量折叠、死代码消除、分支简化、内联（谨慎）；保持可关闭 | 优化前后输出一致；有优化开关和测试 | ✅ `--no-opt`；常量跳转/无用跳转/比较折叠；M6-4.3 补零参常量叶子内联 |
 | M5-3 | 模糊测试/属性测试：parser、typeck、MIR、VM；差分 fuzz | 持续运行 corpus；崩溃/差异自动最小化并归档 | ✅ 固定 seed 差分 + 坏输入 + 最小化归档；M6-4.2 起有固定 corpus 与定时 job |
 | M5-4 | 内存与 UB 审计：Rust `unsafe` 代码、Miri、sanitizer（可用时）；堆/远程栈生命周期 | 审计记录；关键路径无未解释 UB | ✅ 无 Rust unsafe；Miri 后续在 M6-4.1 接入 CI（本地 stable 不可用），记录在案 |
 | M5-5 | 测试基础设施：`tests/programs` 自动发现、fixture 命名规范、快照更新流程 | 新增 `.fb` 自动进入测试；不再有未使用 fixture | ✅ fixture 检查 + 诊断快照 |
@@ -298,7 +298,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | `fmt` 只做空白/缩进规范化 | M6-3.5（已解决：token 级行内空白 + `}`/`else` 合并） |
 | Miri/sanitizer 未接入 CI | M6-4.1（已解决：CI `miri` job，非阻塞过渡期） |
 | fuzz 为固定 seed 的有限 smoke | M6-4.2（已解决：`tests/fuzz/corpus` + 定时 job） |
-| MIR 无内联优化 | M6-4.3 |
+| MIR 无内联优化 | M6-4.3（已解决：零参常量叶子函数内联） |
 | bench 仅告警、非门禁 | M6-4.4 |
 | 仅 Linux x86_64 验证/发布 | M6-4.5 |
 | 泛型无约束/单态化 | M6-5.1 |
@@ -341,7 +341,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 |---|---|---|
 | M6-4.1 | Miri/sanitizer CI：nightly job 跑核心模块 Miri；ASan/UBSan 可选 | CI 有独立 job；已知问题清零或基线化；不阻塞主门禁的过渡期明确（P1，已完成：`miri` job + release.md §7 策略；ASan 未接入并记录原因） |
 | M6-4.2 | 持续 fuzz：`tests/fuzz/corpus` 与定时 job，扩展深层递归/长输入 | 定时运行；失败自动归档/最小化；corpus 可重现（P2，已完成：corpus 差分测试 + `FREEBIRD_FUZZ_SCALE` + 每周定时 job） |
-| M6-4.3 | MIR 内联与更多优化：小函数内联、分支简化、死代码；保留开关与 `Line` | 优化前后输出一致；指令数/bench 改善；`--no-opt` 可关闭（P2） |
+| M6-4.3 | MIR 内联与更多优化：小函数内联、分支简化、死代码；保留开关与 `Line` | 优化前后输出一致；指令数/bench 改善；`--no-opt` 可关闭（P2，已完成：零参常量叶子函数调用点内联；死代码/分支简化沿用既有优化；`--no-opt` 关闭） |
 | M6-4.4 | bench 门禁：稳定 runner/阈值，或明确保持告警并记录噪声基线 | 阈值可复现；CI 策略写入文档（P2） |
 | M6-4.5 | 跨平台：macOS/Windows 构建与发布（含 Stardust 工具链可用性） | CI 矩阵；release 多平台产物，或明确仅 Linux 的结论（P2） |
 

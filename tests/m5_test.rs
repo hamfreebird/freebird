@@ -5,8 +5,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use freebird::{
-    CompileOptions, RuntimeConfig, build_stardust, build_stardust_with_options, check_source,
-    compile_program_with_options, run_source,
+    CompileOptions, MirInst, RuntimeConfig, build_stardust, build_stardust_with_options,
+    check_source, compile_program_with_options, run_source,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -259,6 +259,44 @@ fn random_programs_match_across_backends() {
             );
         }
     }
+}
+
+#[test]
+fn inlining_constant_leaf_functions_removes_calls() {
+    let source = "fn zero() -> i64 { 0 }\nfn answer() -> i64 { 42 }\nfn main() { print(zero() + answer()); }";
+    let count_calls = |program: &freebird::CompiledProgram| {
+        program
+            .functions
+            .iter()
+            .map(|(_, mir)| {
+                mir.iter()
+                    .filter(|inst| matches!(inst, MirInst::Call { .. }))
+                    .count()
+            })
+            .sum::<usize>()
+    };
+    let optimized = compile_program_with_options(source, CompileOptions { optimize: true })
+        .expect("optimized compile");
+    let unoptimized = compile_program_with_options(source, CompileOptions { optimize: false })
+        .expect("unoptimized compile");
+    assert!(
+        count_calls(&unoptimized) >= 2,
+        "unoptimized program should still call the helpers"
+    );
+    assert_eq!(
+        count_calls(&optimized),
+        0,
+        "zero-arg constant leaf calls should be inlined"
+    );
+
+    // 内联是语义保持的：VM 与 Stardust 输出一致。
+    let vm = run_source(source, RuntimeConfig::test()).expect("vm run");
+    let stardust = build_stardust(source).expect("stardust build");
+    assert_eq!(
+        run_stardust_source(&stardust).expect("stardust run"),
+        vm,
+        "inlining must not change output"
+    );
 }
 
 #[test]
