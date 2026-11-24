@@ -77,7 +77,7 @@
 | `extern` 函数调用（FFI） | ❌ 运行时明确报错 | ✅ 生成真实 `Call` | 🟡 需外部 Stardust 定义参与链接 | `m3_test` |
 | `#id` / `ElementId` 表达式 | ❌ 已从规范移除（§4.3） | ❌ 同上 | ❌ | `m0_test` |
 | `use` / 文件级模块（`mod`、`pub`） | ✅ | ✅ | ✅ 前端展开 | `m2_test` |
-| `freebird check`（parse → resolve → type → borrow） | ✅ | ✅ | — | `m0_test`；JSON 含 `warning_count` |
+| `freebird check`（parse → resolve → type → borrow） | ✅ | ✅ | — | `m0_test` + `m4_test`；JSON 含 `schema_version`、稳定错误码、`related` |
 | `freebird build --target stardust` | — | ✅ | — | 集成 |
 | `freebird build --target llvm` | — | — | ✅ IR / 可执行文件 | `m3_test`；支持 `--output`、`--emit ir\|exe`、`--opt-level` |
 

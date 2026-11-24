@@ -1028,11 +1028,14 @@ fn use_ffi() -> i32 {
 | `freebird build --target stardust <file.fb>` | 编译为 Stardust 源码（可在 Stardust 解释器运行） |
 | `freebird build --target llvm <file.fb>` | 编译为 LLVM IR（`-o` 写文件，默认打印到 stdout） |
 | `freebird build --target llvm --emit exe -o <out> <file.fb>` | 生成 LLVM IR → 可执行文件 |
-| `freebird check <file.fb>` | 语法和类型检查（JSON 诊断输出） |
+| `freebird check <file.fb>` | 语法和类型检查（JSON 诊断输出，含 `schema_version` 与稳定错误码） |
+| `freebird fmt <file.fb>` | 源码格式化（`--check`/`--write`/`--stdin`） |
 | `freebird repl` | 交互式 REPL |
 | `freebird package` | 包管理 |
 
 源文件扩展名：`.fb`
+
+`freebird check` 输出 JSON：顶层 `schema_version`（当前 1）、`source`、`errors`、`error_count`、`warning_count`；每条诊断含 `level`、`code`、`message`、`span`、可选 `suggestion`/`related`。错误码前缀：`P` 词法/语法、`R` 名称解析、`T` 类型、`B` 借用、`W` 警告。
 
 ---
 

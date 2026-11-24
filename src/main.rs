@@ -163,20 +163,22 @@ fn main() {
                 eprintln!("Error: `--write` requires a file path.");
                 process::exit(1);
             }
-            let (path, source) = if stdin || file.is_none() {
-                let mut source = String::new();
-                if let Err(e) = io::stdin().read_to_string(&mut source) {
-                    eprintln!("Error reading stdin: {e}");
-                    process::exit(1);
+            let (path, source) = match (stdin, file) {
+                (false, Some(path)) => {
+                    let source = fs::read_to_string(&path).unwrap_or_else(|e| {
+                        eprintln!("Error reading {}: {e}", path.display());
+                        process::exit(1);
+                    });
+                    (Some(path), source)
                 }
-                (None, source)
-            } else {
-                let path = file.unwrap();
-                let source = fs::read_to_string(&path).unwrap_or_else(|e| {
-                    eprintln!("Error reading {}: {e}", path.display());
-                    process::exit(1);
-                });
-                (Some(path), source)
+                _ => {
+                    let mut source = String::new();
+                    if let Err(e) = io::stdin().read_to_string(&mut source) {
+                        eprintln!("Error reading stdin: {e}");
+                        process::exit(1);
+                    }
+                    (None, source)
+                }
             };
 
             let result = freebird::fmt::format_source_checked(&source);

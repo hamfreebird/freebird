@@ -5,7 +5,7 @@
 use serde::Serialize;
 
 use crate::borrowck::checker::BorrowError;
-use crate::frontend::error::FrontendError;
+use crate::frontend::error::{FrontendError, FrontendErrorKind};
 use crate::frontend::token::Span;
 use crate::hir::resolver::ResolveError;
 use crate::typeck::{TypeCheckError, TypeCheckWarning};
@@ -24,12 +24,23 @@ pub enum DiagnosticLevel {
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
     pub level: DiagnosticLevel,
+    /// 稳定错误码（P/R/T/B/W + 三位数字）。
+    pub code: &'static str,
     pub message: String,
     pub span: SourceSpan,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub related: Vec<RelatedLocation>,
+}
+
+/// 相关位置（例如重复定义第一次出现的位置）。
+#[derive(Debug, Clone, Serialize)]
+pub struct RelatedLocation {
+    pub message: String,
+    pub span: SourceSpan,
 }
 
 /// 源码位置
@@ -54,16 +65,128 @@ impl SourceSpan {
     }
 }
 
+/// 前端/词法/语法错误码。
+fn frontend_code(kind: &FrontendErrorKind) -> &'static str {
+    match kind {
+        FrontendErrorKind::UnterminatedString => "P001",
+        FrontendErrorKind::UnterminatedChar => "P002",
+        FrontendErrorKind::InvalidCharEscape(_) => "P003",
+        FrontendErrorKind::InvalidEscapeSequence(_) => "P004",
+        FrontendErrorKind::UnexpectedChar(_) => "P005",
+        FrontendErrorKind::InvalidNumber(_) => "P006",
+        FrontendErrorKind::UnexpectedToken { .. } => "P007",
+        FrontendErrorKind::UnexpectedEof { .. } => "P008",
+        FrontendErrorKind::DuplicateField { .. } => "P009",
+        FrontendErrorKind::UnknownAttribute(_) => "P010",
+        FrontendErrorKind::MissingAttributeArg(_) => "P011",
+        FrontendErrorKind::InvalidAttributeValue { .. } => "P012",
+        FrontendErrorKind::InvalidRetOperand { .. } => "P013",
+        FrontendErrorKind::UnknownStardustInstruction(_) => "P014",
+        FrontendErrorKind::MixedCallArgs(_) => "P015",
+    }
+}
+
+/// 名称解析错误码。
+fn resolve_code(error: &ResolveError) -> &'static str {
+    match error {
+        ResolveError::UndefinedVariable { .. } => "R001",
+        ResolveError::ForwardReference { .. } => "R002",
+        ResolveError::DuplicateDefinition { .. } => "R003",
+        ResolveError::DuplicateField { .. } => "R004",
+        ResolveError::ArgumentCountMismatch { .. } => "R005",
+        ResolveError::CannotAssignToImmutable { .. } => "R006",
+        ResolveError::InvalidAssignmentTarget { .. } => "R007",
+    }
+}
+
+/// 类型检查错误码。
+fn type_code(error: &TypeCheckError) -> &'static str {
+    match error {
+        TypeCheckError::TypeMismatch { .. } => "T001",
+        TypeCheckError::UnknownType { .. } => "T002",
+        TypeCheckError::ConditionNotBool { .. } => "T003",
+        TypeCheckError::NotCallable { .. } => "T004",
+        TypeCheckError::UnknownFunction { .. } => "T005",
+        TypeCheckError::UnknownField { .. } => "T006",
+        TypeCheckError::UnknownVariant { .. } => "T007",
+        TypeCheckError::UnknownStruct { .. } => "T008",
+        TypeCheckError::ArgumentCountMismatch { .. } => "T009",
+        TypeCheckError::ReturnArityMismatch { .. } => "T010",
+        TypeCheckError::LoopControlOutsideLoop { .. } => "T011",
+        TypeCheckError::UnknownLoopLabel { .. } => "T012",
+        TypeCheckError::BreakWithValue { .. } => "T013",
+        TypeCheckError::LoopUsedAsValue { .. } => "T014",
+        TypeCheckError::NonExhaustiveMatch { .. } => "T015",
+        TypeCheckError::MissingFunctionBody { .. } => "T016",
+        TypeCheckError::ExternCallOutsideUnsafe { .. } => "T017",
+        TypeCheckError::UnsupportedFeature { .. } => "T018",
+        TypeCheckError::UnknownAttribute { .. } => "T019",
+        TypeCheckError::InvalidAttribute { .. } => "T020",
+        TypeCheckError::RefutableLetPattern { .. } => "T021",
+        TypeCheckError::OrPatternBindingMismatch { .. } => "T022",
+        TypeCheckError::GenericArgMismatch { .. } => "T023",
+    }
+}
+
+/// 借用检查错误码。
+fn borrow_code(error: &BorrowError) -> &'static str {
+    match error {
+        BorrowError::UseAfterMove { .. } => "B001",
+        BorrowError::UseWhileBorrowedMut { .. } => "B002",
+        BorrowError::BorrowWhileBorrowedMut { .. } => "B003",
+        BorrowError::MutBorrowWhileBorrowed { .. } => "B004",
+        BorrowError::MoveWhileBorrowed { .. } => "B005",
+        BorrowError::CannotAssignToImmutable { .. } => "B006",
+    }
+}
+
 /// 将前端错误转换为诊断消息
 pub fn frontend_to_diagnostics(errors: &[FrontendError]) -> Vec<Diagnostic> {
     errors
         .iter()
-        .map(|e| Diagnostic {
-            level: DiagnosticLevel::Error,
-            message: format!("{e}"),
-            span: SourceSpan::from_span(e.span),
-            notes: vec![],
-            suggestion: None,
+        .map(|e| {
+            let related = match &e.kind {
+                FrontendErrorKind::DuplicateField { name, first } => vec![RelatedLocation {
+                    message: format!("`{name}` first defined here"),
+                    span: SourceSpan::from_span(*first),
+                }],
+                _ => Vec::new(),
+            };
+            let suggestion = match &e.kind {
+                FrontendErrorKind::InvalidCharEscape(_)
+                | FrontendErrorKind::InvalidEscapeSequence(_) => Some(
+                    "use a supported escape sequence (`\\n`, `\\t`, `\\\\`, `\\'`, `\\\"`)"
+                        .to_string(),
+                ),
+                FrontendErrorKind::UnknownAttribute(_) => {
+                    Some("remove the attribute or use a documented attribute".to_string())
+                }
+                FrontendErrorKind::MissingAttributeArg(_) => {
+                    Some("add the missing attribute argument".to_string())
+                }
+                FrontendErrorKind::InvalidAttributeValue { .. } => {
+                    Some("use a value documented for this attribute".to_string())
+                }
+                FrontendErrorKind::UnknownStardustInstruction(_) => {
+                    Some("see readme.md §10.3 for the supported instruction list".to_string())
+                }
+                FrontendErrorKind::InvalidRetOperand { .. } => Some(
+                    "`ret` expects an integer literal; use `return` for expressions".to_string(),
+                ),
+                FrontendErrorKind::MixedCallArgs(_) => {
+                    Some("use either all positional or all named arguments".to_string())
+                }
+                _ => None,
+            };
+            Diagnostic {
+                level: DiagnosticLevel::Error,
+                code: frontend_code(&e.kind),
+                message: format!("{e}"),
+                span: SourceSpan::from_span(e.span),
+                notes: vec![],
+                suggestion,
+                related,
+            }
         })
         .collect()
 }
@@ -111,12 +234,25 @@ pub fn resolve_to_diagnostics(errors: &[ResolveError]) -> Vec<Diagnostic> {
                     ),
                 ),
             };
+            let related = match e {
+                ResolveError::DuplicateDefinition { name, first, .. } => vec![RelatedLocation {
+                    message: format!("`{name}` first defined here"),
+                    span: SourceSpan::from_span(*first),
+                }],
+                ResolveError::DuplicateField { name, first, .. } => vec![RelatedLocation {
+                    message: format!("field `{name}` first defined here"),
+                    span: SourceSpan::from_span(*first),
+                }],
+                _ => Vec::new(),
+            };
             Diagnostic {
                 level: DiagnosticLevel::Error,
+                code: resolve_code(e),
                 message: format!("{e}"),
                 span: SourceSpan::from_span(span),
                 notes: vec![],
                 suggestion,
+                related,
             }
         })
         .collect()
@@ -202,10 +338,12 @@ pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
             };
             Diagnostic {
                 level: DiagnosticLevel::Error,
+                code: type_code(e),
                 message: format!("{e}"),
                 span: SourceSpan::from_span(e.span()),
                 notes: vec![],
                 suggestion,
+                related: Vec::new(),
             }
         })
         .collect()
@@ -245,10 +383,12 @@ pub fn borrow_to_diagnostics(errors: &[BorrowError]) -> Vec<Diagnostic> {
             };
             Diagnostic {
                 level: DiagnosticLevel::Error,
+                code: borrow_code(e),
                 message: format!("{e}"),
                 span: SourceSpan::from_span(span),
                 notes: vec![],
                 suggestion,
+                related: Vec::new(),
             }
         })
         .collect()
@@ -297,6 +437,7 @@ pub fn generate_diagnostic_json_with_warnings(
         .filter(|diagnostic| matches!(diagnostic.level, DiagnosticLevel::Warning))
         .count();
     let report = DiagnosticReport {
+        schema_version: 1,
         source: source.to_string(),
         errors: diagnostics,
         error_count,
@@ -315,10 +456,12 @@ fn type_warnings_to_diagnostics(warnings: &[TypeCheckWarning]) -> Vec<Diagnostic
             };
             Diagnostic {
                 level: DiagnosticLevel::Warning,
+                code: "W001",
                 message: warning.to_string(),
                 span: SourceSpan::from_span(span),
                 notes: Vec::new(),
                 suggestion: None,
+                related: Vec::new(),
             }
         })
         .collect()
@@ -326,6 +469,8 @@ fn type_warnings_to_diagnostics(warnings: &[TypeCheckWarning]) -> Vec<Diagnostic
 
 #[derive(Serialize)]
 struct DiagnosticReport {
+    /// 诊断 JSON 的 schema 版本；字段只增不改，破坏性变更时递增。
+    schema_version: u32,
     source: String,
     errors: Vec<Diagnostic>,
     error_count: usize,
@@ -341,6 +486,7 @@ mod tests {
     fn test_empty_diagnostics() {
         let json = generate_diagnostic_json("", &[], &[], &[], &[]);
         assert!(json.contains("\"error_count\": 0"));
+        assert!(json.contains("\"schema_version\": 1"));
     }
 
     #[test]
@@ -351,6 +497,7 @@ mod tests {
         )];
         let json = generate_diagnostic_json("@", &errors, &[], &[], &[]);
         assert!(json.contains("unexpected character"));
+        assert!(json.contains("\"code\": \"P005\""));
     }
 
     #[test]
@@ -362,5 +509,6 @@ mod tests {
         let json = generate_diagnostic_json("", &[], &[], &errors, &[]);
         assert!(json.contains("condition must be bool"));
         assert!(json.contains("\"error_count\": 1"));
+        assert!(json.contains("\"code\": \"T003\""));
     }
 }

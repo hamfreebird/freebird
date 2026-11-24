@@ -87,3 +87,31 @@ fn fmt_reads_stdin() {
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout), FORMATTED);
 }
+
+// ─── M4-6：诊断 JSON ───
+
+#[test]
+fn check_json_has_stable_codes_and_schema() {
+    let path = temp_path("diag-type.fb");
+    std::fs::write(&path, "fn main() { let x: i32 = true; }\n").unwrap();
+    let output = freebird().arg("check").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("\"schema_version\": 1"));
+    assert!(text.contains("\"code\": \"T001\""));
+    assert!(text.contains("\"suggestion\""));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn check_json_reports_related_locations() {
+    let path = temp_path("diag-dup.fb");
+    std::fs::write(&path, "fn main() { let x = 1; let x = 2; }\n").unwrap();
+    let output = freebird().arg("check").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("\"code\": \"R003\""));
+    assert!(text.contains("\"related\""));
+    assert!(text.contains("first defined here"));
+    let _ = std::fs::remove_file(path);
+}

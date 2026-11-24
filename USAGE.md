@@ -34,7 +34,29 @@ freebird run --debug hello.fb  # 调试模式
 freebird check hello.fb        # JSON 诊断输出
 ```
 
-`check` 与 `run`/`build` 执行同一套前端检查：`parse` → 名称解析 → 类型检查 → 借用/移动检查。发现问题时退出码为 1；诊断中包含行、列和修复建议。警告（如不可达 `match` 分支）以 `warning` 级别输出，JSON 包含 `error_count` 与 `warning_count`；只有错误会使退出码非 0。
+`check` 与 `run`/`build` 执行同一套前端检查：`parse` → 名称解析 → 类型检查 → 借用/移动检查。发现问题时退出码为 1；警告（如不可达 `match` 分支）以 `warning` 级别输出，只有错误会使退出码非 0。
+
+诊断 JSON 的顶层字段：
+
+| 字段 | 说明 |
+|---|---|
+| `schema_version` | 当前为 `1`；字段只增不改，破坏性变更时递增 |
+| `source` | 被检查的源码 |
+| `errors` | 诊断数组 |
+| `error_count` / `warning_count` | 错误/警告数量 |
+
+每条诊断包含 `level`、`code`、`message`、`span`（1-based 行列），以及可选的 `notes`、`suggestion`、`related`（相关位置）。`code` 为稳定错误码：`P` 词法/语法、`R` 名称解析、`T` 类型、`B` 借用、`W` 警告（如 `T001` 类型不匹配、`R003` 重复定义）。
+
+### 格式化
+
+```bash
+freebird fmt hello.fb            # 打印格式化结果
+freebird fmt --write hello.fb    # 写回文件
+freebird fmt --check hello.fb    # 只检查（未格式化时退出码 1）
+freebird fmt --stdin < hello.fb  # 从标准输入读取
+```
+
+格式化器只规范化缩进（4 空格/层级）、行尾空白、连续空行与 CRLF，保留注释与字符串内容；输出幂等且可再次解析。
 
 ### 编译
 

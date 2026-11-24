@@ -41,6 +41,8 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 
 ## I/O quirks
 
+- `freebird check` emits JSON with `schema_version: 1`; every diagnostic has a stable `code` (`P`/`R`/`T`/`B`/`W` + three digits), a 1-based `span`, optional `suggestion` and `related` locations. Keep codes stable when changing diagnostics.
+
 - `run_source` returns VM output bytes; the CLI prints them once. Assert against the returned bytes rather than process stdout.
 - Stardust `read_line` decodes UTF-8 into a growable character block (starts at 16 characters, doubles as needed); invalid leading/continuation bytes and overlong/surrogate/out-of-range code points become U+FFFD byte-for-byte like `String::from_utf8_lossy`. A line ends at `\n`, and trailing `\r` characters are trimmed, so CRLF input matches VM (`read_line` trims `\n`/`\r`). EOF differs: VM returns an empty string, while the interpreter's `CharIn` aborts with an I/O error.
 - VM and Stardust both resolve `&mut` writes across call frames: `fn set(p: &mut i64) { *p = 42; }` propagates back to the caller's variable.
