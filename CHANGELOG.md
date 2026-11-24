@@ -40,6 +40,9 @@
 - **M6-4.3 MIR 内联**：跨函数识别「零参数、返回单个常量」的叶子函数，在调用点把
   `CallElement + Call` 替换为常量 `Push`（保留 `Line`）；`--no-opt` 可关闭，
   `tests/m5_test.rs` 验证调用被消除且 VM/Stardust 输出不变。
+- **M6-4.4 bench 噪声基线**：新增 `bench/README.md`，记录测量方式（计时项三次取中位数）、
+  本机连续 `--check --tolerance 2.5` 的噪声基线、阈值策略（本地 1.5x / CI 2.5x）与复现步骤；
+  bench 仍是非阻塞告警。
 
 ### Fixed
 

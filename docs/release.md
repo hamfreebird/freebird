@@ -79,7 +79,7 @@ python3 scripts/check-docs.py
 | `test` | 是 | `cargo fmt --check`、`clippy -D warnings`、`cargo test`、文档链接/一致性、fixture、MIR 占位符、examples 冒烟 |
 | `differential` | 是 | VM/Stardust 差分测试 |
 | `llvm` | 是 | 安装 clang 后跑 `m3_test`（bundled Stardust 工具链） |
-| `bench` | 否 | 基准受机器噪声影响，`--tolerance 2.5`，只告警 |
+| `bench` | 否 | 基准受机器噪声影响，`--tolerance 2.5`，只告警；噪声基线与复现方法见 [`bench/README.md`](../bench/README.md) |
 | `miri` | 否（过渡期） | nightly + `cargo miri setup`，仅跑核心模块 `vm::`/`mir::`/`borrowck::` |
 | `fuzz` | 否（仅定时/手动） | 每周一 03:00 UTC + `workflow_dispatch`；`FREEBIRD_FUZZ_SCALE=10` 跑 `tests/m5_test.rs`（固定 corpus + 随机用例），失败上传 `target/fuzz-failures` |
 
