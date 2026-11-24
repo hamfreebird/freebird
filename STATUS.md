@@ -74,7 +74,7 @@
 |---|---|---|---|---|
 | `#[key=value]`、`#[key(value)]` 属性解析 | ✅ | ✅ | — | 属性挂到函数/结构体/枚举声明 |
 | `#[stardust(id = N)]` | ✅ 解析/校验 | ✅ 生成 `Call(id, argc)` | ✅ 生成 `Call(id, argc)` | `m0_test` + `m3_test` |
-| `#[max_stack]` / `#[max_call_depth]` / `#[max_steps]` / `#[time_limit]` | ✅ 读取 `main` 属性并生效 | ❌ 仅接受、不生成限制 | ❌ | `m0_test`（VM） |
+| `#[max_stack]` / `#[max_call_depth]` / `#[max_steps]` / `#[time_limit]` | ✅ 读取 `main` 属性并生效 | ✅ 生成同名注解并生效 | 🟡 编译链继承，运行时限制未验证 | `m0_test`（VM）+ `m6_test`（Stardust） |
 | 未知/非法属性诊断 | ✅ 编译期 | ✅ 编译期 | — | `m0_test` |
 | 无函数体的普通 `fn` | ❌ 编译期拒绝 | ❌ 编译期拒绝 | — | `m0_test` |
 | `extern "stardust"` 声明 | ✅ 解析 | ✅ 解析 | ✅ 解析 | `m0_test` |
@@ -127,7 +127,8 @@
   `read_int`/`read_char`/`read_line`。`m3_test` 有 16 个 VM/LLVM 输出对比测试。
 - **LLVM 限制**：文件 I/O（`file_read`/`file_write`）已在 M6-2.1 支持（运行时按 UTF-8 编解码，
   失败路径以非零状态退出）；Unicode `CharOut` 已支持（bundled Stardust 更新）；
-  `read_line` 在 EOF 报 I/O 错误（与 VM 一致）；Freebird 的运行时限制属性只影响 VM。
+  `read_line` 在 EOF 报 I/O 错误（与 VM 一致）；Freebird 的运行时限制属性会生成 Stardust 注解，
+  VM 与 Stardust 解释器均生效（`m6_test`），LLVM 路径未验证。
 - **Stardust FFI**：`extern "stardust"` + `#[stardust(id = N)]` 生成真实 `Call(id, argc)`；
   省略 `id` 时按函数名做 SipHash-2-4 并映射到 `1..=999`（ID 即 Stardust 前导空格数）。
   调用必须在 `unsafe` 块内；重复/过大 ID 编译期报错；内部函数名自动避开 extern ID。

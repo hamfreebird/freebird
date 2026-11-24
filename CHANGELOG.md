@@ -49,6 +49,9 @@
 - **M6-2.5 堆回收上限**：明确维持 Stardust 的保守回收策略，并测量 COW 写入的堆增长
   （约 10 个堆元素/次，1M 上限 ≈ 10 万次写入）；数据与结论写入 ADR 0002，
   `tests/m6_test.rs` 增加 1000 次 COW 压力的双后端一致性护栏。
+- **Stardust 运行时限制注解**：`main` 上的 `#[max_stack]`/`#[max_call_depth]`/`#[max_steps]`/
+  `#[time_limit]` 现在会写入生成源码顶部（如 `#[max_steps=1000]`），由 Stardust 解释器在
+  词法分析前读取并执行；VM 与 Stardust 均生效（`m6_test`）。LLVM 路径未验证。
 - **LSP references/rename 语义化**：references/rename 改为基于 AST 的变量绑定与函数名位置
   （注释/字符串中的同名文本不再误报），解析失败时回退到原有文本匹配；
   hover/definition/documentSymbol/completion 仍为文本级。

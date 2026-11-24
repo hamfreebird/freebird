@@ -874,6 +874,40 @@ fn apply_runtime_attributes(program: &crate::hir::types::HirProgram, config: &mu
     }
 }
 
+/// `main` 上的运行时限制属性 → Stardust 注解行（`#[max_steps=N]` 等）。
+///
+/// 只输出显式声明的属性；解释器在词法分析前提取并执行这些限制。
+fn runtime_annotations(program: &crate::hir::types::HirProgram) -> Vec<String> {
+    use crate::frontend::ast::AttributeArg;
+
+    let main = program.decls.iter().find_map(|decl| match decl {
+        crate::hir::types::HirDecl::Fn(f) if f.name == "main" => Some(f),
+        _ => None,
+    });
+    let Some(main) = main else {
+        return Vec::new();
+    };
+
+    let mut annotations = Vec::new();
+    for attr in &main.attrs {
+        let value = attr.args.iter().find_map(|arg| match arg {
+            AttributeArg::KeyValue(key, value) if key == &attr.name => Some(value.as_str()),
+            AttributeArg::Value(value) => Some(value.as_str()),
+            _ => None,
+        });
+        let Some(value) = value.and_then(|value| value.parse::<u64>().ok()) else {
+            continue;
+        };
+        if matches!(
+            attr.name.as_str(),
+            "max_stack" | "max_call_depth" | "max_steps" | "time_limit"
+        ) {
+            annotations.push(format!("#[{}={}]", attr.name, value));
+        }
+    }
+    annotations
+}
+
 /// 检查源码（词法+语法+名称解析+类型/借用检查），同时返回警告。
 ///
 /// 返回值第一项是错误，第二项是警告；有警告但无错误时程序仍可编译。
@@ -1087,7 +1121,9 @@ pub fn compile_ast_with_options(
     // extern 的 Stardust ID 与内部函数名共用同一命名空间（前导空格数）：
     // 预留这些名字，内部 FnId 自动跳过，避免 `#[stardust(id = 1)]` 误调 main。
     let reserved_names: HashSet<usize> = extern_fns.values().map(|id| *id as usize).collect();
-    let mut sd_gen = StardustGen::new().with_reserved_names(reserved_names);
+    let mut sd_gen = StardustGen::new()
+        .with_reserved_names(reserved_names)
+        .with_runtime_annotations(runtime_annotations(&hir));
     let stardust = sd_gen.generate_program(&optimized_functions, &fn_info, entry);
 
     Ok(CompiledProgram {

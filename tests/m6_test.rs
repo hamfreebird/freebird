@@ -180,6 +180,47 @@ fn main() {
 }
 
 #[test]
+fn stardust_runtime_limits_are_emitted_and_enforced() {
+    let source = "#[max_steps=1000]\nfn main() { loop { } }";
+    let sd = freebird::build_stardust(source).expect("build stardust");
+    assert!(
+        sd.lines().any(|line| line == "#[max_steps=1000]"),
+        "missing runtime annotation: {sd}"
+    );
+    assert!(
+        freebird::run_source(source, RuntimeConfig::test()).is_err(),
+        "VM must enforce max_steps"
+    );
+    if !Path::new("stardust/stardust-linux-x86_64").exists() {
+        eprintln!("skipping: stardust interpreter not available");
+        return;
+    }
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join(format!("m6-limits-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("limit.sd");
+    std::fs::write(&path, &sd).unwrap();
+    // timeout 防止“注解未生效”时测试挂起。
+    let output = Command::new("timeout")
+        .arg("5")
+        .arg("stardust/stardust-linux-x86_64")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_ne!(
+        output.status.code(),
+        Some(124),
+        "stardust did not enforce max_steps within 5s"
+    );
+    assert!(
+        !output.status.success(),
+        "expected a non-zero exit for step limit"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn traits_dispatch_statically_on_both_backends() {
     let source = r#"
 trait Greet { fn greet(&self) -> i64; }
