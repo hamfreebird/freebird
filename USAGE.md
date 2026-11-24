@@ -164,15 +164,20 @@ freebird repl                  # 启动 REPL
 
 REPL 命令：
 - `:stack` — 显示当前栈内容（含 ElementId）
-- `:vars` — 显示变量绑定
+- `:vars` — 显示会话绑定（`let` 重放列表）与当前变量绑定
 - `:info` — VM 状态信息
 - `:type <expr>` — 推断表达式类型（复用类型检查器）
 - `:load <file>` — 加载声明；含 `fn main` 的文件会直接执行
-- `:history` / `:run <n>` — 查看历史与重放
-- `:clear` — 清除累积声明
+- `:history` / `:run <n>` — 查看历史与重放（历史持久化，可跨会话）
+- `:clear` — 清除累积声明与会话绑定
 - `:q` — 退出
 
 多行输入：括号、字符串或块注释未闭合时 REPL 继续读取（`...` 提示符）；表达式执行前会做类型/借用检查，失败后可继续输入。
+
+会话绑定：`let` / `let mut` 语句会记入会话并在后续输入中重放，因此变量可以在后面的输入里继续使用；
+重放意味着初始化表达式会再次执行（含 I/O 的初始化会重复产生副作用），新输入的可变更新也不会累积到下一次。
+历史写入 `$FREEBIRD_REPL_HISTORY` → `$XDG_STATE_HOME/freebird/repl_history` → `~/.local/state/freebird/repl_history`
+（保留最近 200 条，多行输入压成一条记录）。REPL 只用 `std`，不内置行编辑；需要方向键/补全时可用 `rlwrap freebird repl`。
 
 ## 质量与发布
 

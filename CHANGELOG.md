@@ -28,6 +28,9 @@
 - **M6-3.2 DAP**：运行中 `pause`（stdin 独立线程 + VM 分片执行，在分片边界停下）、
   `variables` 展开数组/结构体/枚举载荷/Vec/`Box`（惰性子项、可继续展开）、
   `stackTrace` 每帧返回自己的行号。
+- **M6-3.4 REPL**：`let`/`let mut` 绑定跨输入保留（每次输入重放会话，使用全新 VM），
+  `:vars` 列出会话绑定、`:clear` 一并清理；历史持久化到状态目录（`FREEBIRD_REPL_HISTORY`
+  → `$XDG_STATE_HOME` → `~/.local/state`），多行输入压成一条记录，保留最近 200 条。
 
 ### Fixed
 

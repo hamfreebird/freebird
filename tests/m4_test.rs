@@ -118,9 +118,18 @@ fn check_json_reports_related_locations() {
 
 // ─── M4-3：REPL 增强 ───
 
-fn run_repl(input: &str) -> std::process::Output {
+/// 测试用的独立历史文件（避免污染用户状态目录）。
+fn repl_history_file(tag: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    temp_path(&format!("repl-history-{tag}-{n}.txt"))
+}
+
+fn run_repl_with_history(history: &std::path::Path, input: &str) -> std::process::Output {
     let mut child = freebird()
         .arg("repl")
+        .env("FREEBIRD_REPL_HISTORY", history)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -133,6 +142,13 @@ fn run_repl(input: &str) -> std::process::Output {
         .write_all(input.as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
+}
+
+fn run_repl(input: &str) -> std::process::Output {
+    let history = repl_history_file("auto");
+    let output = run_repl_with_history(&history, input);
+    let _ = std::fs::remove_file(history);
+    output
 }
 
 #[test]
@@ -165,6 +181,40 @@ fn repl_reports_type_errors_and_recovers() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("type error"), "stderr: {stderr}");
     assert!(stdout.contains("=> i32"), "stdout: {stdout}");
+}
+
+#[test]
+fn repl_bindings_persist_across_inputs() {
+    // `let` 绑定在后续输入中仍可用（每次输入重放）。
+    let output = run_repl("let x = 41;\nx + 1\n:vars\n:q\n");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("42"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Session bindings"),
+        "`:vars` should list session bindings: {stdout}"
+    );
+}
+
+#[test]
+fn repl_history_persists_across_sessions() {
+    let history = repl_history_file("persist");
+    let _ = std::fs::remove_file(&history);
+
+    let first = run_repl_with_history(&history, "let a = 1;\n:q\n");
+    assert!(
+        first.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let second = run_repl_with_history(&history, ":history\n:q\n");
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        stdout.contains("let a = 1"),
+        "history should persist across sessions: {stdout}"
+    );
+
+    let _ = std::fs::remove_file(history);
 }
 
 // ─── M4-1：LSP ───
