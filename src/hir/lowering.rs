@@ -859,7 +859,7 @@ fn expand_impl_decls(decl: &ast::ImplDecl) -> Vec<ast::FnDecl> {
             Box::new(ast::Type::Path(vec![decl.type_name.clone()], decl.span)),
             decl.generics
                 .iter()
-                .map(|g| ast::Type::Path(vec![g.clone()], decl.span))
+                .map(|g| ast::Type::Path(vec![g.name.clone()], decl.span))
                 .collect(),
             decl.span,
         )
@@ -872,7 +872,7 @@ fn expand_impl_decls(decl: &ast::ImplDecl) -> Vec<ast::FnDecl> {
             // impl 的类型参数并入方法自身的泛型参数，供类型检查做实参推断与替换。
             let mut generics = decl.generics.clone();
             for g in &f.generics {
-                if !generics.contains(g) {
+                if !generics.iter().any(|existing| existing.name == g.name) {
                     generics.push(g.clone());
                 }
             }

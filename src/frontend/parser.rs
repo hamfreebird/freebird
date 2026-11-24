@@ -137,8 +137,8 @@ impl Parser {
         })
     }
 
-    /// 解析声明后的泛型参数 `<T, U>`；没有则返回空列表。
-    fn parse_generic_params(&mut self) -> Result<Vec<String>, FrontendError> {
+    /// 解析声明后的泛型参数 `<T, U: Ord + Display>`；没有则返回空列表。
+    fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, FrontendError> {
         let mut generics = Vec::new();
         if !self.eat(TokenKind::Lt) {
             return Ok(generics);
@@ -147,7 +147,17 @@ impl Parser {
             if self.check(TokenKind::Gt) {
                 break;
             }
-            generics.push(self.expect_ident("generic parameter")?);
+            let name = self.expect_ident("generic parameter")?;
+            let mut bounds = Vec::new();
+            if self.eat(TokenKind::Colon) {
+                loop {
+                    bounds.push(self.expect_ident("trait bound")?);
+                    if !self.eat(TokenKind::Plus) {
+                        break;
+                    }
+                }
+            }
+            generics.push(GenericParam { name, bounds });
             if !self.eat(TokenKind::Comma) {
                 break;
             }

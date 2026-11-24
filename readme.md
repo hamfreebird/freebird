@@ -6,7 +6,7 @@
 >
 > 本规范是 Freebird 语言实现的权威参考文档。
 >
-> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如泛型约束与按实例单态化、闭包/`const`/trait）。字符串格式化 API `format(template, args...)` 已在 M6-5.2 落地（VM/Stardust/LLVM 一致）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 已在 LLVM 目标上支持（M6-2.1，含 UTF-8 路径与内容）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。M4 工具链已落地：`freebird fmt`、`freebird lsp`、`freebird dap`、`freebird.toml` 路径依赖项目、诊断 `schema_version` 与稳定错误码；LSP 为文本级 MVP，DAP 为单线程适配器，包管理仅路径依赖。M5 质量基线已落地：基准套件、MIR 优化开关、固定 seed 差分 fuzz、内存/UB 审计、fixture/诊断快照检查与发布流程。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
+> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如用户自定义 trait、闭包、`const`、按实例函数单态化）。M6-5.1 已落地泛型内建 trait 约束（`<T: Ord + Display>`）与按实例布局（`Pair<i64>`/`Pair<String>` 独立注册，函数体仍按基名共用）。字符串格式化 API `format(template, args...)` 已在 M6-5.2 落地（VM/Stardust/LLVM 一致）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 已在 LLVM 目标上支持（M6-2.1，含 UTF-8 路径与内容）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。M4 工具链已落地：`freebird fmt`、`freebird lsp`、`freebird dap`、`freebird.toml` 路径依赖项目、诊断 `schema_version` 与稳定错误码；LSP 为文本级 MVP，DAP 为单线程适配器，包管理仅路径依赖。M5 质量基线已落地：基准套件、MIR 优化开关、固定 seed 差分 fuzz、内存/UB 审计、fixture/诊断快照检查与发布流程。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
 
 ---
 
@@ -303,19 +303,22 @@ ID 栈:          [id0, id1, id2]
 - Safe 代码中，编译器确保操作前后类型栈的局部一致性。
 - Unsafe 代码中，类型栈的维护责任交给程序员。
 
-### 5.5 用户泛型（类型擦除 MVP）
+### 5.5 用户泛型（类型擦除 + 内建 trait 约束）
 
-结构体、枚举与函数可以声明类型参数：
+结构体、枚举与函数可以声明类型参数，并附带内建 trait 约束：
 
 ```freebird
 struct Pair<T> { first: T, second: T }
 enum Maybe<T> { Nothing, Just(T) }
 fn id<T>(x: T) -> T { x }
+fn pick<T: Ord>(a: T, b: T) -> T { a }
+struct Show<T: Display> { v: T }
 ```
 
 - 类型实参由结构体字段访问或函数调用实参推断，并在类型检查中做替换检查。
-- 布局与代码按基名共用一份（**类型擦除**，不按实例单态化）。
-- 显式类型实参使用 turbofish：`f::<T>(...)`、`Pair::<T>::new(...)`。暂不支持约束与按实例单态化；泛型函数体只能使用与具体类型无关的操作。
+- 约束只接受内建 trait：`Ord`、`Eq`、`Display`，它们覆盖整数、`bool`、`char`、`String`。约束在结构体/枚举字面量和泛型函数调用点校验，不满足时报 `TraitBoundNotSatisfied`（T026）。
+- 实例会被收集，并按实例注册布局：`Pair<i64>` 与 `Pair<String>` 的字段类型各自替换、互不干扰；MIR 在字面量/构造点按实例查布局，未命中时回落到基名。函数体仍按基名共用一份（**类型擦除**），因为泛型体只允许与具体类型无关的操作。
+- 显式类型实参使用 turbofish：`f::<T>(...)`、`Pair::<T>::new(...)`。用户自定义 trait 与按实例函数单态化尚未实现（见 `docs/adr/0006-language-evolution.md`）。
 - `impl` 暂不接受类型参数（见 §5.6）。
 
 ### 5.6 用户方法与 `impl`

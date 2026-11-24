@@ -133,6 +133,7 @@ fn type_code(error: &TypeCheckError) -> &'static str {
         TypeCheckError::GenericArgMismatch { .. } => "T023",
         TypeCheckError::UnsupportedFormatArgument { .. } => "T024",
         TypeCheckError::FormatTemplateMismatch { .. } => "T025",
+        TypeCheckError::TraitBoundNotSatisfied { .. } => "T026",
     }
 }
 
@@ -352,6 +353,10 @@ pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
                 ),
                 TypeCheckError::FormatTemplateMismatch { .. } => Some(
                     "make the number of `{}` placeholders match the arguments, and escape literal braces as `{{`/`}}`"
+                        .to_string(),
+                ),
+                TypeCheckError::TraitBoundNotSatisfied { .. } => Some(
+                    "use a type that implements the bound (`Ord`/`Eq`/`Display` cover integers, `bool`, `char` and `String`)"
                         .to_string(),
                 ),
             };

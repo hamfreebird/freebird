@@ -323,12 +323,20 @@ pub enum Decl {
     Mod { name: String, span: Span },
 }
 
+/// 泛型参数（MVP：内建 trait 约束，如 `<T: Ord + Display>`）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenericParam {
+    pub name: String,
+    /// 内建 trait 约束（`Ord`/`Eq`/`Display`）；空表示无约束。
+    pub bounds: Vec<String>,
+}
+
 /// `impl Type { ... }` 块；方法在 HIR 中扁平化为 `Type::name`。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplDecl {
     pub type_name: String,
     /// impl 的类型参数（`impl<T> Pair<T>`；MVP 仅类型参数）。
-    pub generics: Vec<String>,
+    pub generics: Vec<GenericParam>,
     pub fns: Vec<FnDecl>,
     pub span: Span,
 }
@@ -339,8 +347,8 @@ pub struct FnDecl {
     pub name: String,
     /// `pub`：可跨模块使用。
     pub public: bool,
-    /// 泛型参数（MVP：仅类型参数，如 `<T>`）。
-    pub generics: Vec<String>,
+    /// 泛型参数（MVP：内建 trait 约束，如 `<T: Ord>`）。
+    pub generics: Vec<GenericParam>,
     pub params: Vec<FnParam>,
     pub return_type: Option<Type>,
     pub body: Option<Block>,
@@ -362,8 +370,8 @@ pub struct StructDecl {
     pub name: String,
     /// `pub`：可跨模块使用。
     pub public: bool,
-    /// 泛型参数（MVP：仅类型参数）。
-    pub generics: Vec<String>,
+    /// 泛型参数（MVP：内建 trait 约束，如 `<T: Ord>`）。
+    pub generics: Vec<GenericParam>,
     pub fields: Vec<StructField>,
     pub attrs: Vec<Attribute>,
     pub span: Span,
@@ -382,8 +390,8 @@ pub struct EnumDecl {
     pub name: String,
     /// `pub`：可跨模块使用。
     pub public: bool,
-    /// 泛型参数（MVP：仅类型参数）。
-    pub generics: Vec<String>,
+    /// 泛型参数（MVP：内建 trait 约束，如 `<T: Ord>`）。
+    pub generics: Vec<GenericParam>,
     pub variants: Vec<EnumVariant>,
     pub attrs: Vec<Attribute>,
     pub span: Span,

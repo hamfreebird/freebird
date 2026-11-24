@@ -180,6 +180,38 @@ fn main() {
 }
 
 #[test]
+fn generic_bounds_run_on_both_backends() {
+    let source = r#"
+fn pick<T: Ord>(a: T, b: T) -> T { a }
+struct Show<T: Display> { v: T }
+fn main() {
+    print(pick(3, 4));
+    let s: String = pick("a", "b");
+    print_str(s);
+    let sh: Show<i64> = Show { v: 9 };
+    print(sh.v);
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "generic_bounds", b"");
+}
+
+#[test]
+fn generic_bound_violation_is_rejected() {
+    let source = r#"
+struct Point { x: i64 }
+struct Show<T: Display> { v: T }
+fn main() { let s: Show<Point> = Show { v: Point { x: 1 } }; }
+"#;
+    let errors = freebird::check_source(source).expect_err("bound must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("does not satisfy"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
 fn format_renders_supported_kinds_on_both_backends() {
     let source = r#"
 fn main() {

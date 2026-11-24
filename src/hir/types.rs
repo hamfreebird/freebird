@@ -217,8 +217,8 @@ pub enum HirDecl {
 #[derive(Debug, Clone)]
 pub struct HirFnDecl {
     pub name: String,
-    /// 泛型参数（MVP：仅类型参数）。
-    pub generics: Vec<String>,
+    /// 泛型参数（MVP：内建 trait 约束，如 `<T: Ord>`）。
+    pub generics: Vec<ast::GenericParam>,
     pub sig: FnSignature,
     pub body: Option<HirBlock>,
     pub attrs: Vec<ast::Attribute>,

@@ -255,9 +255,10 @@ impl TypeTable {
                         .collect();
                     table.register_struct(&s.name, fields);
                     if !s.generics.is_empty() {
-                        table
-                            .generic_params
-                            .insert(s.name.clone(), s.generics.clone());
+                        table.generic_params.insert(
+                            s.name.clone(),
+                            s.generics.iter().map(|g| g.name.clone()).collect(),
+                        );
                     }
                 }
                 crate::frontend::ast::Decl::Enum(e) => {
@@ -271,9 +272,10 @@ impl TypeTable {
                         .collect();
                     table.register_enum(&e.name, variants);
                     if !e.generics.is_empty() {
-                        table
-                            .generic_params
-                            .insert(e.name.clone(), e.generics.clone());
+                        table.generic_params.insert(
+                            e.name.clone(),
+                            e.generics.iter().map(|g| g.name.clone()).collect(),
+                        );
                     }
                 }
                 _ => {}

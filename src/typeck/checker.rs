@@ -144,6 +144,13 @@ pub enum TypeCheckError {
         message: String,
         span: Span,
     },
+    /// 泛型实参不满足声明处的内建 trait 约束（M6-5.1）。
+    TraitBoundNotSatisfied {
+        ty: HirType,
+        bound: String,
+        context: String,
+        span: Span,
+    },
 }
 
 impl TypeCheckError {
@@ -173,7 +180,8 @@ impl TypeCheckError {
             | TypeCheckError::OrPatternBindingMismatch { span, .. }
             | TypeCheckError::GenericArgMismatch { span, .. }
             | TypeCheckError::UnsupportedFormatArgument { span, .. }
-            | TypeCheckError::FormatTemplateMismatch { span, .. } => *span,
+            | TypeCheckError::FormatTemplateMismatch { span, .. }
+            | TypeCheckError::TraitBoundNotSatisfied { span, .. } => *span,
         }
     }
 }
@@ -333,6 +341,16 @@ impl std::fmt::Display for TypeCheckError {
             TypeCheckError::FormatTemplateMismatch { message, span } => {
                 write!(f, "{span}: invalid format template: {message}")
             }
+            TypeCheckError::TraitBoundNotSatisfied {
+                ty,
+                bound,
+                context,
+                span,
+            } => write!(
+                f,
+                "{span}: type {} does not satisfy the `{bound}` bound required by {context}",
+                ty.name()
+            ),
         }
     }
 }
@@ -378,6 +396,8 @@ pub struct TypeChecker<'a> {
     method_variant_tags: MethodTagMap,
     /// 泛型声明 → 实例化类型实参集合（`Pair` → {["i64"], ["String"]}）。
     instances: InstanceSet,
+    /// 泛型声明 → 带约束的类型参数（仅记录至少一个约束的声明）。
+    generic_bounds: HashMap<String, Vec<ast::GenericParam>>,
     errors: Vec<TypeCheckError>,
     warnings: Vec<TypeCheckWarning>,
 }
@@ -425,6 +445,7 @@ impl<'a> TypeChecker<'a> {
         let mut generic_structs = HashMap::new();
         let mut generic_enums = HashMap::new();
         let mut generic_fns = HashMap::new();
+        let mut generic_bounds: HashMap<String, Vec<ast::GenericParam>> = HashMap::new();
         // 内建 `Option<T>`/`Result<T, E>` 是泛型枚举；同名用户声明会在下面覆盖。
         generic_enums.insert("Option".to_string(), vec!["T".to_string()]);
         generic_enums.insert("Result".to_string(), vec!["T".to_string(), "E".to_string()]);
@@ -437,17 +458,35 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 HirDecl::Struct(s) if !s.generics.is_empty() => {
-                    generic_structs.insert(s.name.clone(), s.generics.clone());
+                    generic_structs.insert(
+                        s.name.clone(),
+                        s.generics.iter().map(|g| g.name.clone()).collect(),
+                    );
+                    if s.generics.iter().any(|g| !g.bounds.is_empty()) {
+                        generic_bounds.insert(s.name.clone(), s.generics.clone());
+                    }
                 }
                 HirDecl::Enum(e) if !e.generics.is_empty() => {
-                    generic_enums.insert(e.name.clone(), e.generics.clone());
+                    generic_enums.insert(
+                        e.name.clone(),
+                        e.generics.iter().map(|g| g.name.clone()).collect(),
+                    );
+                    if e.generics.iter().any(|g| !g.bounds.is_empty()) {
+                        generic_bounds.insert(e.name.clone(), e.generics.clone());
+                    }
                 }
                 // 同名非泛型用户声明覆盖内建 `Option`/`Result`。
                 HirDecl::Enum(e) => {
                     generic_enums.remove(&e.name);
                 }
                 HirDecl::Fn(f) if !f.generics.is_empty() => {
-                    generic_fns.insert(f.name.clone(), f.generics.clone());
+                    generic_fns.insert(
+                        f.name.clone(),
+                        f.generics.iter().map(|g| g.name.clone()).collect(),
+                    );
+                    if f.generics.iter().any(|g| !g.bounds.is_empty()) {
+                        generic_bounds.insert(f.name.clone(), f.generics.clone());
+                    }
                 }
                 _ => {}
             }
@@ -464,6 +503,7 @@ impl<'a> TypeChecker<'a> {
             generic_structs,
             generic_enums,
             generic_fns,
+            generic_bounds,
             unsafe_depth: 0,
             method_variant_tags: HashMap::new(),
             instances: HashMap::new(),
@@ -552,6 +592,28 @@ impl<'a> TypeChecker<'a> {
             .entry(base.to_string())
             .or_default()
             .insert(names);
+    }
+
+    /// 校验泛型实参是否满足声明处的内建 trait 约束（M6-5.1）。
+    fn check_bounds(&mut self, base: &str, args: &[HirType], context: String, span: Span) {
+        let Some(params) = self.generic_bounds.get(base).cloned() else {
+            return;
+        };
+        for (param, arg) in params.iter().zip(args.iter()) {
+            if is_unknown(arg) {
+                continue;
+            }
+            for bound in &param.bounds {
+                if !satisfies_bound(arg, bound) {
+                    self.error(TypeCheckError::TraitBoundNotSatisfied {
+                        ty: arg.clone(),
+                        bound: bound.clone(),
+                        context: context.clone(),
+                        span,
+                    });
+                }
+            }
+        }
     }
 
     /// 校验属性的语法与已知名称；未识别属性必须报错，不能静默丢弃。
@@ -1614,6 +1676,12 @@ impl<'a> TypeChecker<'a> {
                 .map(|param| generic_map.get(param).cloned().unwrap_or(HirType::Unknown))
                 .collect();
             self.record_instance(&sig.name, &instance_args);
+            self.check_bounds(
+                &sig.name,
+                &instance_args,
+                format!("function `{}`", sig.name),
+                span,
+            );
         } else if let Some(explicit) = explicit_type_args {
             self.error(TypeCheckError::GenericArgMismatch {
                 function: sig.name.clone(),
@@ -2478,6 +2546,7 @@ impl<'a> TypeChecker<'a> {
                         .map(|param| generic_map.get(param).cloned().unwrap_or(HirType::Unknown))
                         .collect();
                     self.record_instance(&type_name, &args);
+                    self.check_bounds(&type_name, &args, format!("struct `{type_name}`"), span);
                     if let Some(instance) = instance_name_for(&type_name, &args) {
                         self.method_variant_tags.insert(
                             span,
@@ -2589,6 +2658,7 @@ impl<'a> TypeChecker<'a> {
                 .map(|param| generic_map.get(param).cloned().unwrap_or(HirType::Unknown))
                 .collect();
             self.record_instance(&enum_name, &args);
+            self.check_bounds(&enum_name, &args, format!("enum `{enum_name}`"), span);
             if let Some(instance) = instance_name_for(&enum_name, &args) {
                 self.method_variant_tags.insert(
                     span,
@@ -3054,6 +3124,25 @@ fn builtin_type(name: &str) -> HirType {
         "!" => HirType::Never,
         "_" => HirType::Wildcard,
         other => HirType::Path(other.split("::").map(str::to_string).collect()),
+    }
+}
+
+/// 内建 trait 约束的满足关系（`Ord`/`Eq`/`Display` 覆盖整数、`bool`、`char`、`String`）。
+fn satisfies_bound(ty: &HirType, bound: &str) -> bool {
+    let HirType::Path(path) = ty else {
+        return false;
+    };
+    if path.len() != 1 {
+        return false;
+    }
+    let name = path[0].as_str();
+    let numeric = matches!(
+        name,
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
+    );
+    match bound {
+        "Ord" | "Eq" | "Display" => numeric || matches!(name, "bool" | "char" | "String"),
+        _ => false,
     }
 }
 
