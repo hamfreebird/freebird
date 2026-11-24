@@ -83,7 +83,7 @@
 | `freebird fmt` | — | — | — | `m4_test`；缩进/空白规范化，`--check/--write/--stdin` |
 | `freebird lsp`（诊断/hover/跳转/引用/重命名/符号/补全，UTF-16 位置） | ✅ | ✅ | ✅ | `m4_test` + LSP 单元测试 |
 | `freebird dap`（断点/单步/栈/变量） | ✅ | — | — | `m4_test` + DAP 单元测试 |
-| `freebird.toml` 项目（entry + 路径依赖） | ✅ | ✅ | ✅ | `m4_test` + `m6_test`；`--manifest-path` / 自动发现；跨文件诊断带 `file` |
+| `freebird.toml` 项目（entry + 递归路径依赖 + `freebird.lock`） | ✅ | ✅ | ✅ | `m4_test` + `m6_test`；`--manifest-path` / 自动发现；跨文件诊断带 `file` |
 | CI/发布（fmt/clippy/examples/文档链接/release） | ✅ | ✅ | ✅ | `.github/workflows/{ci,release}.yml` |
 
 ## 4. M0 退出标准核对
@@ -140,7 +140,7 @@
 - **M4-2 DAP**：`freebird dap`（stdio DAP）：launch、setBreakpoints、configurationDone、stackTrace/scopes/variables、continue/next/stepIn/stepOut；基于 `MirInst::Line` 行标记；单线程，运行期间不支持 pause。
 - **M4-3 REPL**：多行输入（括号/字符串/块注释未闭合继续）、`:history`/`:run n`、`:load`、`:type`（复用 `typeck::infer_expression_type`）、类型/借用检查后的错误恢复。
 - **M4-4 fmt/lint**：`freebird fmt [--check|--write|--stdin]`；全树 `cargo fmt` 清理；clippy 清零并纳入 CI（`-D warnings`）。
-- **M4-5 包管理**：`freebird.toml`（`[package] name/entry`、`[dependencies]` 路径）；`run/check/build` 支持 `--manifest-path` 与当前目录自动发现；依赖以 `<dep>::` 前缀加载。仅路径依赖，无版本解析/registry/锁定文件。
+- **M4-5 包管理**：`freebird.toml`（`[package] name/entry`、`[dependencies]` 路径）；`run/check/build` 支持 `--manifest-path` 与当前目录自动发现；依赖以 `<dep>::` 前缀加载。M6-3.3 起依赖递归展开（传递依赖同样注册），`freebird lock` 生成 `freebird.lock`（相对路径 + 包内 `.fb` 内容哈希），构建时校验。仅路径依赖，无版本解析/registry。
 - **M4-6 诊断**：JSON `schema_version: 1`、稳定错误码（P/R/T/B/W）、`related` 位置与修复建议。
 - **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。
 - **M4 完成时测试基线**：227 unit + 190 integration；`tests/m4_test.rs` 13 项。

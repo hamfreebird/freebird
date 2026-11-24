@@ -5,6 +5,7 @@
 pub mod borrowck;
 pub mod codegen;
 pub mod dap;
+pub mod dependency;
 pub mod diagnostics;
 pub mod fmt;
 pub mod frontend;

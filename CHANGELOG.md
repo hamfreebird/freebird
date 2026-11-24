@@ -20,6 +20,9 @@
   - 发布流程文档与本 CHANGELOG；`scripts/check-docs.py` 检查基线与版本一致性。
 - **MIR 优化**：常量条件跳转折叠、无用跳转消除、Div/Mod/比较/逻辑常量折叠；
   `build --no-opt` 可关闭优化；`Line` 调试标记保留。
+- **M6 包管理**：依赖递归展开（传递依赖同样以包名为模块前缀注册，同名包冲突与循环依赖在解析期报错）；
+  `freebird lock` 生成 `freebird.lock`（依赖相对路径 + 包内 `.fb` 内容哈希），
+  `run`/`check`/`build` 在锁文件存在时校验，缺失/路径变化/哈希不一致都会报错。
 
 ### Fixed
 
@@ -29,6 +32,7 @@
 - LLVM 后端支持 `#[char_mode=unicode]`，`CharOut` 按 UTF-8 输出（bundled Stardust 同步更新）。
 - `build --link-stardust <file>` 可追加外部 Stardust 定义（FFI）；extern 函数作为值在编译期拒绝。
 - LSP 新增 references/rename，位置按 UTF-16 处理；非 BMP 字符位置正确。
+- LLVM 目标支持 `file_read`/`file_write`（Stardust LLVM 运行时按 UTF-8 编解码，bundled Stardust 同步更新）。
 
 ### Changed
 

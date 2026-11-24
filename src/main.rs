@@ -6,6 +6,7 @@ use std::process;
 
 use freebird::borrowck::check_borrow;
 use freebird::codegen::llvm::{LlvmArtifact, LlvmEmit, LlvmOptions, compile_llvm_compiled};
+use freebird::dependency;
 use freebird::diagnostics;
 use freebird::frontend::parse;
 use freebird::hir::lower;
@@ -98,6 +99,12 @@ enum Command {
         /// 追加外部 Stardust 定义文件（FFI 链接；适用于 stardust/llvm 目标）
         #[arg(long)]
         link_stardust: Option<PathBuf>,
+    },
+    /// 生成/更新 freebird.lock（记录依赖路径与内容哈希）
+    Lock {
+        /// 项目清单路径（freebird.toml 或其所在目录）；省略时使用当前目录
+        #[arg(long)]
+        manifest_path: Option<PathBuf>,
     },
 }
 
@@ -323,6 +330,16 @@ fn main() {
             if let Err(e) = repl.run() {
                 eprintln!("REPL error: {e}");
                 process::exit(1);
+            }
+        }
+        Some(Command::Lock { manifest_path }) => {
+            let path = manifest_path.unwrap_or_else(|| PathBuf::from("freebird.toml"));
+            match dependency::write_lock_for(&path) {
+                Ok(lock) => println!("{}", lock.display()),
+                Err(error) => {
+                    eprintln!("Lock error: {error}");
+                    process::exit(1);
+                }
             }
         }
         Some(Command::Build {

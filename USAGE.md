@@ -61,8 +61,10 @@ util = { path = "../util" }
 ```
 
 - `run`/`check`/`build` 支持 `--manifest-path <freebird.toml|目录>`；省略文件参数时自动读取当前目录的 `freebird.toml`。
-- 依赖只支持路径（`{ path = "..." }` 或字符串简写），当前没有版本解析、registry 或锁定文件。
-- 依赖入口：依赖目录自带 `freebird.toml` 时使用其 `entry`，否则依次查找 `src/lib.fb`、`src/main.fb`、`lib.fb`、`main.fb`；依赖的顶层项以 `<依赖名>::` 前缀注册。
+- 依赖只支持路径（`{ path = "..." }` 或字符串简写），当前没有版本解析或 registry。
+- 依赖会递归展开：依赖自己的 `[dependencies]` 同样生效，被依赖者先加载；所有包（含传递依赖）都以 `<包名>::` 前缀注册，因此同名包必须指向同一目录，循环依赖会在解析阶段报错。
+- `freebird lock` 生成 `freebird.lock`，记录每个依赖的相对路径与内容哈希（包内全部 `.fb` 文件）。锁文件存在时，`run`/`check`/`build` 会校验：依赖缺失、路径变化或内容哈希不一致都会报错并提示重新运行 `freebird lock`。
+- 依赖入口：依赖目录自带 `freebird.toml` 时使用其 `entry`，否则依次查找 `src/lib.fb`、`src/main.fb`、`lib.fb`、`main.fb`。
 - 项目 `check` 的 JSON 使用入口文件作为 `source`；每条诊断新增 `file` 字段（相对清单根，依赖在外部时为 `../...`）与文件内行号。
 
 ### 格式化

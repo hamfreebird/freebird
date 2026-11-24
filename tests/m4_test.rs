@@ -434,3 +434,139 @@ fn project_is_found_from_current_directory() {
     assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
     let _ = std::fs::remove_dir_all(base);
 }
+
+// ─── M6-3.3：传递依赖与 freebird.lock ───
+
+/// 三层依赖：app → util → core（core 提供 `triple`，util 提供 `six`）。
+fn create_nested_project(name: &str) -> PathBuf {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join(format!("m6-deps-{name}-{}", std::process::id()));
+    for dir in ["app/src", "util/src", "core/src"] {
+        std::fs::create_dir_all(base.join(dir)).unwrap();
+    }
+    std::fs::write(
+        base.join("app/freebird.toml"),
+        "[package]\nname = \"app\"\nentry = \"src/main.fb\"\n\n[dependencies]\nutil = { path = \"../util\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("app/src/main.fb"),
+        "use core::triple;\nuse util::six;\n\nfn main() {\n    print(six(3));\n    print(triple(5));\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("util/freebird.toml"),
+        "[package]\nname = \"util\"\nentry = \"src/lib.fb\"\n\n[dependencies]\ncore = { path = \"../core\" }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("util/src/lib.fb"),
+        "use core::triple;\n\npub fn six(x: i64) -> i64 {\n    triple(x) * 2\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("core/freebird.toml"),
+        "[package]\nname = \"core\"\nentry = \"src/lib.fb\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("core/src/lib.fb"),
+        "pub fn triple(x: i64) -> i64 {\n    x * 3\n}\n",
+    )
+    .unwrap();
+    base
+}
+
+#[test]
+fn project_resolves_transitive_dependencies() {
+    let base = create_nested_project("transitive");
+    let manifest = base.join("app/freebird.toml");
+    let run = freebird()
+        .args(["run", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    // 传递依赖 core 也可直接以包名访问
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "18\n15\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn project_lock_generates_and_verifies_dependencies() {
+    let base = create_nested_project("lock");
+    let manifest = base.join("app/freebird.toml");
+    let lock = base.join("app/freebird.lock");
+
+    let locked = freebird()
+        .args(["lock", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        locked.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&locked.stderr)
+    );
+    let text = std::fs::read_to_string(&lock).unwrap();
+    assert!(text.contains("name = \"util\""), "lock: {text}");
+    assert!(text.contains("name = \"core\""), "lock: {text}");
+    assert!(text.contains("path = \"../util\""), "lock: {text}");
+
+    let run = freebird()
+        .args(["run", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    // 依赖内容变化后锁文件校验失败，并提示重新生成
+    std::fs::write(
+        base.join("core/src/lib.fb"),
+        "pub fn triple(x: i64) -> i64 {\n    x + x + x\n}\n",
+    )
+    .unwrap();
+    let stale = freebird()
+        .args(["run", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(!stale.status.success(), "stale lock should fail the run");
+    let stderr = String::from_utf8_lossy(&stale.stderr);
+    assert!(stderr.contains("freebird.lock"), "stderr: {stderr}");
+    assert!(stderr.contains("core"), "stderr: {stderr}");
+
+    // 重新生成锁文件后恢复正常
+    let relocked = freebird()
+        .args(["lock", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        relocked.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&relocked.stderr)
+    );
+    let run = freebird()
+        .args(["run", "--manifest-path"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "18\n15\n");
+
+    let _ = std::fs::remove_dir_all(base);
+}

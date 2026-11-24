@@ -32,24 +32,26 @@ pub fn run_file(path: &Path, config: RuntimeConfig) -> Result<Vec<u8>, String> {
     run_ast(ast, config)
 }
 
-/// 从 `freebird.toml` 加载项目（入口 + 路径依赖）。
+/// 从 `freebird.toml` 加载项目（入口 + 递归路径依赖）。
 ///
 /// 依赖先于根程序加载，`use dep::item;` 与 `dep::item` 全名访问均可解析。
-/// 当前只支持单层路径依赖（依赖的依赖不递归展开）。
+/// 依赖的依赖会递归展开（见 [`crate::dependency`]）；若清单根目录存在
+/// `freebird.lock`，先校验依赖路径与内容哈希是否仍然一致。
 pub fn load_project(
     manifest_path: &Path,
 ) -> Result<(crate::frontend::ast::Program, SourceMap), String> {
     let manifest = crate::manifest::Manifest::load(manifest_path)?;
+    let packages = crate::dependency::resolve(&manifest)?;
+    crate::dependency::verify_lock(&manifest, &packages)?;
     let mut loading: Vec<std::path::PathBuf> = Vec::new();
     let mut pub_names: HashMap<String, HashSet<String>> = HashMap::new();
     let mut decls = Vec::new();
     let mut source_map = SourceMap::new();
 
-    for dependency in &manifest.dependencies {
-        let entry = dependency.entry_path()?;
+    for package in &packages {
         let module = load_module(
-            &entry,
-            Some(&dependency.name),
+            &package.entry,
+            Some(&package.name),
             &mut loading,
             &mut pub_names,
             &mut source_map,
