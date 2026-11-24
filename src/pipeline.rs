@@ -219,7 +219,7 @@ fn check_cross_module_refs(
             }
             Ok(())
         }
-        Decl::Use(..) | Decl::Mod { .. } => Ok(()),
+        Decl::Use(..) | Decl::Mod { .. } | Decl::Const(_) => Ok(()),
     }
 }
 

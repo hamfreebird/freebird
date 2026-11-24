@@ -124,6 +124,7 @@ LLVM 后端复用 Stardust 的 LLVM 编译器。Stardust 可执行文件按
 - 运行前会执行名称解析、类型检查和借用/移动检查；`check` 与 `run` 报告同一组前端错误。
 - `match` 支持结构体、枚举（含嵌套载荷）、元组、字面量、`or`、引用、`..` 剩余和 `_` 模式，并在类型检查阶段拒绝非穷尽匹配；重复分支或兜底分支之后的分支会产生 `warning` 级诊断。`let` 支持变量、元组和结构体解构；可失败模式（如枚举变体）必须改用 `match`。
 - `ret n` 的 `n` 必须是整数字面量；`loop` 支持值语义与 `break value`，`if let` / `while let` 已支持（VM/Stardust 输出一致）；`while`/`for` 中的 `break value` 会在编译期报错；循环标签 `'outer: loop` + `break 'outer` / `continue 'outer` 已支持。
+- 顶层 `const NAME: Type = expr;`（类型标注可省略）在 HIR 降级期求值：支持字面量、此前的 const、一元/二元算术/比较/逻辑；除零、前向引用、溢出与不支持的表达式报 R008。使用点直接替换为字面量，三后端行为一致；`const fn`、闭包与用户自定义 trait 仍待排期。
 - 函数指针：支持 `fn(A, B) -> C` 类型、函数名作值、作为参数/返回值以及间接调用；Stardust 通过 FnId dispatch 实现。当前 MVP 要求间接调用恰好返回一个值。
 - Stardust FFI：`extern "stardust" { #[stardust(id = N)] fn f(...) -> ...; }` 已可用，调用生成真实 `Call(N, argc)`。调用必须在 `unsafe` 块内；省略 `id` 时按函数名做 SipHash-2-4 并映射到 `1..=999`（ID 就是 Stardust 源码中的前导空格数）；重复或过大的 ID 在编译期报错。VM 执行 FFI 会报明确错误，LLVM 目标需要外部 Stardust 函数定义参与链接。`#id` 仍按 §4.3 明确拒绝。
 - Stardust 后端可生成并运行上述大部分程序，复杂值统一放在 Stardust 全局堆块上（逻辑远程栈，见 `docs/adr/0001-logical-remote-stack.md`）。`&mut` 引用使用堆单元间接访问，`*p = v` 会回写原变量（包括把引用传给函数后写入）。`for`/`continue`/`break`、`ret n`、标量 `as` 转换以及 `file_read`/`file_write` 均已支持；文件路径和内容按 UTF-8 文本处理，非 UTF-8/二进制内容不在支持范围内。

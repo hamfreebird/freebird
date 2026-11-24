@@ -6,7 +6,7 @@
 >
 > 本规范是 Freebird 语言实现的权威参考文档。
 >
-> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如用户自定义 trait、闭包、`const`、按实例函数单态化）。M6-5.1 已落地泛型内建 trait 约束（`<T: Ord + Display>`）与按实例布局（`Pair<i64>`/`Pair<String>` 独立注册，函数体仍按基名共用）。字符串格式化 API `format(template, args...)` 已在 M6-5.2 落地（VM/Stardust/LLVM 一致）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 已在 LLVM 目标上支持（M6-2.1，含 UTF-8 路径与内容）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。M4 工具链已落地：`freebird fmt`、`freebird lsp`、`freebird dap`、`freebird.toml` 路径依赖项目、诊断 `schema_version` 与稳定错误码；LSP 为文本级 MVP，DAP 为单线程适配器，包管理仅路径依赖。M5 质量基线已落地：基准套件、MIR 优化开关、固定 seed 差分 fuzz、内存/UB 审计、fixture/诊断快照检查与发布流程。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
+> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如用户自定义 trait、闭包、按实例函数单态化）。M6-5.1 已落地泛型内建 trait 约束（`<T: Ord + Display>`）与按实例布局（`Pair<i64>`/`Pair<String>` 独立注册，函数体仍按基名共用）；M6-5.3 的 `const` 编译期求值子集已落地（字面量、此前的 const、一元/二元运算；非法常量报 R008）。字符串格式化 API `format(template, args...)` 已在 M6-5.2 落地（VM/Stardust/LLVM 一致）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 已在 LLVM 目标上支持（M6-2.1，含 UTF-8 路径与内容）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。M4 工具链已落地：`freebird fmt`、`freebird lsp`、`freebird dap`、`freebird.toml` 路径依赖项目、诊断 `schema_version` 与稳定错误码；LSP 为文本级 MVP，DAP 为单线程适配器，包管理仅路径依赖。M5 质量基线已落地：基准套件、MIR 优化开关、固定 seed 差分 fuzz、内存/UB 审计、fixture/诊断快照检查与发布流程。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
 
 ---
 
@@ -792,6 +792,10 @@ unsafe {
 ### 11.1 顶层声明
 
 ```freebird
+// 常量声明（编译期求值：字面量、此前的 const、一元/二元运算）
+const LIMIT: i64 = 40 + 2;
+const ENABLED: bool = LIMIT > 10;
+
 // 函数声明（可带类型参数）
 fn name(params) -> ReturnType {
     statements...

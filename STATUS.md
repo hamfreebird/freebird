@@ -31,6 +31,7 @@
 | `&` / `&mut`、解引用、写回 | §4 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
 | 借用/移动检查 | §4 | ✅ 编译期 | ✅ 编译期 | ✅ 编译期（同一前端） | 单元 + 集成 |
 | 标量 `as` 转换 | §5 | ✅ | ✅ | ✅ | 集成 |
+| 编译期 `const`（字面量/算术/比较/引用） | §11.1 | ✅ | ✅ | ✅ | `m6_test`（R008：除零/前向引用/溢出） |
 | `print_*` / `read_*` / `read_line` | §9 | ✅ | ✅ UTF-8/CRLF/非法字节一致；EOF 与 VM 一致报 I/O 错误 | ✅ 继承 Stardust；Unicode `CharOut` 已支持 | 集成 + `m1_test` + `m3_test` |
 | `Option` / `Result` 内建枚举（泛型载荷 `Option<T>` / `Result<T, E>`） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
 | `Option` 方法（is_some/is_none/unwrap/unwrap_or） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |

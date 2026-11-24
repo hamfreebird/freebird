@@ -180,6 +180,43 @@ fn main() {
 }
 
 #[test]
+fn const_evaluation_runs_on_both_backends() {
+    let source = r#"
+const BASE: i64 = 40;
+const ANSWER: i64 = BASE + 2;
+const FLAG: bool = ANSWER > 10 && !false;
+fn main() {
+    print(ANSWER);
+    print_char(if FLAG { 'y' } else { 'n' });
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "const_eval", b"");
+}
+
+#[test]
+fn const_rejects_division_by_zero() {
+    let errors = freebird::check_source("const BAD: i64 = 1 / 0;\nfn main() {}")
+        .expect_err("division by zero must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("division by zero"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
+fn const_rejects_forward_reference() {
+    let errors = freebird::check_source("const A: i64 = B;\nconst B: i64 = 1;\nfn main() {}")
+        .expect_err("forward reference must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("previously defined const"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
 fn generic_bounds_run_on_both_backends() {
     let source = r#"
 fn pick<T: Ord>(a: T, b: T) -> T { a }

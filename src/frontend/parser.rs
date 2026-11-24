@@ -48,6 +48,7 @@ impl Parser {
 
         let mut decl = match self.peek() {
             TokenKind::Fn => self.parse_fn(attrs).map(Decl::Fn),
+            TokenKind::Const => self.parse_const(),
             TokenKind::Struct => self.parse_struct(attrs).map(Decl::Struct),
             TokenKind::Enum => self.parse_enum(attrs).map(Decl::Enum),
             TokenKind::Impl => self.parse_impl().map(Decl::Impl),
@@ -74,7 +75,7 @@ impl Parser {
                 let token = self.advance();
                 Err(FrontendError::new(
                     FrontendErrorKind::UnexpectedToken {
-                        expected: "declaration (fn, struct, enum, extern, use)".to_string(),
+                        expected: "declaration (fn, const, struct, enum, extern, use)".to_string(),
                         found: token.clone(),
                     },
                     token.span,
@@ -93,6 +94,26 @@ impl Parser {
     }
 
     // ─── 函数声明 ───
+
+    /// 解析 `const NAME: Type = expr;`（类型标注可选）。
+    fn parse_const(&mut self) -> Result<Decl, FrontendError> {
+        let span = self.expect(TokenKind::Const)?.span;
+        let name = self.expect_ident("const name")?;
+        let ty = if self.eat(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.expect(TokenKind::Eq)?;
+        let value = self.parse_expr(0)?;
+        self.expect(TokenKind::Semicolon)?;
+        Ok(Decl::Const(ConstDecl {
+            name,
+            ty,
+            value,
+            span,
+        }))
+    }
 
     fn parse_fn(&mut self, attrs: Vec<Attribute>) -> Result<FnDecl, FrontendError> {
         let fn_span = self.expect(TokenKind::Fn)?.span;

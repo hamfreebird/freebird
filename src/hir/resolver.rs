@@ -37,6 +37,12 @@ pub enum ResolveError {
     InvalidAssignmentTarget {
         span: Span,
     },
+    /// `const` 声明无法编译期求值（不支持表达式、循环依赖、溢出等）。
+    InvalidConst {
+        name: String,
+        reason: String,
+        span: Span,
+    },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -87,6 +93,9 @@ impl std::fmt::Display for ResolveError {
             }
             ResolveError::InvalidAssignmentTarget { span } => {
                 write!(f, "{span}: invalid assignment target")
+            }
+            ResolveError::InvalidConst { name, reason, span } => {
+                write!(f, "{span}: invalid const `{name}`: {reason}")
             }
         }
     }

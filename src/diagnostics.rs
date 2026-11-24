@@ -102,6 +102,7 @@ fn resolve_code(error: &ResolveError) -> &'static str {
         ResolveError::ArgumentCountMismatch { .. } => "R005",
         ResolveError::CannotAssignToImmutable { .. } => "R006",
         ResolveError::InvalidAssignmentTarget { .. } => "R007",
+        ResolveError::InvalidConst { .. } => "R008",
     }
 }
 
@@ -241,6 +242,13 @@ pub fn resolve_to_diagnostics(errors: &[ResolveError]) -> Vec<Diagnostic> {
                     *span,
                     Some(
                         "assignment targets must be a variable, `*ref`, field, or index"
+                            .to_string(),
+                    ),
+                ),
+                ResolveError::InvalidConst { span, .. } => (
+                    *span,
+                    Some(
+                        "const values must be literals, earlier consts, or unary/binary operators"
                             .to_string(),
                     ),
                 ),

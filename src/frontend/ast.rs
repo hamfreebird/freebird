@@ -321,6 +321,17 @@ pub enum Decl {
     Impl(ImplDecl),
     /// 模块声明: mod name;（加载同目录 name.fb）
     Mod { name: String, span: Span },
+    /// 常量声明: `const NAME: Type = expr;`（编译期求值子集）
+    Const(ConstDecl),
+}
+
+/// `const NAME: Type = expr;`；`ty` 省略时按求值结果推断。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstDecl {
+    pub name: String,
+    pub ty: Option<Type>,
+    pub value: Expr,
+    pub span: Span,
 }
 
 /// 泛型参数（MVP：内建 trait 约束，如 `<T: Ord + Display>`）。

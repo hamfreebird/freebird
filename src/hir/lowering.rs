@@ -11,6 +11,8 @@ pub struct Lowering {
     errors: Vec<ResolveError>,
     /// `use Type::item;` 的别名表：别名 → 限定名。
     aliases: HashMap<String, String>,
+    /// 编译期求值后的 `const` 值。
+    consts: HashMap<String, ast::Literal>,
 }
 
 impl Lowering {
@@ -19,6 +21,7 @@ impl Lowering {
             resolver: Resolver::new(),
             errors: Vec::new(),
             aliases: HashMap::new(),
+            consts: HashMap::new(),
         }
     }
 
@@ -39,6 +42,22 @@ impl Lowering {
 
         // 第一遍：收集所有函数签名
         self.collect_fn_signatures(ast_program);
+
+        // 收集并求值 `const` 声明（按声明顺序，可引用此前的 const）。
+        for decl in &ast_program.decls {
+            if let ast::Decl::Const(c) = decl {
+                match eval_const_expr(&c.value, &self.consts) {
+                    Ok(lit) => {
+                        self.consts.insert(c.name.clone(), lit);
+                    }
+                    Err(reason) => self.errors.push(ResolveError::InvalidConst {
+                        name: c.name.clone(),
+                        reason,
+                        span: c.span,
+                    }),
+                }
+            }
+        }
 
         // 第二遍：降级所有声明
         let mut decls = Vec::new();
@@ -153,6 +172,8 @@ impl Lowering {
             ast::Decl::Impl(_) => None,
             // `mod` 由流水线在降级前展开为子模块的声明。
             ast::Decl::Mod { .. } => None,
+            // `const` 已在第一遍求值，使用处被替换为字面量。
+            ast::Decl::Const(_) => None,
         }
     }
 
@@ -358,6 +379,10 @@ impl Lowering {
                         span: *span,
                     })),
                     Err(e) => {
+                        // `const` 名在编译期替换为求值后的字面量。
+                        if let Some(lit) = self.consts.get(name).cloned() {
+                            return Some(HirExpr::Lit(lit, *span));
+                        }
                         // 函数名、类型名（首字母大写）或内建函数名不作为变量错误；
                         // `use` 别名在查函数表前先解析成限定名。
                         let resolved_fn = self
@@ -801,6 +826,87 @@ pub fn lower(ast_program: &ast::Program) -> (HirProgram, Vec<ResolveError>) {
 /// 检查函数名是否为内建/标准库函数
 fn is_builtin_fn(name: &str) -> bool {
     crate::io::is_builtin(name)
+}
+
+/// 编译期求值 `const` 表达式：字面量、此前的 const、一元/二元运算。
+fn eval_const_expr(
+    expr: &ast::Expr,
+    consts: &HashMap<String, ast::Literal>,
+) -> Result<ast::Literal, String> {
+    match expr {
+        ast::Expr::Lit(lit, _) => Ok(lit.clone()),
+        ast::Expr::Var(name, _) => consts
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("`{name}` is not a previously defined const")),
+        ast::Expr::Unary(op, inner, _) => {
+            let value = eval_const_expr(inner, consts)?;
+            match (op, value) {
+                (ast::UnOp::Neg, ast::Literal::Int(n, suffix)) => n
+                    .checked_neg()
+                    .map(|v| ast::Literal::Int(v, suffix))
+                    .ok_or_else(|| "integer overflow".to_string()),
+                (ast::UnOp::Not, ast::Literal::Bool(b)) => Ok(ast::Literal::Bool(!b)),
+                _ => Err("unsupported unary operator in const".to_string()),
+            }
+        }
+        ast::Expr::Binary(left, op, right, _) => {
+            let a = eval_const_expr(left, consts)?;
+            let b = eval_const_expr(right, consts)?;
+            eval_const_binary(*op, a, b)
+        }
+        _ => Err(
+            "unsupported expression in const (use literals, const references, unary/binary operators)"
+                .to_string(),
+        ),
+    }
+}
+
+fn eval_const_binary(
+    op: ast::BinOp,
+    a: ast::Literal,
+    b: ast::Literal,
+) -> Result<ast::Literal, String> {
+    match (a, b) {
+        (ast::Literal::Int(x, suffix), ast::Literal::Int(y, _)) => {
+            let value = match op {
+                ast::BinOp::Add => x.checked_add(y),
+                ast::BinOp::Sub => x.checked_sub(y),
+                ast::BinOp::Mul => x.checked_mul(y),
+                ast::BinOp::Div => {
+                    if y == 0 {
+                        return Err("division by zero".to_string());
+                    }
+                    x.checked_div(y)
+                }
+                ast::BinOp::Mod => {
+                    if y == 0 {
+                        return Err("division by zero".to_string());
+                    }
+                    x.checked_rem(y)
+                }
+                ast::BinOp::Eq => return Ok(ast::Literal::Bool(x == y)),
+                ast::BinOp::Ne => return Ok(ast::Literal::Bool(x != y)),
+                ast::BinOp::Lt => return Ok(ast::Literal::Bool(x < y)),
+                ast::BinOp::Gt => return Ok(ast::Literal::Bool(x > y)),
+                ast::BinOp::Le => return Ok(ast::Literal::Bool(x <= y)),
+                ast::BinOp::Ge => return Ok(ast::Literal::Bool(x >= y)),
+                _ => return Err("unsupported operator for integers in const".to_string()),
+            };
+            value
+                .map(|v| ast::Literal::Int(v, suffix))
+                .ok_or_else(|| "integer overflow".to_string())
+        }
+        (ast::Literal::Bool(x), ast::Literal::Bool(y)) => match op {
+            ast::BinOp::And => Ok(ast::Literal::Bool(x && y)),
+            ast::BinOp::Or => Ok(ast::Literal::Bool(x || y)),
+            ast::BinOp::Xor => Ok(ast::Literal::Bool(x ^ y)),
+            ast::BinOp::Eq => Ok(ast::Literal::Bool(x == y)),
+            ast::BinOp::Ne => Ok(ast::Literal::Bool(x != y)),
+            _ => Err("unsupported operator for bools in const".to_string()),
+        },
+        _ => Err("const operands have incompatible types".to_string()),
+    }
 }
 
 /// 将内建函数声明的类型名转换为 HIR 类型
