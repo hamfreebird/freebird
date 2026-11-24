@@ -325,6 +325,8 @@ pub enum Decl {
     Use(Vec<String>, Span),
     /// 实现块: impl Type { fn ... }
     Impl(ImplDecl),
+    /// trait 声明: trait Name { fn ...; }（M6-5.3 最小静态分发）
+    Trait(TraitDecl),
     /// 模块声明: mod name;（加载同目录 name.fb）
     Mod { name: String, span: Span },
     /// 常量声明: `const NAME: Type = expr;`（编译期求值子集）
@@ -352,9 +354,21 @@ pub struct GenericParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplDecl {
     pub type_name: String,
+    /// `impl Trait for Type` 的 trait 名；普通 `impl Type` 为 `None`。
+    pub trait_name: Option<String>,
     /// impl 的类型参数（`impl<T> Pair<T>`；MVP 仅类型参数）。
     pub generics: Vec<GenericParam>,
     pub fns: Vec<FnDecl>,
+    pub span: Span,
+}
+
+/// `trait Name { fn ...; }`（M6-5.3 最小静态分发：仅作为方法集合声明）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDecl {
+    pub name: String,
+    pub public: bool,
+    /// 方法签名（允许无函数体）。
+    pub methods: Vec<FnDecl>,
     pub span: Span,
 }
 

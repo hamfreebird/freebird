@@ -52,6 +52,7 @@ impl Parser {
             TokenKind::Struct => self.parse_struct(attrs).map(Decl::Struct),
             TokenKind::Enum => self.parse_enum(attrs).map(Decl::Enum),
             TokenKind::Impl => self.parse_impl().map(Decl::Impl),
+            TokenKind::Trait => self.parse_trait(),
             TokenKind::Mod => self.parse_mod_decl(),
             TokenKind::Extern => {
                 if !attrs.is_empty() {
@@ -75,7 +76,8 @@ impl Parser {
                 let token = self.advance();
                 Err(FrontendError::new(
                     FrontendErrorKind::UnexpectedToken {
-                        expected: "declaration (fn, const, struct, enum, extern, use)".to_string(),
+                        expected: "declaration (fn, const, struct, enum, trait, extern, use)"
+                            .to_string(),
                         found: token.clone(),
                     },
                     token.span,
@@ -87,6 +89,7 @@ impl Parser {
                 Decl::Fn(f) => f.public = true,
                 Decl::Struct(s) => s.public = true,
                 Decl::Enum(e) => e.public = true,
+                Decl::Trait(t) => t.public = true,
                 _ => {}
             }
         }
@@ -232,11 +235,37 @@ impl Parser {
         Ok(Decl::Mod { name, span })
     }
 
+    /// 解析 `trait Name { fn ...; }`（M6-5.3 最小静态分发：仅方法集合声明）。
+    fn parse_trait(&mut self) -> Result<Decl, FrontendError> {
+        let span = self.expect(TokenKind::Trait)?.span;
+        let name = self.expect_ident("trait name")?;
+        self.expect(TokenKind::LBrace)?;
+        let mut methods = Vec::new();
+        while !self.check(TokenKind::RBrace) && !self.check(TokenKind::Eof) {
+            let attrs = self.parse_attributes()?;
+            methods.push(self.parse_fn(attrs)?);
+        }
+        self.expect(TokenKind::RBrace)?;
+        Ok(Decl::Trait(TraitDecl {
+            name,
+            public: false,
+            methods,
+            span,
+        }))
+    }
+
     /// 解析 `impl Type { fn ... }` 块；方法名在降级时扁平化为 `Type::name`。
     fn parse_impl(&mut self) -> Result<ImplDecl, FrontendError> {
         let span = self.expect(TokenKind::Impl)?.span;
         let generics = self.parse_generic_params()?;
-        let type_name = self.expect_ident("impl target type")?;
+        let first = self.expect_ident("impl target type")?;
+        // `impl Trait for Type` 的 trait 名只用于声明归属；方法仍扁平化为 `Type::name`。
+        let (trait_name, type_name) = if self.eat(TokenKind::For) {
+            let target = self.expect_ident("impl target type")?;
+            (Some(first), target)
+        } else {
+            (None, first)
+        };
         // 可选的目标类型实参：`impl<T> Pair<T>`。类型擦除 MVP 下实参只用于语法，
         // 语义由方法签名上的泛型参数承担。
         if self.eat(TokenKind::Lt) {
@@ -257,6 +286,7 @@ impl Parser {
         self.expect(TokenKind::RBrace)?;
         Ok(ImplDecl {
             type_name,
+            trait_name,
             generics,
             fns,
             span,

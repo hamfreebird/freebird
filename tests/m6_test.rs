@@ -180,6 +180,21 @@ fn main() {
 }
 
 #[test]
+fn traits_dispatch_statically_on_both_backends() {
+    let source = r#"
+trait Greet { fn greet(&self) -> i64; }
+struct P { x: i64 }
+impl Greet for P { fn greet(&self) -> i64 { self.x } }
+fn main() {
+    let p = P { x: 7 };
+    print(p.greet());
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "trait_static", b"");
+}
+
+#[test]
 fn closures_are_rejected_clearly() {
     let errors = freebird::check_source("fn main() { let f = |x: i64| x + 1; }")
         .expect_err("closures must be rejected");

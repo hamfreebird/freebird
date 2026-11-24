@@ -351,7 +351,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 |---|---|---|
 | M6-5.1 | 泛型约束与按实例单态化 | 先 ADR；分阶段实现；双后端测试；不破坏现有类型擦除程序（P2，基础设施 + 内建 trait 约束已完成：实例收集、`Pair<i64>`/`Pair<String>` 独立布局、T026；按实例函数体单态化待排期） |
 | M6-5.2 | 字符串格式化 API | 规范提案（格式化/插值）；实现与测试；文档同步（P2，已完成：`format(template, args...)` + `MirInst::Format`，VM/Stardust/LLVM 一致） |
-| M6-5.3 | 闭包、`const`、trait/关联类型 | 先 ADR/规范；不作为 M6 硬承诺（P3，`const` 已完成；闭包语法已解析但显式拒绝（T018），捕获/调用语义与用户 trait 待排期） |
+| M6-5.3 | 闭包、`const`、trait/关联类型 | 先 ADR/规范；不作为 M6 硬承诺（P3，`const` 已完成；闭包语法显式拒绝（T018）；trait 声明 + `impl Trait for Type` 静态分发已完成；捕获语义、trait 约束/`dyn`/关联类型待排期） |
 
 **M6 执行顺序**
 

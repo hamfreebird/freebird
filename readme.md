@@ -336,7 +336,19 @@ impl Rect {
 - 声明内的名字在编译期扁平化为 `Type::name`；关联函数用 `Type::f(...)` 调用。
 - 方法调用 `x.f(...)` 按接收者类型解析：用户方法优先，未命中才回落到内建方法（`Vec`/`String`/`Option`/`Result`）。
 - 接收者可为 `self`、`&self` 或 `&mut self`；`self.field` 自动按接收者解引用，`&mut self` 的字段写入会回写到调用方变量。
-- `impl` 暂不接受泛型参数。决策与实现边界见 `docs/adr/0003-user-impl-methods.md`。
+- `impl<T>` 支持类型参数（类型擦除 MVP）；决策与实现边界见 `docs/adr/0003-user-impl-methods.md`。
+
+### 5.7 trait（最小静态分发）
+
+```freebird
+trait Greet { fn greet(&self) -> i64; }
+impl Greet for Point { fn greet(&self) -> i64 { self.x } }
+```
+
+- `trait` 声明方法签名（允许无函数体）；`impl Trait for Type` 的方法按 `Type::name` 扁平化，
+  调用点 `x.greet()` 复用现有用户方法解析，属于静态分发。
+- 当前不检查 `Type` 是否真的实现了 trait，也不支持 `dyn Trait`、关联类型或把用户 trait
+  用作泛型约束；这些与闭包捕获语义一起留待后续轮次（`docs/adr/0006-language-evolution.md`）。
 
 ---
 

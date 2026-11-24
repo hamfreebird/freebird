@@ -174,6 +174,8 @@ impl Lowering {
             ast::Decl::Mod { .. } => None,
             // `const` 已在第一遍求值，使用处被替换为字面量。
             ast::Decl::Const(_) => None,
+            // trait 声明只作为方法集合记录；方法实现由 `impl Trait for Type` 展开。
+            ast::Decl::Trait(_) => None,
         }
     }
 

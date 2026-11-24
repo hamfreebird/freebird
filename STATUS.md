@@ -42,6 +42,7 @@
 | 字符串解析（`str_to_int`） | §9 | ✅ | ✅ | ✅ | `m2_test` |
 | 字符串格式化 `format(template, args...)` | §11.5 | ✅ | ✅ | ✅ | `m6_test`（占位符/转义/变量模板；T024/T025 诊断） |
 | 用户 `impl`（关联函数 + `self` 方法） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
+| `trait` 声明 + `impl Trait for Type`（静态分发） | §5.7 | ✅ 方法扁平化 | ✅ | ✅ | `m6_test`；无 trait 约束检查/`dyn`/关联类型 |
 | `&self` 接收者（只读方法） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
 | `&mut self` 接收者（写回） | §5 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
 | `file_read` / `file_write` | §9 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
