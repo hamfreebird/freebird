@@ -16,10 +16,7 @@ pub enum VmError {
     /// 悬空引用（ElementId 在栈中找不到）
     DanglingReference { id: u64, name: String },
     /// 类型不匹配
-    TypeMismatch {
-        expected: String,
-        found: String,
-    },
+    TypeMismatch { expected: String, found: String },
     /// 步数超限
     StepLimitExceeded,
     /// 执行时间超限（秒）

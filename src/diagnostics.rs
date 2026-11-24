@@ -4,11 +4,11 @@
 
 use serde::Serialize;
 
-use crate::frontend::error::FrontendError;
-use crate::hir::resolver::ResolveError;
 use crate::borrowck::checker::BorrowError;
-use crate::typeck::{TypeCheckError, TypeCheckWarning};
+use crate::frontend::error::FrontendError;
 use crate::frontend::token::Span;
+use crate::hir::resolver::ResolveError;
+use crate::typeck::{TypeCheckError, TypeCheckWarning};
 
 /// 诊断级别
 #[derive(Debug, Clone, Serialize)]
@@ -56,170 +56,202 @@ impl SourceSpan {
 
 /// 将前端错误转换为诊断消息
 pub fn frontend_to_diagnostics(errors: &[FrontendError]) -> Vec<Diagnostic> {
-    errors.iter().map(|e| {
-        Diagnostic {
+    errors
+        .iter()
+        .map(|e| Diagnostic {
             level: DiagnosticLevel::Error,
             message: format!("{e}"),
             span: SourceSpan::from_span(e.span),
             notes: vec![],
             suggestion: None,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// 将名称解析错误转换为诊断消息
 pub fn resolve_to_diagnostics(errors: &[ResolveError]) -> Vec<Diagnostic> {
-    errors.iter().map(|e| {
-        let (span, suggestion) = match e {
-            ResolveError::UndefinedVariable { span, .. } => {
-                (*span, Some("did you forget to declare this variable?".to_string()))
+    errors
+        .iter()
+        .map(|e| {
+            let (span, suggestion) = match e {
+                ResolveError::UndefinedVariable { span, .. } => (
+                    *span,
+                    Some("did you forget to declare this variable?".to_string()),
+                ),
+                ResolveError::ForwardReference { span, .. } => (
+                    *span,
+                    Some("variables must be initialized before use".to_string()),
+                ),
+                ResolveError::DuplicateDefinition { second, .. } => (
+                    *second,
+                    Some("rename or remove the duplicate definition".to_string()),
+                ),
+                ResolveError::DuplicateField { second, .. } => (
+                    *second,
+                    Some("rename or remove the duplicate field".to_string()),
+                ),
+                ResolveError::ArgumentCountMismatch {
+                    span,
+                    expected,
+                    got,
+                    ..
+                } => (
+                    *span,
+                    Some(format!("expected {expected} arguments, got {got}")),
+                ),
+                ResolveError::CannotAssignToImmutable { span, .. } => (
+                    *span,
+                    Some("declare the variable with `let mut` to make it mutable".to_string()),
+                ),
+                ResolveError::InvalidAssignmentTarget { span } => (
+                    *span,
+                    Some(
+                        "assignment targets must be a variable, `*ref`, field, or index"
+                            .to_string(),
+                    ),
+                ),
+            };
+            Diagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("{e}"),
+                span: SourceSpan::from_span(span),
+                notes: vec![],
+                suggestion,
             }
-            ResolveError::ForwardReference { span, .. } => {
-                (*span, Some("variables must be initialized before use".to_string()))
-            }
-            ResolveError::DuplicateDefinition { second, .. } => {
-                (*second, Some("rename or remove the duplicate definition".to_string()))
-            }
-            ResolveError::DuplicateField { second, .. } => {
-                (*second, Some("rename or remove the duplicate field".to_string()))
-            }
-            ResolveError::ArgumentCountMismatch { span, expected, got, .. } => {
-                (*span, Some(format!("expected {expected} arguments, got {got}")))
-            }
-            ResolveError::CannotAssignToImmutable { span, .. } => {
-                (*span, Some("declare the variable with `let mut` to make it mutable".to_string()))
-            }
-            ResolveError::InvalidAssignmentTarget { span } => {
-                (*span, Some("assignment targets must be a variable, `*ref`, field, or index".to_string()))
-            }
-        };
-        Diagnostic {
-            level: DiagnosticLevel::Error,
-            message: format!("{e}"),
-            span: SourceSpan::from_span(span),
-            notes: vec![],
-            suggestion,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// 将类型检查错误转换为诊断消息
 pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
-    errors.iter().map(|e| {
-        let suggestion = match e {
-            TypeCheckError::TypeMismatch { .. } => {
-                Some("change the value or the expected type annotation".to_string())
+    errors
+        .iter()
+        .map(|e| {
+            let suggestion = match e {
+                TypeCheckError::TypeMismatch { .. } => {
+                    Some("change the value or the expected type annotation".to_string())
+                }
+                TypeCheckError::ConditionNotBool { .. } => Some(
+                    "conditions must be `bool`; use a comparison or a bool variable".to_string(),
+                ),
+                TypeCheckError::UnknownType { name, .. } => {
+                    Some(format!("declare `{name}` or fix the spelling"))
+                }
+                TypeCheckError::UnknownFunction { name, .. } => {
+                    Some(format!("declare function `{name}` or fix the spelling"))
+                }
+                TypeCheckError::UnknownLoopLabel { label, .. } => Some(format!(
+                    "declare the loop label `'{label}` or fix the spelling"
+                )),
+                TypeCheckError::UnknownField { .. } => {
+                    Some("check the field name and the struct type".to_string())
+                }
+                TypeCheckError::UnknownVariant { .. } => {
+                    Some("check the variant name and the enum type".to_string())
+                }
+                TypeCheckError::UnknownStruct { name, .. } => {
+                    Some(format!("declare struct `{name}` or fix the spelling"))
+                }
+                TypeCheckError::NotCallable { .. } => {
+                    Some("only functions can be called".to_string())
+                }
+                TypeCheckError::ArgumentCountMismatch { .. } => {
+                    Some("pass the number of arguments declared by the function".to_string())
+                }
+                TypeCheckError::ReturnArityMismatch { .. } => {
+                    Some("return the same number of values as declared".to_string())
+                }
+                TypeCheckError::LoopControlOutsideLoop { keyword, .. } => {
+                    Some(format!("move `{keyword}` inside a loop body"))
+                }
+                TypeCheckError::BreakWithValue { .. } => Some(
+                    "use `break` without a value until loop-value semantics are implemented"
+                        .to_string(),
+                ),
+                TypeCheckError::LoopUsedAsValue { .. } => Some(
+                    "use the loop as a statement, or use `return` to leave the function"
+                        .to_string(),
+                ),
+                TypeCheckError::NonExhaustiveMatch { .. } => {
+                    Some("add the missing variants or a `_` arm".to_string())
+                }
+                TypeCheckError::MissingFunctionBody { .. } => Some(
+                    "add `{ ... }`, or declare the function inside an `extern` block".to_string(),
+                ),
+                TypeCheckError::ExternCallOutsideUnsafe { .. } => {
+                    Some("wrap the extern call in an `unsafe` block".to_string())
+                }
+                TypeCheckError::UnsupportedFeature { .. } => {
+                    Some("remove the construct; it is reserved for a later milestone".to_string())
+                }
+                TypeCheckError::UnknownAttribute { .. } => {
+                    Some("remove the attribute or use a documented attribute".to_string())
+                }
+                TypeCheckError::InvalidAttribute { .. } => {
+                    Some("use the attribute syntax documented in readme.md".to_string())
+                }
+                TypeCheckError::RefutableLetPattern { .. } => {
+                    Some("replace the `let` with a `match` that covers all cases".to_string())
+                }
+                TypeCheckError::OrPatternBindingMismatch { .. } => {
+                    Some("bind the same variable names in every `or` alternative".to_string())
+                }
+                TypeCheckError::GenericArgMismatch { .. } => {
+                    Some("pass the number of type arguments declared by the function".to_string())
+                }
+            };
+            Diagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("{e}"),
+                span: SourceSpan::from_span(e.span()),
+                notes: vec![],
+                suggestion,
             }
-            TypeCheckError::ConditionNotBool { .. } => {
-                Some("conditions must be `bool`; use a comparison or a bool variable".to_string())
-            }
-            TypeCheckError::UnknownType { name, .. } => {
-                Some(format!("declare `{name}` or fix the spelling"))
-            }
-            TypeCheckError::UnknownFunction { name, .. } => {
-                Some(format!("declare function `{name}` or fix the spelling"))
-            }
-            TypeCheckError::UnknownLoopLabel { label, .. } => {
-                Some(format!("declare the loop label `'{label}` or fix the spelling"))
-            }
-            TypeCheckError::UnknownField { .. } => {
-                Some("check the field name and the struct type".to_string())
-            }
-            TypeCheckError::UnknownVariant { .. } => {
-                Some("check the variant name and the enum type".to_string())
-            }
-            TypeCheckError::UnknownStruct { name, .. } => {
-                Some(format!("declare struct `{name}` or fix the spelling"))
-            }
-            TypeCheckError::NotCallable { .. } => {
-                Some("only functions can be called".to_string())
-            }
-            TypeCheckError::ArgumentCountMismatch { .. } => {
-                Some("pass the number of arguments declared by the function".to_string())
-            }
-            TypeCheckError::ReturnArityMismatch { .. } => {
-                Some("return the same number of values as declared".to_string())
-            }
-            TypeCheckError::LoopControlOutsideLoop { keyword, .. } => {
-                Some(format!("move `{keyword}` inside a loop body"))
-            }
-            TypeCheckError::BreakWithValue { .. } => {
-                Some("use `break` without a value until loop-value semantics are implemented"
-                    .to_string())
-            }
-            TypeCheckError::LoopUsedAsValue { .. } => {
-                Some("use the loop as a statement, or use `return` to leave the function"
-                    .to_string())
-            }
-            TypeCheckError::NonExhaustiveMatch { .. } => {
-                Some("add the missing variants or a `_` arm".to_string())
-            }
-            TypeCheckError::MissingFunctionBody { .. } => {
-                Some("add `{ ... }`, or declare the function inside an `extern` block".to_string())
-            }
-            TypeCheckError::ExternCallOutsideUnsafe { .. } => {
-                Some("wrap the extern call in an `unsafe` block".to_string())
-            }
-            TypeCheckError::UnsupportedFeature { .. } => {
-                Some("remove the construct; it is reserved for a later milestone".to_string())
-            }
-            TypeCheckError::UnknownAttribute { .. } => {
-                Some("remove the attribute or use a documented attribute".to_string())
-            }
-            TypeCheckError::InvalidAttribute { .. } => {
-                Some("use the attribute syntax documented in readme.md".to_string())
-            }
-            TypeCheckError::RefutableLetPattern { .. } => {
-                Some("replace the `let` with a `match` that covers all cases".to_string())
-            }
-            TypeCheckError::OrPatternBindingMismatch { .. } => {
-                Some("bind the same variable names in every `or` alternative".to_string())
-            }
-            TypeCheckError::GenericArgMismatch { .. } => {
-                Some("pass the number of type arguments declared by the function".to_string())
-            }
-        };
-        Diagnostic {
-            level: DiagnosticLevel::Error,
-            message: format!("{e}"),
-            span: SourceSpan::from_span(e.span()),
-            notes: vec![],
-            suggestion,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// 将借用检查错误转换为诊断消息
 pub fn borrow_to_diagnostics(errors: &[BorrowError]) -> Vec<Diagnostic> {
-    errors.iter().map(|e| {
-        let (span, suggestion) = match e {
-            BorrowError::UseAfterMove { span, .. } => {
-                (*span, Some("the value was moved and can no longer be used".to_string()))
+    errors
+        .iter()
+        .map(|e| {
+            let (span, suggestion) = match e {
+                BorrowError::UseAfterMove { span, .. } => (
+                    *span,
+                    Some("the value was moved and can no longer be used".to_string()),
+                ),
+                BorrowError::UseWhileBorrowedMut { span, .. } => (
+                    *span,
+                    Some(
+                        "wait for the mutable borrow to end before using this variable".to_string(),
+                    ),
+                ),
+                BorrowError::BorrowWhileBorrowedMut { span, .. } => (
+                    *span,
+                    Some("cannot borrow while a mutable borrow is active".to_string()),
+                ),
+                BorrowError::MutBorrowWhileBorrowed { span, .. } => (
+                    *span,
+                    Some("release existing borrows before taking a mutable borrow".to_string()),
+                ),
+                BorrowError::MoveWhileBorrowed { span, .. } => {
+                    (*span, Some("cannot move a borrowed value".to_string()))
+                }
+                BorrowError::CannotAssignToImmutable { span, .. } => (
+                    *span,
+                    Some("declare the variable with `let mut` to make it mutable".to_string()),
+                ),
+            };
+            Diagnostic {
+                level: DiagnosticLevel::Error,
+                message: format!("{e}"),
+                span: SourceSpan::from_span(span),
+                notes: vec![],
+                suggestion,
             }
-            BorrowError::UseWhileBorrowedMut { span, .. } => {
-                (*span, Some("wait for the mutable borrow to end before using this variable".to_string()))
-            }
-            BorrowError::BorrowWhileBorrowedMut { span, .. } => {
-                (*span, Some("cannot borrow while a mutable borrow is active".to_string()))
-            }
-            BorrowError::MutBorrowWhileBorrowed { span, .. } => {
-                (*span, Some("release existing borrows before taking a mutable borrow".to_string()))
-            }
-            BorrowError::MoveWhileBorrowed { span, .. } => {
-                (*span, Some("cannot move a borrowed value".to_string()))
-            }
-            BorrowError::CannotAssignToImmutable { span, .. } => {
-                (*span, Some("declare the variable with `let mut` to make it mutable".to_string()))
-            }
-        };
-        Diagnostic {
-            level: DiagnosticLevel::Error,
-            message: format!("{e}"),
-            span: SourceSpan::from_span(span),
-            notes: vec![],
-            suggestion,
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// 生成完整的 JSON 诊断报告

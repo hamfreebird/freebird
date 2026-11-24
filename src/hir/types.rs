@@ -197,7 +197,10 @@ pub enum HirAssignTarget {
     /// 字段赋值: obj.field = v
     Field { object: Box<HirExpr>, field: String },
     /// 索引赋值: arr[i] = v
-    Index { array: Box<HirExpr>, index: Box<HirExpr> },
+    Index {
+        array: Box<HirExpr>,
+        index: Box<HirExpr>,
+    },
 }
 
 // ─── HIR 声明 ───
@@ -259,9 +262,7 @@ impl HirType {
             ast::Type::Tuple(types, _) => {
                 HirType::Tuple(types.iter().map(HirType::from_ast_type).collect())
             }
-            ast::Type::Array(elem, _, _) => {
-                HirType::Array(Box::new(HirType::from_ast_type(elem)))
-            }
+            ast::Type::Array(elem, _, _) => HirType::Array(Box::new(HirType::from_ast_type(elem))),
             ast::Type::FnPtr(params, ret, _) => {
                 let p: Vec<HirType> = params.iter().map(HirType::from_ast_type).collect();
                 // 返回类型列表与函数声明保持一致：`-> (A, B)` 表示两个返回值。

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::pipeline::{compile_program, CompiledProgram};
+use crate::pipeline::{CompiledProgram, compile_program};
 use crate::vm::mir::MirInst;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -337,10 +337,8 @@ mod tests {
 
     #[test]
     fn llvm_rejects_file_io() {
-        let err = compile_llvm_ir(
-            r#"fn main() { let s = file_read("x.txt"); print_str(s); }"#,
-        )
-        .unwrap_err();
+        let err = compile_llvm_ir(r#"fn main() { let s = file_read("x.txt"); print_str(s); }"#)
+            .unwrap_err();
         assert!(err.contains("file I/O"), "unexpected error: {err}");
     }
 }

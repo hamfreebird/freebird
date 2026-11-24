@@ -55,7 +55,9 @@ pub struct VariantDef {
 
 impl TypeTable {
     pub fn new() -> Self {
-        let mut table = Self { types: HashMap::new() };
+        let mut table = Self {
+            types: HashMap::new(),
+        };
         // 标准库枚举（泛型载荷：`Option<T>`、`Result<T, E>`）。用户声明同名枚举会覆盖。
         table.register_enum(
             "Option",
@@ -161,13 +163,19 @@ impl TypeTable {
     /// 获取结构体字段的栈偏移量
     pub fn field_offset(&self, type_name: &str, field_name: &str) -> Option<u32> {
         let s = self.lookup_struct(type_name)?;
-        s.fields.iter().find(|f| f.name == field_name).map(|f| f.index as u32)
+        s.fields
+            .iter()
+            .find(|f| f.name == field_name)
+            .map(|f| f.index as u32)
     }
 
     /// 获取枚举变体的标签值
     pub fn variant_tag(&self, type_name: &str, variant_name: &str) -> Option<u32> {
         let e = self.lookup_enum(type_name)?;
-        e.variants.iter().find(|v| v.name == variant_name).map(|v| v.tag)
+        e.variants
+            .iter()
+            .find(|v| v.name == variant_name)
+            .map(|v| v.tag)
     }
 
     /// 判断类型是否存在
@@ -245,10 +253,10 @@ mod tests {
     #[test]
     fn test_register_struct() {
         let mut table = TypeTable::new();
-        table.register_struct("Point", vec![
-            ("x".into(), "i32".into()),
-            ("y".into(), "i32".into()),
-        ]);
+        table.register_struct(
+            "Point",
+            vec![("x".into(), "i32".into()), ("y".into(), "i32".into())],
+        );
         let s = table.lookup_struct("Point").unwrap();
         assert_eq!(s.total_slots, 2);
         assert_eq!(table.field_offset("Point", "x"), Some(0));
@@ -259,10 +267,10 @@ mod tests {
     #[test]
     fn test_register_enum() {
         let mut table = TypeTable::new();
-        table.register_enum("Option", vec![
-            ("None".into(), None),
-            ("Some".into(), Some("i32".into())),
-        ]);
+        table.register_enum(
+            "Option",
+            vec![("None".into(), None), ("Some".into(), Some("i32".into()))],
+        );
         let e = table.lookup_enum("Option").unwrap();
         assert_eq!(e.total_slots, 2); // 1 tag + 1 data
         assert_eq!(e.variants.len(), 2);

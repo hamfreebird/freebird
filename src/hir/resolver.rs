@@ -6,13 +6,37 @@ use crate::hir::types::FnSignature;
 /// 名称解析错误
 #[derive(Debug, Clone)]
 pub enum ResolveError {
-    UndefinedVariable { name: String, span: Span },
-    ForwardReference { name: String, span: Span },
-    DuplicateDefinition { name: String, first: Span, second: Span },
-    DuplicateField { name: String, first: Span, second: Span },
-    ArgumentCountMismatch { expected: u32, got: usize, fn_name: String, span: Span },
-    CannotAssignToImmutable { name: String, span: Span },
-    InvalidAssignmentTarget { span: Span },
+    UndefinedVariable {
+        name: String,
+        span: Span,
+    },
+    ForwardReference {
+        name: String,
+        span: Span,
+    },
+    DuplicateDefinition {
+        name: String,
+        first: Span,
+        second: Span,
+    },
+    DuplicateField {
+        name: String,
+        first: Span,
+        second: Span,
+    },
+    ArgumentCountMismatch {
+        expected: u32,
+        got: usize,
+        fn_name: String,
+        span: Span,
+    },
+    CannotAssignToImmutable {
+        name: String,
+        span: Span,
+    },
+    InvalidAssignmentTarget {
+        span: Span,
+    },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -22,16 +46,41 @@ impl std::fmt::Display for ResolveError {
                 write!(f, "{span}: undefined variable `{name}`")
             }
             ResolveError::ForwardReference { name, span } => {
-                write!(f, "{span}: cannot use variable `{name}` before its declaration")
+                write!(
+                    f,
+                    "{span}: cannot use variable `{name}` before its declaration"
+                )
             }
-            ResolveError::DuplicateDefinition { name, first, second } => {
-                write!(f, "{second}: duplicate definition of `{name}` (first defined at {first})")
+            ResolveError::DuplicateDefinition {
+                name,
+                first,
+                second,
+            } => {
+                write!(
+                    f,
+                    "{second}: duplicate definition of `{name}` (first defined at {first})"
+                )
             }
-            ResolveError::DuplicateField { name, first, second } => {
-                write!(f, "{second}: duplicate field `{name}` (first defined at {first})")
+            ResolveError::DuplicateField {
+                name,
+                first,
+                second,
+            } => {
+                write!(
+                    f,
+                    "{second}: duplicate field `{name}` (first defined at {first})"
+                )
             }
-            ResolveError::ArgumentCountMismatch { expected, got, fn_name, span } => {
-                write!(f, "{span}: function `{fn_name}` expects {expected} arguments, got {got}")
+            ResolveError::ArgumentCountMismatch {
+                expected,
+                got,
+                fn_name,
+                span,
+            } => {
+                write!(
+                    f,
+                    "{span}: function `{fn_name}` expects {expected} arguments, got {got}"
+                )
             }
             ResolveError::CannotAssignToImmutable { name, span } => {
                 write!(f, "{span}: cannot assign to immutable variable `{name}`")
@@ -94,21 +143,30 @@ impl Resolver {
     }
 
     /// 在当前作用域中声明变量（初始未初始化）
-    pub fn declare_var(&mut self, name: &str, mutable: bool, span: Span) -> Result<(), ResolveError> {
+    pub fn declare_var(
+        &mut self,
+        name: &str,
+        mutable: bool,
+        span: Span,
+    ) -> Result<(), ResolveError> {
         if let Some(current) = self.scopes.last()
-            && let Some(existing) = current.get(name) {
-                return Err(ResolveError::DuplicateDefinition {
-                    name: name.to_string(),
-                    first: existing.span,
-                    second: span,
-                });
-            }
-        if let Some(current) = self.scopes.last_mut() {
-            current.insert(name.to_string(), Binding {
-                mutable,
-                span,
-                initialized: false,
+            && let Some(existing) = current.get(name)
+        {
+            return Err(ResolveError::DuplicateDefinition {
+                name: name.to_string(),
+                first: existing.span,
+                second: span,
             });
+        }
+        if let Some(current) = self.scopes.last_mut() {
+            current.insert(
+                name.to_string(),
+                Binding {
+                    mutable,
+                    span,
+                    initialized: false,
+                },
+            );
         }
         if let Some(ui) = self.uninitialized.last_mut() {
             ui.push(name.to_string());
@@ -122,9 +180,10 @@ impl Resolver {
             ui.retain(|n| n != name);
         }
         if let Some(current) = self.scopes.last_mut()
-            && let Some(binding) = current.get_mut(name) {
-                binding.initialized = true;
-            }
+            && let Some(binding) = current.get_mut(name)
+        {
+            binding.initialized = true;
+        }
     }
 
     /// 解析变量引用，返回作用域深度
@@ -133,7 +192,12 @@ impl Resolver {
             if let Some(binding) = scope.get(name) {
                 if !binding.initialized {
                     // 检查是否在当前作用域且未初始化 → 前向引用
-                    if depth == 0 && self.uninitialized.last().is_some_and(|ui| ui.contains(&name.to_string())) {
+                    if depth == 0
+                        && self
+                            .uninitialized
+                            .last()
+                            .is_some_and(|ui| ui.contains(&name.to_string()))
+                    {
                         return Err(ResolveError::ForwardReference {
                             name: name.to_string(),
                             span,

@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use freebird::{build_stardust, run_source, RuntimeConfig};
+use freebird::{RuntimeConfig, build_stardust, run_source};
 
 pub const INTERPRETER: &str = "stardust/stardust-linux-x86_64";
 
@@ -79,7 +79,8 @@ pub fn assert_same_output(source: &str, name: &str, input: &[u8]) {
     let sd = run_stardust(source, name, input);
     match (&vm, &sd) {
         (Run::Ok(vm_out), Run::Ok(sd_out)) => assert_eq!(
-            sd_out, vm_out,
+            sd_out,
+            vm_out,
             "VM/Stardust stdout mismatch for {name}\nVM: {}\nSD: {}",
             String::from_utf8_lossy(vm_out),
             String::from_utf8_lossy(sd_out)
@@ -108,16 +109,15 @@ pub fn fixture_input(path: &Path) -> Vec<u8> {
 
 /// 对单个 fixture 做 VM/Stardust 差分断言。
 pub fn assert_same(name: &str, path: &Path) {
-    let source = fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    let source =
+        fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     let input = fixture_input(path);
     assert_same_output(&source, name, &input);
 }
 
 /// 按文件名排序列出目录下的 `.fb` 文件。
 pub fn fb_files(dir: &str) -> Vec<PathBuf> {
-    let entries =
-        fs::read_dir(dir).unwrap_or_else(|error| panic!("read dir {dir}: {error}"));
+    let entries = fs::read_dir(dir).unwrap_or_else(|error| panic!("read dir {dir}: {error}"));
     let mut files: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())

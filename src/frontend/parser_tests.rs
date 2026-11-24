@@ -1,14 +1,16 @@
 #[cfg(test)]
 mod tests {
-    use crate::frontend::parse;
     use crate::frontend::ast::*;
+    use crate::frontend::parse;
 
     fn parse_expr(source: &str) -> Expr {
         let wrapped = format!("fn _test() {{ {} }}", source);
         let (prog, errors) = parse(&wrapped);
         if !errors.is_empty() {
             eprintln!("Parse errors for '{source}':");
-            for e in &errors { eprintln!("  {e}"); }
+            for e in &errors {
+                eprintln!("  {e}");
+            }
         }
         if let Some(Decl::Fn(f)) = prog.decls.first() {
             if let Some(ref body) = f.body {
@@ -28,7 +30,9 @@ mod tests {
         let (prog, errors) = parse(&wrapped);
         if !errors.is_empty() {
             eprintln!("Parse errors for '{source}':");
-            for e in &errors { eprintln!("  {e}"); }
+            for e in &errors {
+                eprintln!("  {e}");
+            }
         }
         if let Some(Decl::Fn(f)) = prog.decls.first() {
             if let Some(ref body) = f.body {
@@ -44,7 +48,9 @@ mod tests {
         let (prog, errors) = parse(source);
         if !errors.is_empty() {
             eprintln!("Parse errors for '{source}':");
-            for e in &errors { eprintln!("  {e}"); }
+            for e in &errors {
+                eprintln!("  {e}");
+            }
         }
         prog.decls.into_iter().next().expect("no decl parsed")
     }
@@ -55,18 +61,29 @@ mod tests {
 
     #[test]
     fn test_parse_integer_literal() {
-        assert!(matches!(parse_expr("42"), Expr::Lit(Literal::Int(42, _), _)));
+        assert!(matches!(
+            parse_expr("42"),
+            Expr::Lit(Literal::Int(42, _), _)
+        ));
     }
 
     #[test]
     fn test_parse_bool_literal() {
-        assert!(matches!(parse_expr("true"), Expr::Lit(Literal::Bool(true), _)));
-        assert!(matches!(parse_expr("false"), Expr::Lit(Literal::Bool(false), _)));
+        assert!(matches!(
+            parse_expr("true"),
+            Expr::Lit(Literal::Bool(true), _)
+        ));
+        assert!(matches!(
+            parse_expr("false"),
+            Expr::Lit(Literal::Bool(false), _)
+        ));
     }
 
     #[test]
     fn test_parse_string_literal() {
-        assert!(matches!(parse_expr("\"hello\""), Expr::Lit(Literal::String(s), _) if s == "hello"));
+        assert!(
+            matches!(parse_expr("\"hello\""), Expr::Lit(Literal::String(s), _) if s == "hello")
+        );
     }
 
     #[test]
@@ -95,7 +112,10 @@ mod tests {
 
     #[test]
     fn test_parse_paren_expr() {
-        assert!(matches!(parse_expr("(1)"), Expr::Lit(Literal::Int(1, _), _)));
+        assert!(matches!(
+            parse_expr("(1)"),
+            Expr::Lit(Literal::Int(1, _), _)
+        ));
     }
 
     #[test]
@@ -123,7 +143,10 @@ mod tests {
         let e = parse_expr("{ 42 }");
         match e {
             Expr::Block(block, _) => {
-                assert!(matches!(*block.tail.unwrap(), Expr::Lit(Literal::Int(42, _), _)));
+                assert!(matches!(
+                    *block.tail.unwrap(),
+                    Expr::Lit(Literal::Int(42, _), _)
+                ));
             }
             _ => panic!("unexpected AST: {e:?}"),
         }
@@ -155,7 +178,11 @@ mod tests {
     fn test_parse_fn_call_positional() {
         let e = parse_expr("foo(x, y)");
         match e {
-            Expr::Call { args, stack_pass: false, .. } => {
+            Expr::Call {
+                args,
+                stack_pass: false,
+                ..
+            } => {
                 assert_eq!(args.len(), 2);
             }
             _ => panic!("unexpected AST: {e:?}"),
@@ -165,7 +192,13 @@ mod tests {
     #[test]
     fn test_parse_fn_call_stack_pass() {
         let e = parse_expr("foo()");
-        assert!(matches!(e, Expr::Call { stack_pass: true, .. }));
+        assert!(matches!(
+            e,
+            Expr::Call {
+                stack_pass: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -277,7 +310,12 @@ mod tests {
     fn test_parse_multi_segment_path() {
         let e = parse_expr("a::b::c");
         match e {
-            Expr::EnumLit { name, variant, data, .. } => {
+            Expr::EnumLit {
+                name,
+                variant,
+                data,
+                ..
+            } => {
                 assert_eq!(name, vec!["a".to_string(), "b".to_string()]);
                 assert_eq!(variant, "c");
                 assert!(data.is_none());
@@ -291,9 +329,10 @@ mod tests {
         let (_, errors) = parse_program("fn main() { stardust! { Ret(x) } }");
         assert!(!errors.is_empty());
         assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e.kind, crate::frontend::error::FrontendErrorKind::InvalidNumber(_))),
+            errors.iter().any(|e| matches!(
+                e.kind,
+                crate::frontend::error::FrontendErrorKind::InvalidNumber(_)
+            )),
             "{errors:?}"
         );
     }

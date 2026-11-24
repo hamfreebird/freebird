@@ -18,10 +18,10 @@ pub mod vm;
 pub use diagnostics::{generate_diagnostic_json, generate_diagnostic_json_with_warnings};
 pub use frontend::parse;
 pub use hir::lower;
-pub use io::{std_library, IoLib};
+pub use io::{IoLib, std_library};
 pub use pipeline::{
-    build_stardust, check_source, check_source_with_warnings, compile_program, run_file, run_source,
-    CompiledProgram,
+    CompiledProgram, build_stardust, check_source, check_source_with_warnings, compile_program,
+    run_file, run_source,
 };
 pub use vm::Vm;
 pub use vm::config::RuntimeConfig;

@@ -102,9 +102,7 @@ impl Lowering {
         let n = params.len() as u32;
 
         let return_types: Vec<HirType> = match &f.return_type {
-            Some(ast::Type::Tuple(types, _)) => {
-                types.iter().map(HirType::from_ast_type).collect()
-            }
+            Some(ast::Type::Tuple(types, _)) => types.iter().map(HirType::from_ast_type).collect(),
             Some(ty) => vec![HirType::from_ast_type(ty)],
             None => vec![],
         };
@@ -200,7 +198,10 @@ impl Lowering {
             }
         }
 
-        let tail = block.tail.as_ref().and_then(|e| self.lower_expr(e).map(Box::new));
+        let tail = block
+            .tail
+            .as_ref()
+            .and_then(|e| self.lower_expr(e).map(Box::new));
         let scope_size = self.resolver.current_bindings().len();
 
         self.resolver.exit_scope();
@@ -217,7 +218,13 @@ impl Lowering {
 
     fn lower_stmt(&mut self, stmt: &ast::Stmt) -> Option<HirStmt> {
         match stmt {
-            ast::Stmt::Let { pattern, ty, init, mutable, span } => {
+            ast::Stmt::Let {
+                pattern,
+                ty,
+                init,
+                mutable,
+                span,
+            } => {
                 // 先声明变量（未初始化），再求值 RHS
                 // 这样 RHS 中引用同名变量会触发前向引用错误
                 let var_names = self.pattern_var_names(pattern);
@@ -245,10 +252,12 @@ impl Lowering {
                     span: *span,
                 })
             }
-            ast::Stmt::Expr(expr, span) => {
-                self.lower_expr(expr).map(|e| HirStmt::Expr(e, *span))
-            }
-            ast::Stmt::Assign { target, value, span } => {
+            ast::Stmt::Expr(expr, span) => self.lower_expr(expr).map(|e| HirStmt::Expr(e, *span)),
+            ast::Stmt::Assign {
+                target,
+                value,
+                span,
+            } => {
                 let hir_value = self.lower_expr(value)?;
                 let hir_target = self.lower_assign_target(target, *span)?;
                 Some(HirStmt::Assign {
@@ -261,7 +270,11 @@ impl Lowering {
     }
 
     /// 降级赋值目标（左值），并验证根变量可变性。
-    fn lower_assign_target(&mut self, target: &ast::Expr, fallback_span: Span) -> Option<HirAssignTarget> {
+    fn lower_assign_target(
+        &mut self,
+        target: &ast::Expr,
+        fallback_span: Span,
+    ) -> Option<HirAssignTarget> {
         match target {
             ast::Expr::Var(name, tspan) => {
                 let depth = match self.resolver.resolve_var(name, *tspan) {
@@ -305,8 +318,9 @@ impl Lowering {
                 })
             }
             _ => {
-                self.errors
-                    .push(ResolveError::InvalidAssignmentTarget { span: fallback_span });
+                self.errors.push(ResolveError::InvalidAssignmentTarget {
+                    span: fallback_span,
+                });
                 None
             }
         }
@@ -352,7 +366,10 @@ impl Lowering {
                             .cloned()
                             .unwrap_or_else(|| name.clone());
                         let is_type_name = name.chars().next().is_some_and(|c| c.is_uppercase());
-                        if self.resolver.lookup_fn(&resolved_fn).is_some() || is_type_name || is_builtin_fn(name) {
+                        if self.resolver.lookup_fn(&resolved_fn).is_some()
+                            || is_type_name
+                            || is_builtin_fn(name)
+                        {
                             Some(HirExpr::Var(HirVarRef {
                                 name: resolved_fn,
                                 scope_depth: usize::MAX,
@@ -385,13 +402,23 @@ impl Lowering {
             ast::Expr::Binary(lhs, op, rhs, span) => {
                 let hir_lhs = self.lower_expr(lhs)?;
                 let hir_rhs = self.lower_expr(rhs)?;
-                Some(HirExpr::Binary(Box::new(hir_lhs), *op, Box::new(hir_rhs), *span))
+                Some(HirExpr::Binary(
+                    Box::new(hir_lhs),
+                    *op,
+                    Box::new(hir_rhs),
+                    *span,
+                ))
             }
             ast::Expr::Unary(op, inner, span) => {
                 let hir_inner = self.lower_expr(inner)?;
                 Some(HirExpr::Unary(*op, Box::new(hir_inner), *span))
             }
-            ast::Expr::Call { func, args, stack_pass, span } => {
+            ast::Expr::Call {
+                func,
+                args,
+                stack_pass,
+                span,
+            } => {
                 // 方法调用: receiver.method(args)
                 if let ast::Expr::FieldAccess(receiver, method, _) = func.as_ref() {
                     let hir_receiver = self.lower_expr(receiver)?;
@@ -436,20 +463,26 @@ impl Lowering {
 
                 // 验证参数个数
                 if let Some(ref sig) = fn_sig
-                    && !stack_pass && args.len() as u32 != sig.n {
-                        self.errors.push(ResolveError::ArgumentCountMismatch {
-                            expected: sig.n,
-                            got: args.len(),
-                            fn_name: sig.name.clone(),
-                            span: *span,
-                        });
-                    }
+                    && !stack_pass
+                    && args.len() as u32 != sig.n
+                {
+                    self.errors.push(ResolveError::ArgumentCountMismatch {
+                        expected: sig.n,
+                        got: args.len(),
+                        fn_name: sig.name.clone(),
+                        span: *span,
+                    });
+                }
 
                 let mut hir_args: Vec<HirCallArg> = Vec::new();
                 for arg in args {
                     let lowered = match arg {
-                        ast::CallArg::Pos(e, s) => self.lower_expr(e).map(|he| HirCallArg::Pos(he, *s)),
-                        ast::CallArg::Named(n, e, s) => self.lower_expr(e).map(|he| HirCallArg::Named(n.clone(), he, *s)),
+                        ast::CallArg::Pos(e, s) => {
+                            self.lower_expr(e).map(|he| HirCallArg::Pos(he, *s))
+                        }
+                        ast::CallArg::Named(n, e, s) => self
+                            .lower_expr(e)
+                            .map(|he| HirCallArg::Named(n.clone(), he, *s)),
                     };
                     match lowered {
                         Some(a) => hir_args.push(a),
@@ -467,36 +500,65 @@ impl Lowering {
             }
             ast::Expr::FieldAccess(inner, field, span) => {
                 let hir_inner = self.lower_expr(inner)?;
-                Some(HirExpr::FieldAccess(Box::new(hir_inner), field.clone(), *span))
+                Some(HirExpr::FieldAccess(
+                    Box::new(hir_inner),
+                    field.clone(),
+                    *span,
+                ))
             }
             ast::Expr::Index(inner, index, span) => {
                 let hir_inner = self.lower_expr(inner)?;
                 let hir_index = self.lower_expr(index)?;
-                Some(HirExpr::Index(Box::new(hir_inner), Box::new(hir_index), *span))
+                Some(HirExpr::Index(
+                    Box::new(hir_inner),
+                    Box::new(hir_index),
+                    *span,
+                ))
             }
             ast::Expr::Tuple(elems, span) => {
                 let mut hir_elems = Vec::new();
-                for e in elems { if let Some(he) = self.lower_expr(e) { hir_elems.push(he); } }
+                for e in elems {
+                    if let Some(he) = self.lower_expr(e) {
+                        hir_elems.push(he);
+                    }
+                }
                 Some(HirExpr::Tuple(hir_elems, *span))
             }
             ast::Expr::Array(elems, span) => {
                 let mut hir_elems = Vec::new();
-                for e in elems { if let Some(he) = self.lower_expr(e) { hir_elems.push(he); } }
+                for e in elems {
+                    if let Some(he) = self.lower_expr(e) {
+                        hir_elems.push(he);
+                    }
+                }
                 Some(HirExpr::Array(hir_elems, *span))
             }
             ast::Expr::Repeat(elem, count, span) => {
                 let hir_elem = self.lower_expr(elem)?;
                 let hir_count = self.lower_expr(count)?;
-                Some(HirExpr::Repeat(Box::new(hir_elem), Box::new(hir_count), *span))
+                Some(HirExpr::Repeat(
+                    Box::new(hir_elem),
+                    Box::new(hir_count),
+                    *span,
+                ))
             }
             ast::Expr::StructLit { name, fields, span } => {
                 let hir_fields: Vec<(String, HirExpr)> = fields
                     .iter()
                     .map(|(n, e)| self.lower_expr(e).map(|he| (n.clone(), he)))
                     .collect::<Option<_>>()?;
-                Some(HirExpr::StructLit { name: name.clone(), fields: hir_fields, span: *span })
+                Some(HirExpr::StructLit {
+                    name: name.clone(),
+                    fields: hir_fields,
+                    span: *span,
+                })
             }
-            ast::Expr::EnumLit { name, variant, data, span } => {
+            ast::Expr::EnumLit {
+                name,
+                variant,
+                data,
+                span,
+            } => {
                 // 关联函数: Vec::new() / String::new() / Box::new(x)
                 if name.len() == 1
                     && matches!(name[0].as_str(), "Vec" | "String" | "Box")
@@ -564,7 +626,10 @@ impl Lowering {
                         self.resolver.mark_initialized(name);
                     }
 
-                    let guard = arm.guard.as_ref().and_then(|g| self.lower_expr(g).map(Box::new));
+                    let guard = arm
+                        .guard
+                        .as_ref()
+                        .and_then(|g| self.lower_expr(g).map(Box::new));
                     let body = self.lower_expr(&arm.body);
                     self.resolver.exit_scope();
 
@@ -588,7 +653,12 @@ impl Lowering {
                 let hir_body = self.lower_block(body);
                 Some(HirExpr::While(Box::new(hir_cond), hir_body, *span))
             }
-            ast::Expr::For { pattern, iterable, body, span } => {
+            ast::Expr::For {
+                pattern,
+                iterable,
+                body,
+                span,
+            } => {
                 let hir_iterable = self.lower_expr(iterable)?;
                 // 模式变量在循环体整体作用域内可见。
                 let bound_names = self.pattern_var_names(pattern);
@@ -615,20 +685,28 @@ impl Lowering {
                 Some(HirExpr::Labelled(label.clone(), Box::new(hir_inner), *span))
             }
             ast::Expr::BreakLabel(label, value, span) => {
-                let hir_value = value.as_ref().and_then(|e| self.lower_expr(e).map(Box::new));
+                let hir_value = value
+                    .as_ref()
+                    .and_then(|e| self.lower_expr(e).map(Box::new));
                 Some(HirExpr::BreakLabel(label.clone(), hir_value, *span))
             }
             ast::Expr::ContinueLabel(label, span) => {
                 Some(HirExpr::ContinueLabel(label.clone(), *span))
             }
             ast::Expr::Break(value, span) => {
-                let hir_value = value.as_ref().and_then(|e| self.lower_expr(e).map(Box::new));
+                let hir_value = value
+                    .as_ref()
+                    .and_then(|e| self.lower_expr(e).map(Box::new));
                 Some(HirExpr::Break(hir_value, *span))
             }
             ast::Expr::Continue(span) => Some(HirExpr::Continue(*span)),
             ast::Expr::Return(values, span) => {
                 let mut hir_values = Vec::new();
-                for e in values { if let Some(he) = self.lower_expr(e) { hir_values.push(he); } }
+                for e in values {
+                    if let Some(he) = self.lower_expr(e) {
+                        hir_values.push(he);
+                    }
+                }
                 Some(HirExpr::Return(hir_values, *span))
             }
             ast::Expr::Ret(n, span) => Some(HirExpr::Ret(*n, *span)),
@@ -743,7 +821,9 @@ fn builtin_type(name: &str) -> HirType {
                 let args = &other[open + 1..other.len() - 1];
                 return HirType::Generic(
                     Box::new(HirType::Path(vec![base.to_string()])),
-                    args.split(',').map(|arg| builtin_type(arg.trim())).collect(),
+                    args.split(',')
+                        .map(|arg| builtin_type(arg.trim()))
+                        .collect(),
                 );
             }
             HirType::Path(other.split("::").map(str::to_string).collect())
@@ -817,20 +897,26 @@ mod tests {
         let src = "fn main() { let x = y; }";
         let (_, errors) = lower_source(src);
         assert!(!errors.is_empty());
-        let has_undefined = errors.iter().any(|e| {
-            matches!(e, ResolveError::UndefinedVariable { name, .. } if name == "y")
-        });
-        assert!(has_undefined, "expected undefined variable error, got: {errors:?}");
+        let has_undefined = errors
+            .iter()
+            .any(|e| matches!(e, ResolveError::UndefinedVariable { name, .. } if name == "y"));
+        assert!(
+            has_undefined,
+            "expected undefined variable error, got: {errors:?}"
+        );
     }
 
     #[test]
     fn test_forward_reference() {
         let src = "fn main() { let x = x + 1; }";
         let (_, errors) = lower_source(src);
-        let has_forward = errors.iter().any(|e| {
-            matches!(e, ResolveError::ForwardReference { name, .. } if name == "x")
-        });
-        assert!(has_forward, "expected forward reference error, got: {errors:?}");
+        let has_forward = errors
+            .iter()
+            .any(|e| matches!(e, ResolveError::ForwardReference { name, .. } if name == "x"));
+        assert!(
+            has_forward,
+            "expected forward reference error, got: {errors:?}"
+        );
     }
 
     #[test]
@@ -916,23 +1002,22 @@ fn callee_name(expr: &ast::Expr) -> Option<&str> {
 /// 把类型中的 `Self` 替换为 impl 目标类型（泛型 impl 为 `Type<T...>`）。
 fn replace_self_type(ty: &ast::Type, self_ty: &ast::Type) -> ast::Type {
     match ty {
-        ast::Type::Path(segments, _)
-            if segments.len() == 1 && segments[0] == "Self" =>
-        {
+        ast::Type::Path(segments, _) if segments.len() == 1 && segments[0] == "Self" => {
             self_ty.clone()
         }
-        ast::Type::Ref(inner, mutable, span) => ast::Type::Ref(
-            Box::new(replace_self_type(inner, self_ty)),
-            *mutable,
-            *span,
-        ),
+        ast::Type::Ref(inner, mutable, span) => {
+            ast::Type::Ref(Box::new(replace_self_type(inner, self_ty)), *mutable, *span)
+        }
         ast::Type::Generic(base, args, span) => ast::Type::Generic(
             Box::new(replace_self_type(base, self_ty)),
             args.iter().map(|a| replace_self_type(a, self_ty)).collect(),
             *span,
         ),
         ast::Type::Tuple(types, span) => ast::Type::Tuple(
-            types.iter().map(|t| replace_self_type(t, self_ty)).collect(),
+            types
+                .iter()
+                .map(|t| replace_self_type(t, self_ty))
+                .collect(),
             *span,
         ),
         other => other.clone(),

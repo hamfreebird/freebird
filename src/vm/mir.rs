@@ -83,7 +83,7 @@ pub enum MirInst {
     }, // 正/负/零 roll
     Swap,
     Reverse, // 反转整个求值栈（stardust! 的 Reverse）
-    Pick, // pop n, dup stack[n]
+    Pick,    // pop n, dup stack[n]
 
     // === 算术 ===
     Add {
@@ -130,11 +130,17 @@ pub enum MirInst {
     Xor,
 
     // === 控制流 ===
-    Mark(usize),           // 跳转目标
-    Jump(usize),           // 条件跳转（pop cond, if cond≠0 jump）
-    UncondJump(usize),     // 无条件跳转
-    Call { fn_id: FnId, return_arity: u32 }, // 函数调用（argc从CallElement获取, return_arity从签名获取）
-    CallIndirect { argc: u32, return_arity: u32 }, // 间接调用：栈布局 [args..., fnptr]
+    Mark(usize),       // 跳转目标
+    Jump(usize),       // 条件跳转（pop cond, if cond≠0 jump）
+    UncondJump(usize), // 无条件跳转
+    Call {
+        fn_id: FnId,
+        return_arity: u32,
+    }, // 函数调用（argc从CallElement获取, return_arity从签名获取）
+    CallIndirect {
+        argc: u32,
+        return_arity: u32,
+    }, // 间接调用：栈布局 [args..., fnptr]
     /// `stardust!` 的原始 `Call(n, m)`：直接调用 Stardust 函数 `n`，
     /// 栈上已有 `m` 个参数。返回值个数由被调函数决定，Freebird 不追踪。
     StardustCall {
@@ -165,35 +171,69 @@ pub enum MirInst {
         argc: u32,
         return_arity: u32,
     },
-    Ret { argc: u32 },     // 返回
+    Ret {
+        argc: u32,
+    }, // 返回
 
     // === 变量与作用域 ===
     EnterScope,
     ExitScope,
-    BindVar { name: String },  // 将栈顶值绑定到变量名
-    ReadVar { name: String },  // 栈顶化读取（编译为 roll+dup+roll(-pos)）
-    WriteVar { name: String }, // 栈顶化写入（预求值 + roll+pop+roll(-pos)）
+    BindVar {
+        name: String,
+    }, // 将栈顶值绑定到变量名
+    ReadVar {
+        name: String,
+    }, // 栈顶化读取（编译为 roll+dup+roll(-pos)）
+    WriteVar {
+        name: String,
+    }, // 栈顶化写入（预求值 + roll+pop+roll(-pos)）
 
     // === 引用 ===
-    Ref { name: String, mutable: bool }, // &x / &mut x
-    Deref,                               // *r
+    Ref {
+        name: String,
+        mutable: bool,
+    }, // &x / &mut x
+    Deref, // *r
 
     // === 复合类型 ===
-    FieldAccess { index: usize }, // 字段/元组元素访问
-    IndexAccess,                  // arr[i] (pop i, pop arr, push arr[i])
-    StoreDeref,                   // *p = v (pop v, pop ref)
-    FieldStore { name: String, index: usize }, // obj.field = v
-    FieldStoreRef { name: String, index: usize }, // `&mut self` 方法内 self.field = v
-    IndexStore { name: String },  // arr[i] = v (pop v, pop i)
-    MakeArray { count: u32 },     // 将栈顶 count 个值合并为单槽数组
-    MakeArrayRepeat,              // pop count, pop elem，生成重复数组
-    MakeBox,                      // 将栈顶值包装为 Box
-    ContainerLen,                 // pop 容器（数组/Vec/String），push 长度
-    VecPush { name: String },     // v.push(x): pop x，就地追加到变量
-    VecPop { name: String },      // v.pop(): 就地移除末元素，push 结果
-    DropVar { name: String },     // 作用域退出时释放变量持有的远程栈（若有）
-    MakeEnum { variant: usize, data_slots: u32 },
-    EnumTag { total_slots: u32 }, // 读取枚举标签（total_slots = 1 + max_data_slots）
+    FieldAccess {
+        index: usize,
+    }, // 字段/元组元素访问
+    IndexAccess, // arr[i] (pop i, pop arr, push arr[i])
+    StoreDeref,  // *p = v (pop v, pop ref)
+    FieldStore {
+        name: String,
+        index: usize,
+    }, // obj.field = v
+    FieldStoreRef {
+        name: String,
+        index: usize,
+    }, // `&mut self` 方法内 self.field = v
+    IndexStore {
+        name: String,
+    }, // arr[i] = v (pop v, pop i)
+    MakeArray {
+        count: u32,
+    }, // 将栈顶 count 个值合并为单槽数组
+    MakeArrayRepeat, // pop count, pop elem，生成重复数组
+    MakeBox,     // 将栈顶值包装为 Box
+    ContainerLen, // pop 容器（数组/Vec/String），push 长度
+    VecPush {
+        name: String,
+    }, // v.push(x): pop x，就地追加到变量
+    VecPop {
+        name: String,
+    }, // v.pop(): 就地移除末元素，push 结果
+    DropVar {
+        name: String,
+    }, // 作用域退出时释放变量持有的远程栈（若有）
+    MakeEnum {
+        variant: usize,
+        data_slots: u32,
+    },
+    EnumTag {
+        total_slots: u32,
+    }, // 读取枚举标签（total_slots = 1 + max_data_slots）
 
     // === unsafe 值栈（ADR 0004）===
     RawPush, // 把求值栈顶移入值栈
@@ -203,17 +243,24 @@ pub enum MirInst {
     RawRoll, // pop n；把值栈顶元素移动 n 个位置
 
     // === 堆操作（stardust! 的 store/load）===
-    HeapStore,                   // 堆写：pop addr, pop value, heap[addr] = value
-    HeapLoad,                    // 堆读：pop addr, push heap[addr]
+    HeapStore, // 堆写：pop addr, pop value, heap[addr] = value
+    HeapLoad,  // 堆读：pop addr, push heap[addr]
 
     // === 标准库 ===
-    Abs,                         // pop i64, push |x|
-    Min,                         // pop b, pop a, push min(a, b)
-    Max,                         // pop b, pop a, push max(a, b)
-    IntToStr,                    // pop i64，push 十进制字符串
-    StrToInt { some_tag: i64, none_tag: i64 }, // pop 字符串，push Option<i64>
-    Unwrap { success_tag: i64 }, // pop enum, push payload; 失败时运行时错误
-    UnwrapOr { success_tag: i64 }, // pop default, pop enum; 成功 payload，否则 default
+    Abs,      // pop i64, push |x|
+    Min,      // pop b, pop a, push min(a, b)
+    Max,      // pop b, pop a, push max(a, b)
+    IntToStr, // pop i64，push 十进制字符串
+    StrToInt {
+        some_tag: i64,
+        none_tag: i64,
+    }, // pop 字符串，push Option<i64>
+    Unwrap {
+        success_tag: i64,
+    }, // pop enum, push payload; 失败时运行时错误
+    UnwrapOr {
+        success_tag: i64,
+    }, // pop default, pop enum; 成功 payload，否则 default
     /// `Result::ok()`/`Result::err()`：pop 枚举，push Option
     /// （源 tag == `match_tag` 时取 payload 组成 `[some_tag, payload]`，否则 `[none_tag]`）。
     EnumPayloadToOption {
@@ -234,10 +281,12 @@ pub enum MirInst {
     NumIn,
     CharOut,
     CharIn,
-    StrOut { newline: bool }, // 输出字符串（字符元组），可选换行
-    ReadLine,                 // 读取一行并压入字符串（字符元组）
-    FileRead,                 // pop path(String)，push 文件内容(String)
-    FileWrite,                // pop data(String), path(String)，写入文件
+    StrOut {
+        newline: bool,
+    }, // 输出字符串（字符元组），可选换行
+    ReadLine,  // 读取一行并压入字符串（字符元组）
+    FileRead,  // pop path(String)，push 文件内容(String)
+    FileWrite, // pop data(String), path(String)，写入文件
 
     // === 调试 ===
     DumpStack,
@@ -299,11 +348,18 @@ impl std::fmt::Display for MirInst {
             MirInst::Mark(n) => write!(f, "Mark({n})"),
             MirInst::Jump(n) => write!(f, "Jump({n})"),
             MirInst::UncondJump(n) => write!(f, "UncondJump({n})"),
-            MirInst::Call { fn_id, return_arity } => write!(f, "Call({fn_id:?}, ret={return_arity})"),
+            MirInst::Call {
+                fn_id,
+                return_arity,
+            } => write!(f, "Call({fn_id:?}, ret={return_arity})"),
             MirInst::CallIndirect { argc, return_arity } => {
                 write!(f, "CallIndirect(argc={argc}, ret={return_arity})")
             }
-            MirInst::ExternCall { stardust_id, argc, return_arity } => write!(
+            MirInst::ExternCall {
+                stardust_id,
+                argc,
+                return_arity,
+            } => write!(
                 f,
                 "ExternCall(id={stardust_id}, argc={argc}, ret={return_arity})"
             ),
@@ -361,10 +417,9 @@ impl std::fmt::Display for MirInst {
             MirInst::Min => write!(f, "Min"),
             MirInst::Max => write!(f, "Max"),
             MirInst::IntToStr => write!(f, "IntToStr"),
-            MirInst::StrToInt {
-                some_tag,
-                none_tag,
-            } => write!(f, "StrToInt(some_tag={some_tag}, none_tag={none_tag})"),
+            MirInst::StrToInt { some_tag, none_tag } => {
+                write!(f, "StrToInt(some_tag={some_tag}, none_tag={none_tag})")
+            }
             MirInst::Unwrap { success_tag } => write!(f, "Unwrap({success_tag})"),
             MirInst::UnwrapOr { success_tag } => write!(f, "UnwrapOr({success_tag})"),
             MirInst::EnumPayloadToOption {

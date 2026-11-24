@@ -45,7 +45,9 @@ pub enum Value {
 
     // === 内部类型（不可由用户构造）===
     /// 调用元素 — 标记函数调用，值为参数个数
-    CallElement { argc: u32 },
+    CallElement {
+        argc: u32,
+    },
 }
 
 impl Value {
@@ -64,8 +66,20 @@ impl Value {
             | Value::Usize(v) => Some(*v),
             Value::Bool(b) => Some(if *b { 1 } else { 0 }),
             Value::Char(c) => Some(*c as i64),
-            Value::F32(f) => if f.is_finite() { Some(*f as i64) } else { None },
-            Value::F64(f) => if f.is_finite() { Some(*f as i64) } else { None },
+            Value::F32(f) => {
+                if f.is_finite() {
+                    Some(*f as i64)
+                } else {
+                    None
+                }
+            }
+            Value::F64(f) => {
+                if f.is_finite() {
+                    Some(*f as i64)
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }

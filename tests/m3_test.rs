@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use freebird::codegen::llvm::{compile_llvm, locate_clang, locate_stardust, LlvmOptions};
-use freebird::{run_source, RuntimeConfig};
+use freebird::codegen::llvm::{LlvmOptions, compile_llvm, locate_clang, locate_stardust};
+use freebird::{RuntimeConfig, run_source};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -409,10 +409,7 @@ fn run_stardust_text(text: &str, input: &[u8]) -> Result<Vec<u8>, String> {
     let stardust =
         locate_stardust(None).map_err(|e| format!("Stardust toolchain unavailable: {e}"))?;
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "freebird-m3-sd-{}-{id}.sd",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("freebird-m3-sd-{}-{id}.sd", std::process::id()));
     std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))?;
     let mut child = Command::new(&stardust)
         .arg(&path)
@@ -422,7 +419,9 @@ fn run_stardust_text(text: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         .spawn()
         .map_err(|e| format!("run Stardust: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input).map_err(|e| format!("write stdin: {e}"))?;
+        stdin
+            .write_all(input)
+            .map_err(|e| format!("write stdin: {e}"))?;
     }
     let output = child
         .wait_with_output()
@@ -588,10 +587,7 @@ fn ffi_llvm_requires_external_definition() {
         return;
     }
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let exe = std::env::temp_dir().join(format!(
-        "freebird-m3-ffi-{}-{id}",
-        std::process::id()
-    ));
+    let exe = std::env::temp_dir().join(format!("freebird-m3-ffi-{}-{id}", std::process::id()));
     let options = LlvmOptions {
         emit: freebird::codegen::llvm::LlvmEmit::Executable,
         output: Some(exe.clone()),
@@ -788,10 +784,8 @@ fn stardust_macro_debug_and_nop() {
 
 #[test]
 fn stardust_macro_unknown_instruction_is_rejected() {
-    let errors = freebird::check_source(
-        r#"fn main() { let x = stardust! { Bogus }; print(x); }"#,
-    )
-    .expect_err("unknown instruction must be rejected");
+    let errors = freebird::check_source(r#"fn main() { let x = stardust! { Bogus }; print(x); }"#)
+        .expect_err("unknown instruction must be rejected");
     assert!(
         errors.join("\n").contains("unknown stardust instruction"),
         "unexpected diagnostics: {errors:?}"

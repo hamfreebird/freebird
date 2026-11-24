@@ -27,10 +27,22 @@ impl std::fmt::Display for TypeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TypeError::StackDepthMismatch { left, right, span } => {
-                write!(f, "{span}: stack depth mismatch: {left} vs {right} at control flow merge")
+                write!(
+                    f,
+                    "{span}: stack depth mismatch: {left} vs {right} at control flow merge"
+                )
             }
-            TypeError::TypeMismatch { expected, found, span } => {
-                write!(f, "{span}: type mismatch: expected {}, found {}", expected.name(), found.name())
+            TypeError::TypeMismatch {
+                expected,
+                found,
+                span,
+            } => {
+                write!(
+                    f,
+                    "{span}: type mismatch: expected {}, found {}",
+                    expected.name(),
+                    found.name()
+                )
             }
             TypeError::UnexpectedEmptyStack { span } => {
                 write!(f, "{span}: unexpected empty stack")

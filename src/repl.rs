@@ -8,8 +8,8 @@ use crate::frontend::parse;
 use crate::hir::lower;
 use crate::mir::MirGen;
 use crate::typeck::TypeTable;
-use crate::vm::config::RuntimeConfig;
 use crate::vm::Vm;
+use crate::vm::config::RuntimeConfig;
 
 /// REPL 状态
 pub struct Repl {
@@ -60,7 +60,10 @@ impl Repl {
                     ":stack" => self.cmd_stack(),
                     ":vars" => self.cmd_vars(),
                     ":info" => self.cmd_info(),
-                    ":clear" => { self.accumulated_decls.clear(); println!("Cleared."); }
+                    ":clear" => {
+                        self.accumulated_decls.clear();
+                        println!("Cleared.");
+                    }
                     _ => println!("Unknown command: {line}. Type :help for commands."),
                 }
                 continue;
@@ -117,7 +120,8 @@ impl Repl {
         let functions = generator.gen_program(&hir);
 
         // 找到 _repl_main 函数
-        let main_mir = functions.iter()
+        let main_mir = functions
+            .iter()
             .find(|(_, mir)| !mir.is_empty())
             .map(|(_, mir)| mir.clone());
 

@@ -4,12 +4,11 @@ use crate::vm::mir::MirInst;
 pub fn optimize_mir(mir: &mut Vec<MirInst>) {
     // 多遍优化直到收敛
     for _ in 0..3 {
-        let changed =
-            constant_folding(mir) ||
-            peephole_optimize(mir) ||
-            remove_dead_code(mir) ||
-            eliminate_redundant_roll(mir) ||
-            jump_optimization(mir);
+        let changed = constant_folding(mir)
+            || peephole_optimize(mir)
+            || remove_dead_code(mir)
+            || eliminate_redundant_roll(mir)
+            || jump_optimization(mir);
         if !changed {
             break;
         }
@@ -50,7 +49,10 @@ fn constant_folding(mir: &mut Vec<MirInst>) -> bool {
                 _ => None,
             };
             if let Some(val) = result {
-                mir[i] = MirInst::Push { value: val, ty: crate::vm::mir::TypeId::Unknown };
+                mir[i] = MirInst::Push {
+                    value: val,
+                    ty: crate::vm::mir::TypeId::Unknown,
+                };
                 mir.remove(i + 1);
                 mir.remove(i + 1); // 原来的 op（现在是 i+1）
                 changed = true;
@@ -84,7 +86,12 @@ fn peephole_optimize(mir: &mut Vec<MirInst>) -> bool {
             }
             _ => false,
         };
-        if i + 1 < mir.len() && matches!((&mir[i], &mir[i + 1]), (MirInst::Dup { .. }, MirInst::Pop { .. })) {
+        if i + 1 < mir.len()
+            && matches!(
+                (&mir[i], &mir[i + 1]),
+                (MirInst::Dup { .. }, MirInst::Pop { .. })
+            )
+        {
             mir.remove(i); // remove Dup
             mir.remove(i); // remove Pop
             changed = true;
@@ -139,7 +146,8 @@ fn eliminate_redundant_roll(mir: &mut Vec<MirInst>) -> bool {
 fn jump_optimization(mir: &mut Vec<MirInst>) -> bool {
     let mut changed = false;
     // 首先收集所有 Mark 位置
-    let mut mark_positions: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut mark_positions: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
     for (i, inst) in mir.iter().enumerate() {
         if let MirInst::Mark(n) = inst {
             mark_positions.insert(*n, i);
@@ -172,20 +180,37 @@ mod tests {
     #[test]
     fn test_constant_folding_add() {
         let mut mir = vec![
-            MirInst::Push { value: Value::I64(3), ty: crate::vm::mir::TypeId::Unknown },
-            MirInst::Push { value: Value::I64(5), ty: crate::vm::mir::TypeId::Unknown },
-            MirInst::Add { ty: crate::vm::mir::TypeId::Unknown },
+            MirInst::Push {
+                value: Value::I64(3),
+                ty: crate::vm::mir::TypeId::Unknown,
+            },
+            MirInst::Push {
+                value: Value::I64(5),
+                ty: crate::vm::mir::TypeId::Unknown,
+            },
+            MirInst::Add {
+                ty: crate::vm::mir::TypeId::Unknown,
+            },
         ];
         optimize_mir(&mut mir);
         assert_eq!(mir.len(), 1);
-        assert!(matches!(&mir[0], MirInst::Push { value: Value::I64(8), .. }));
+        assert!(matches!(
+            &mir[0],
+            MirInst::Push {
+                value: Value::I64(8),
+                ..
+            }
+        ));
     }
 
     #[test]
     fn test_peephole_roll_zero() {
         let mut mir = vec![
             MirInst::Roll { n: 0 },
-            MirInst::Push { value: Value::I64(1), ty: crate::vm::mir::TypeId::Unknown },
+            MirInst::Push {
+                value: Value::I64(1),
+                ty: crate::vm::mir::TypeId::Unknown,
+            },
         ];
         optimize_mir(&mut mir);
         assert_eq!(mir.len(), 1);
@@ -194,8 +219,13 @@ mod tests {
     #[test]
     fn test_eliminate_push_pop() {
         let mut mir = vec![
-            MirInst::Push { value: Value::I64(42), ty: crate::vm::mir::TypeId::Unknown },
-            MirInst::Pop { ty: crate::vm::mir::TypeId::Unknown },
+            MirInst::Push {
+                value: Value::I64(42),
+                ty: crate::vm::mir::TypeId::Unknown,
+            },
+            MirInst::Pop {
+                ty: crate::vm::mir::TypeId::Unknown,
+            },
         ];
         optimize_mir(&mut mir);
         assert!(mir.is_empty());
@@ -206,7 +236,10 @@ mod tests {
         let mut mir = vec![
             MirInst::Roll { n: 3 },
             MirInst::Roll { n: -3 },
-            MirInst::Push { value: Value::I64(1), ty: crate::vm::mir::TypeId::Unknown },
+            MirInst::Push {
+                value: Value::I64(1),
+                ty: crate::vm::mir::TypeId::Unknown,
+            },
         ];
         optimize_mir(&mut mir);
         assert_eq!(mir.len(), 1);

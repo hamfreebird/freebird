@@ -5,15 +5,15 @@ use std::rc::Rc;
 use crate::borrowck::check_borrow;
 use crate::codegen::ffi::{stardust_id_for_fn, validate_stardust_id};
 use crate::codegen::stardust::FnInfo;
-use crate::codegen::{optimize_mir, StardustGen};
+use crate::codegen::{StardustGen, optimize_mir};
 use crate::frontend::parse;
 use crate::hir::lower;
 use crate::mir::MirGen;
-use crate::typeck::{check_program_with_tags, check_program_with_warnings, TypeTable};
+use crate::typeck::{TypeTable, check_program_with_tags, check_program_with_warnings};
+use crate::vm::Vm;
 use crate::vm::config::RuntimeConfig;
 use crate::vm::id::FnId;
 use crate::vm::mir::MirInst;
-use crate::vm::Vm;
 
 /// 编译执行流水线：源码 → AST → HIR → MIR → VM 执行
 /// 编译执行源码：解析后交给 `run_ast`。
@@ -99,9 +99,10 @@ fn load_module(
                     Some(p) => format!("{p}::{name}"),
                     None => name.clone(),
                 };
-                let sub = load_module(&sub_path, Some(&sub_prefix), loading, pub_names).map_err(|e| {
-                    format!("while loading module `{name}` (declared at {span}): {e}")
-                })?;
+                let sub =
+                    load_module(&sub_path, Some(&sub_prefix), loading, pub_names).map_err(|e| {
+                        format!("while loading module `{name}` (declared at {span}): {e}")
+                    })?;
                 decls.extend(sub.decls);
             }
             other => own.push(other),
@@ -139,7 +140,10 @@ fn load_module(
 type PubNames = std::collections::HashMap<String, std::collections::HashSet<String>>;
 
 /// 检查一份声明中的跨模块全名引用（`util::secret`、`util::Point`）是否可见。
-fn check_cross_module_refs(decl: &crate::frontend::ast::Decl, pub_names: &PubNames) -> Result<(), String> {
+fn check_cross_module_refs(
+    decl: &crate::frontend::ast::Decl,
+    pub_names: &PubNames,
+) -> Result<(), String> {
     use crate::frontend::ast::Decl;
     match decl {
         Decl::Fn(f) => check_fn_refs(f, pub_names),
@@ -188,11 +192,16 @@ fn check_fn_refs(f: &crate::frontend::ast::FnDecl, pub_names: &PubNames) -> Resu
     Ok(())
 }
 
-fn check_block_refs(block: &crate::frontend::ast::Block, pub_names: &PubNames) -> Result<(), String> {
+fn check_block_refs(
+    block: &crate::frontend::ast::Block,
+    pub_names: &PubNames,
+) -> Result<(), String> {
     use crate::frontend::ast::Stmt;
     for stmt in &block.stmts {
         match stmt {
-            Stmt::Let { pattern, ty, init, .. } => {
+            Stmt::Let {
+                pattern, ty, init, ..
+            } => {
                 check_pattern_refs(pattern, pub_names)?;
                 if let Some(ty) = ty {
                     check_type_refs(ty, pub_names)?;
@@ -272,7 +281,12 @@ fn check_expr_refs(expr: &crate::frontend::ast::Expr, pub_names: &PubNames) -> R
             }
             Ok(())
         }
-        Expr::EnumLit { name, variant, data, span } => {
+        Expr::EnumLit {
+            name,
+            variant,
+            data,
+            span,
+        } => {
             // parser 把 `util::secret(1)` 也表示成 EnumLit（路径 + 最后一个段），
             // 因此这里要检查「name + variant」构成完整路径。
             let mut path = name.clone();
@@ -307,7 +321,12 @@ fn check_expr_refs(expr: &crate::frontend::ast::Expr, pub_names: &PubNames) -> R
             check_expr_refs(cond, pub_names)?;
             check_block_refs(body, pub_names)
         }
-        Expr::For { pattern, iterable, body, .. } => {
+        Expr::For {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => {
             check_pattern_refs(pattern, pub_names)?;
             check_expr_refs(iterable, pub_names)?;
             check_block_refs(body, pub_names)
@@ -343,7 +362,9 @@ fn check_pattern_refs(
             }
             Ok(())
         }
-        Pattern::Struct { name, fields, span, .. } => {
+        Pattern::Struct {
+            name, fields, span, ..
+        } => {
             check_path_segments(name, *span, pub_names)?;
             for (_, field) in fields {
                 if let Some(field) = field {
@@ -352,7 +373,9 @@ fn check_pattern_refs(
             }
             Ok(())
         }
-        Pattern::Enum { name, inner, span, .. } => {
+        Pattern::Enum {
+            name, inner, span, ..
+        } => {
             check_path_segments(name, *span, pub_names)?;
             if let Some(inner) = inner {
                 check_pattern_refs(inner, pub_names)?;
@@ -398,7 +421,11 @@ fn check_type_refs(ty: &crate::frontend::ast::Type, pub_names: &PubNames) -> Res
     }
 }
 
-fn check_path_str(name: &str, span: crate::frontend::token::Span, pub_names: &PubNames) -> Result<(), String> {
+fn check_path_str(
+    name: &str,
+    span: crate::frontend::token::Span,
+    pub_names: &PubNames,
+) -> Result<(), String> {
     let segments: Vec<String> = name.split("::").map(str::to_string).collect();
     check_path_segments(&segments, span, pub_names)
 }
@@ -526,9 +553,10 @@ fn prefix_type(
         Type::Ref(inner, mutable, span) => {
             Type::Ref(Box::new(prefix_type(inner, rename)), *mutable, *span)
         }
-        Type::Tuple(types, span) => {
-            Type::Tuple(types.iter().map(|t| prefix_type(t, rename)).collect(), *span)
-        }
+        Type::Tuple(types, span) => Type::Tuple(
+            types.iter().map(|t| prefix_type(t, rename)).collect(),
+            *span,
+        ),
         Type::Array(inner, len, span) => {
             Type::Array(Box::new(prefix_type(inner, rename)), len.clone(), *span)
         }
@@ -675,7 +703,11 @@ fn prefix_expr(expr: &mut crate::frontend::ast::Expr, rename: &impl Fn(&str) -> 
 fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<Vec<u8>, String> {
     let mut config = config;
     // `mod name;` 需要从文件系统加载同目录模块；内存源码入口没有路径信息。
-    if ast.decls.iter().any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. })) {
+    if ast
+        .decls
+        .iter()
+        .any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. }))
+    {
         return Err(
             "Module declarations (`mod name;`) require a file path; run or check the file from disk (e.g. `freebird run <file.fb>`) instead of in-memory source."
                 .to_string(),
@@ -735,7 +767,9 @@ fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<
     }
 
     let entry_id = main_id.unwrap_or(functions[0].0);
-    let main_mir = fn_table.get(&entry_id).cloned()
+    let main_mir = fn_table
+        .get(&entry_id)
+        .cloned()
         .ok_or_else(|| "Entry function not found".to_string())?;
 
     // 4. VM 执行
@@ -749,7 +783,6 @@ fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<
 
     Ok(vm.output)
 }
-
 
 /// 从 `main` 函数的属性读取运行时限制并覆盖配置。
 ///
@@ -795,7 +828,10 @@ pub fn check_source_with_warnings(source: &str) -> (Vec<String>, Vec<String>) {
 
     if ast_errors.is_empty()
         && hir_errors.is_empty()
-        && ast.decls.iter().any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. }))
+        && ast
+            .decls
+            .iter()
+            .any(|d| matches!(d, crate::frontend::ast::Decl::Mod { .. }))
     {
         all_errors.push(
             "Module declarations (`mod name;`) require a file path; run or check the file from disk (e.g. `freebird run <file.fb>`) instead of in-memory source."
@@ -820,7 +856,11 @@ pub fn check_source_with_warnings(source: &str) -> (Vec<String>, Vec<String>) {
 /// 检查源码（词法+语法+名称解析+基础类型检查，不执行）
 pub fn check_source(source: &str) -> Result<(), Vec<String>> {
     let (errors, _warnings) = check_source_with_warnings(source);
-    if errors.is_empty() { Ok(()) } else { Err(errors) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }
 
 /// 一次完整前端编译的产物：优化后的 MIR 与生成的 Stardust 源码。
@@ -933,8 +973,7 @@ pub fn compile_program(source: &str) -> Result<CompiledProgram, String> {
 
     // extern 的 Stardust ID 与内部函数名共用同一命名空间（前导空格数）：
     // 预留这些名字，内部 FnId 自动跳过，避免 `#[stardust(id = 1)]` 误调 main。
-    let reserved_names: HashSet<usize> =
-        extern_fns.values().map(|id| *id as usize).collect();
+    let reserved_names: HashSet<usize> = extern_fns.values().map(|id| *id as usize).collect();
     let mut sd_gen = StardustGen::new().with_reserved_names(reserved_names);
     let stardust = sd_gen.generate_program(&optimized_functions, &fn_info, entry);
 
@@ -965,8 +1004,7 @@ mod tests {
     #[test]
     fn test_build_stardust_reports_borrow_errors() {
         let err =
-            build_stardust(r#"fn main() { let s = "hi"; let t = s; print_str(s); }"#)
-                .unwrap_err();
+            build_stardust(r#"fn main() { let s = "hi"; let t = s; print_str(s); }"#).unwrap_err();
         assert!(err.contains("Borrow errors"), "unexpected error: {err}");
     }
 
@@ -987,8 +1025,8 @@ mod tests {
     #[test]
     fn test_builtin_is_not_shadowed_by_user_function() {
         let src = "fn print_int() { } fn main() { print_int(); }";
-        let output = run_source(src, RuntimeConfig::test())
-            .expect("user function should override builtin");
+        let output =
+            run_source(src, RuntimeConfig::test()).expect("user function should override builtin");
         assert!(output.is_empty());
     }
 
@@ -1455,7 +1493,10 @@ mod tests {
         let result = check_source(src);
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().iter().any(|e| e.contains("type mismatch")),
+            result
+                .unwrap_err()
+                .iter()
+                .any(|e| e.contains("type mismatch")),
             "expected a type mismatch diagnostic"
         );
     }
@@ -1477,7 +1518,8 @@ mod tests {
 
     #[test]
     fn test_check_valid_typed_function() {
-        let src = "fn add(a: i32, b: i32) -> i32 { return a + b; } fn main() { let x = add(1, 2); }";
+        let src =
+            "fn add(a: i32, b: i32) -> i32 { return a + b; } fn main() { let x = add(1, 2); }";
         assert!(check_source(src).is_ok());
     }
 
@@ -1564,7 +1606,8 @@ mod tests {
                 print(p.x + p.y);
             }
         ";
-        let output = run_source(src, RuntimeConfig::test()).expect("struct construction should run");
+        let output =
+            run_source(src, RuntimeConfig::test()).expect("struct construction should run");
         assert_eq!(output, b"7\n");
     }
 

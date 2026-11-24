@@ -1,6 +1,6 @@
 //! 集成测试 — 测试完整的 .fb 程序编译+执行
 
-use freebird::{build_stardust, run_source, RuntimeConfig};
+use freebird::{RuntimeConfig, build_stardust, run_source};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -65,7 +65,9 @@ fn run_stardust_source_with_input(source: &str, name: &str, input: &[u8]) -> Str
         let mut stdin = child.stdin.take().expect("child stdin");
         stdin.write_all(input).expect("write interpreter stdin");
     } // 关闭 stdin，发送 EOF。
-    let output = child.wait_with_output().expect("wait for Stardust interpreter");
+    let output = child
+        .wait_with_output()
+        .expect("wait for Stardust interpreter");
 
     assert!(
         output.status.success(),
@@ -81,8 +83,8 @@ fn run_stardust_source_with_input(source: &str, name: &str, input: &[u8]) -> Str
 fn assert_stardust_matches_vm(source: &str, name: &str, input: &[u8]) {
     let mut config = RuntimeConfig::test();
     config.input = input.to_vec();
-    let vm_output = run_source(source, config)
-        .unwrap_or_else(|e| panic!("VM failed for {name}: {e}"));
+    let vm_output =
+        run_source(source, config).unwrap_or_else(|e| panic!("VM failed for {name}: {e}"));
     let sd_output = run_stardust_source_with_input(source, name, input);
     assert_eq!(
         sd_output.as_bytes(),
@@ -153,7 +155,10 @@ counter after bump = 42
 20 + 22 = 42
 == 巡礼结束 ==
 ";
-    assert_eq!(String::from_utf8(output).expect("tour output UTF-8"), expected);
+    assert_eq!(
+        String::from_utf8(output).expect("tour output UTF-8"),
+        expected
+    );
     assert_stardust_matches_vm(&source, "tour", b"");
 }
 
@@ -218,7 +223,6 @@ fn main() {
         "hello ! done\n"
     );
 }
-
 
 #[test]
 fn test_stardust_backend_nested_loops() {
@@ -375,7 +379,11 @@ fn main() {
     print_char('\n');
 }
 "#;
-    assert_stardust_matches_vm(source, "read_line_multiple_utf8", "one\ntwø 世界\n".as_bytes());
+    assert_stardust_matches_vm(
+        source,
+        "read_line_multiple_utf8",
+        "one\ntwø 世界\n".as_bytes(),
+    );
 }
 
 #[test]
@@ -519,7 +527,10 @@ fn test_stardust_backend_file_io() {
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    let path = path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+    let path = path
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
     let source = format!(
         r#"
 fn main() {{

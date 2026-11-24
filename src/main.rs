@@ -3,18 +3,22 @@ use std::fs;
 use std::path::PathBuf;
 use std::process;
 
-use freebird::{build_stardust, run_file, RuntimeConfig};
 use freebird::borrowck::check_borrow;
-use freebird::codegen::llvm::{compile_llvm, LlvmArtifact, LlvmEmit, LlvmOptions};
+use freebird::codegen::llvm::{LlvmArtifact, LlvmEmit, LlvmOptions, compile_llvm};
 use freebird::diagnostics;
 use freebird::frontend::parse;
 use freebird::hir::lower;
 use freebird::repl::Repl;
-use freebird::typeck::{check_program_with_warnings, TypeTable};
+use freebird::typeck::{TypeTable, check_program_with_warnings};
+use freebird::{RuntimeConfig, build_stardust, run_file};
 
 /// Freebird — 一门基于双栈虚拟机的高级系统编程语言
 #[derive(Parser)]
-#[command(name = "freebird", version = "0.1.0", about = "Freebird language toolchain")]
+#[command(
+    name = "freebird",
+    version = "0.1.0",
+    about = "Freebird language toolchain"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

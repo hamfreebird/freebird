@@ -5,8 +5,8 @@
 
 mod common;
 
-use common::{assert_same_output, run_stardust, run_vm, Run};
-use freebird::{check_source, run_source, RuntimeConfig};
+use common::{Run, assert_same_output, run_stardust, run_vm};
+use freebird::{RuntimeConfig, check_source, run_source};
 
 const READ_LINE_PROGRAM: &str = r#"
 fn main() {
@@ -66,10 +66,7 @@ fn read_line_out_of_range() {
 
 #[test]
 fn read_line_grows_beyond_initial_capacity() {
-    assert_read_line(
-        "long",
-        b"abcdefghijklmnopqrstuvwxyz0123456789\n",
-    );
+    assert_read_line("long", b"abcdefghijklmnopqrstuvwxyz0123456789\n");
 }
 
 #[test]
@@ -149,7 +146,8 @@ fn vm_step_limit_is_enforced() {
 }
 
 #[test]
-fn vm_call_depth_limit_is_enforced() {    let source = r#"
+fn vm_call_depth_limit_is_enforced() {
+    let source = r#"
 fn recurse(n: i64) -> i64 {
     if n <= 0 { 0 } else { recurse(n - 1) + 1 }
 }
@@ -196,10 +194,7 @@ fn main() {{
 }}
 "#
         );
-        let alloc = parse_single_int(&sd_output(
-            &source,
-            &format!("heap_loop_{iterations}"),
-        ));
+        let alloc = parse_single_int(&sd_output(&source, &format!("heap_loop_{iterations}")));
         assert!(
             alloc < 64,
             "{iterations} iterations grew the heap to {alloc} slots"
@@ -227,8 +222,7 @@ fn main() {
 
 #[test]
 fn vec_alias_push_is_rejected() {
-    let source =
-        "fn main() { let mut a = vec![1, 2, 3]; let b = a; a.push(4); print(b[0]); }";
+    let source = "fn main() { let mut a = vec![1, 2, 3]; let b = a; a.push(4); print(b[0]); }";
     let errors = check_source(source).expect_err("alias push should be rejected");
     assert!(
         errors.join("\n").contains("moved value"),

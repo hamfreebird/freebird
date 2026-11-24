@@ -184,7 +184,12 @@ impl std::fmt::Display for TypeCheckWarning {
 impl std::fmt::Display for TypeCheckError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TypeCheckError::TypeMismatch { expected, found, span, context } => write!(
+            TypeCheckError::TypeMismatch {
+                expected,
+                found,
+                span,
+                context,
+            } => write!(
                 f,
                 "{span}: type mismatch in {context}: expected {}, found {}",
                 expected.name(),
@@ -197,27 +202,49 @@ impl std::fmt::Display for TypeCheckError {
                 write!(f, "{span}: condition must be bool, found {}", found.name())
             }
             TypeCheckError::NotCallable { found, span } => {
-                write!(f, "{span}: expression of type {} is not callable", found.name())
+                write!(
+                    f,
+                    "{span}: expression of type {} is not callable",
+                    found.name()
+                )
             }
             TypeCheckError::UnknownFunction { name, span } => {
                 write!(f, "{span}: unknown function `{name}`")
             }
-            TypeCheckError::UnknownField { type_name, field, span } => {
+            TypeCheckError::UnknownField {
+                type_name,
+                field,
+                span,
+            } => {
                 write!(f, "{span}: type `{type_name}` has no field `{field}`")
             }
-            TypeCheckError::UnknownVariant { enum_name, variant, span } => {
+            TypeCheckError::UnknownVariant {
+                enum_name,
+                variant,
+                span,
+            } => {
                 write!(f, "{span}: enum `{enum_name}` has no variant `{variant}`")
             }
             TypeCheckError::UnknownStruct { name, span } => {
                 write!(f, "{span}: unknown struct `{name}`")
             }
-            TypeCheckError::ArgumentCountMismatch { function, expected, found, span } => {
+            TypeCheckError::ArgumentCountMismatch {
+                function,
+                expected,
+                found,
+                span,
+            } => {
                 write!(
                     f,
                     "{span}: function `{function}` expects {expected} arguments, got {found}"
                 )
             }
-            TypeCheckError::ReturnArityMismatch { function, expected, found, span } => {
+            TypeCheckError::ReturnArityMismatch {
+                function,
+                expected,
+                found,
+                span,
+            } => {
                 write!(
                     f,
                     "{span}: function `{function}` returns {expected} values, but `return` provides {found}"
@@ -249,7 +276,11 @@ impl std::fmt::Display for TypeCheckError {
                 f,
                 "{span}: calling extern function `{name}` requires an `unsafe` block (readme.md §10.4)"
             ),
-            TypeCheckError::UnsupportedFeature { feature, reference, span } => write!(
+            TypeCheckError::UnsupportedFeature {
+                feature,
+                reference,
+                span,
+            } => write!(
                 f,
                 "{span}: unsupported feature: {feature} (see {reference})"
             ),
@@ -263,11 +294,20 @@ impl std::fmt::Display for TypeCheckError {
                 f,
                 "{span}: refutable pattern in `let`; use `match` for enum variants and literals"
             ),
-            TypeCheckError::OrPatternBindingMismatch { expected, found, span } => write!(
+            TypeCheckError::OrPatternBindingMismatch {
+                expected,
+                found,
+                span,
+            } => write!(
                 f,
                 "{span}: `or` pattern alternatives bind different variables (first binds {{{expected}}}, another binds {{{found}}})"
             ),
-            TypeCheckError::GenericArgMismatch { function, expected, found, span } => write!(
+            TypeCheckError::GenericArgMismatch {
+                function,
+                expected,
+                found,
+                span,
+            } => write!(
                 f,
                 "{span}: function `{function}` expects {expected} generic argument(s), found {found}"
             ),
@@ -356,10 +396,7 @@ impl<'a> TypeChecker<'a> {
         let mut generic_fns = HashMap::new();
         // 内建 `Option<T>`/`Result<T, E>` 是泛型枚举；同名用户声明会在下面覆盖。
         generic_enums.insert("Option".to_string(), vec!["T".to_string()]);
-        generic_enums.insert(
-            "Result".to_string(),
-            vec!["T".to_string(), "E".to_string()],
-        );
+        generic_enums.insert("Result".to_string(), vec!["T".to_string(), "E".to_string()]);
         for decl in &program.decls {
             match decl {
                 HirDecl::Extern(ext) => {
@@ -561,11 +598,7 @@ impl<'a> TypeChecker<'a> {
     }
 
     /// 检查块；`_allow_loop_tail` 保留为调用兼容参数。
-    fn check_block_with_loop_tail(
-        &mut self,
-        block: &HirBlock,
-        _allow_loop_tail: bool,
-    ) -> HirType {
+    fn check_block_with_loop_tail(&mut self, block: &HirBlock, _allow_loop_tail: bool) -> HirType {
         self.push_scope();
         for stmt in &block.stmts {
             self.check_stmt(stmt);
@@ -580,7 +613,13 @@ impl<'a> TypeChecker<'a> {
 
     fn check_stmt(&mut self, stmt: &HirStmt) {
         match stmt {
-            HirStmt::Let { pattern, ty, init, span, .. } => {
+            HirStmt::Let {
+                pattern,
+                ty,
+                init,
+                span,
+                ..
+            } => {
                 if !pattern_is_irrefutable(pattern) {
                     self.error(TypeCheckError::RefutableLetPattern { span: *span });
                 }
@@ -606,15 +645,17 @@ impl<'a> TypeChecker<'a> {
                     });
                 }
 
-                let binding_ty = declared_ty
-                    .or(init_ty)
-                    .unwrap_or(HirType::Unknown);
+                let binding_ty = declared_ty.or(init_ty).unwrap_or(HirType::Unknown);
                 self.bind_pattern(pattern, &binding_ty);
             }
             HirStmt::Expr(expr, _) => {
                 self.check_expr(expr);
             }
-            HirStmt::Assign { target, value, span } => {
+            HirStmt::Assign {
+                target,
+                value,
+                span,
+            } => {
                 let value_ty = self.check_expr(value);
                 let expected = match target {
                     HirAssignTarget::Var(var) => self.lookup(&var.name).cloned(),
@@ -803,15 +844,25 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             HirExpr::TypeApplied { callee, .. } => self.check_expr(callee),
-            HirExpr::Call { func, args, stack_pass, fn_sig, span } => {
-                self.check_call(func, args, *stack_pass, fn_sig.as_ref(), *span)
-            }
-            HirExpr::MethodCall { receiver, method, args, span } => {
-                self.check_method_call(receiver, method, args, *span)
-            }
-            HirExpr::TypeMethod { type_name, method, args, span } => {
-                self.check_type_method(type_name, method, args, *span)
-            }
+            HirExpr::Call {
+                func,
+                args,
+                stack_pass,
+                fn_sig,
+                span,
+            } => self.check_call(func, args, *stack_pass, fn_sig.as_ref(), *span),
+            HirExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                span,
+            } => self.check_method_call(receiver, method, args, *span),
+            HirExpr::TypeMethod {
+                type_name,
+                method,
+                args,
+                span,
+            } => self.check_type_method(type_name, method, args, *span),
             HirExpr::FieldAccess(inner, field, span) => {
                 let inner_ty = self.check_expr(inner);
                 self.field_type(&inner_ty, field, *span)
@@ -833,7 +884,10 @@ impl<'a> TypeChecker<'a> {
                 HirType::Tuple(elems.iter().map(|e| self.check_expr(e)).collect())
             }
             HirExpr::Array(elems, span) => {
-                let elem_ty = elems.first().map(|e| self.check_expr(e)).unwrap_or(HirType::Unknown);
+                let elem_ty = elems
+                    .first()
+                    .map(|e| self.check_expr(e))
+                    .unwrap_or(HirType::Unknown);
                 for e in elems.iter().skip(1) {
                     let ty = self.check_expr(e);
                     if !is_assignable(&elem_ty, &ty) {
@@ -860,12 +914,13 @@ impl<'a> TypeChecker<'a> {
                 }
                 HirType::Array(Box::new(elem_ty))
             }
-            HirExpr::StructLit { name, fields, span } => {
-                self.check_struct_lit(name, fields, *span)
-            }
-            HirExpr::EnumLit { name, variant, data, span } => {
-                self.check_enum_lit(name, variant, data.as_deref(), *span)
-            }
+            HirExpr::StructLit { name, fields, span } => self.check_struct_lit(name, fields, *span),
+            HirExpr::EnumLit {
+                name,
+                variant,
+                data,
+                span,
+            } => self.check_enum_lit(name, variant, data.as_deref(), *span),
             HirExpr::If(cond, then_block, else_block, span) => {
                 let cond_ty = self.check_expr(cond);
                 self.require_bool(&cond_ty, cond_span(cond, *span));
@@ -873,8 +928,7 @@ impl<'a> TypeChecker<'a> {
                 match else_block {
                     Some(else_block) => {
                         let else_ty = self.check_block(else_block);
-                        if !is_assignable(&then_ty, &else_ty)
-                            && !is_assignable(&else_ty, &then_ty)
+                        if !is_assignable(&then_ty, &else_ty) && !is_assignable(&else_ty, &then_ty)
                         {
                             self.error(TypeCheckError::TypeMismatch {
                                 expected: then_ty.clone(),
@@ -895,8 +949,8 @@ impl<'a> TypeChecker<'a> {
                 let mut irrefutable_seen = false;
                 for arm in arms {
                     let key = pattern_key(&arm.pattern);
-                    let duplicate = arm.guard.is_none()
-                        && seen_patterns.iter().any(|seen| seen == &key);
+                    let duplicate =
+                        arm.guard.is_none() && seen_patterns.iter().any(|seen| seen == &key);
                     if irrefutable_seen || duplicate {
                         self.warning(TypeCheckWarning::UnreachablePattern { span: arm.span });
                     }
@@ -965,7 +1019,12 @@ impl<'a> TypeChecker<'a> {
                 self.loop_depth -= 1;
                 HirType::Unit
             }
-            HirExpr::For { pattern, iterable, body, span } => {
+            HirExpr::For {
+                pattern,
+                iterable,
+                body,
+                span,
+            } => {
                 let iter_ty = self.check_expr(iterable);
                 let elem_ty = self.for_element_type(&iter_ty, *span);
                 self.push_scope();
@@ -1657,10 +1716,7 @@ impl<'a> TypeChecker<'a> {
                         rets.first().cloned().unwrap_or(HirType::Unknown)
                     }
                     Some(other) if !is_unknown(&other) => {
-                        self.error(TypeCheckError::NotCallable {
-                            found: other,
-                            span,
-                        });
+                        self.error(TypeCheckError::NotCallable { found: other, span });
                         HirType::Unknown
                     }
                     _ => HirType::Unknown,
@@ -1720,16 +1776,18 @@ impl<'a> TypeChecker<'a> {
             .map(|name| format!("{name}::{method}"))
             .filter(|candidate| self.functions.contains_key(candidate))
         {
-            let sig = self.functions.get(&fn_name).cloned().unwrap_or_else(|| {
-                FnSignature {
+            let sig = self
+                .functions
+                .get(&fn_name)
+                .cloned()
+                .unwrap_or_else(|| FnSignature {
                     name: fn_name.clone(),
                     n: 0,
                     m: 0,
                     params: Vec::new(),
                     return_types: Vec::new(),
                     span,
-                }
-            });
+                });
             // 引用接收者：`&self` 已支持（只读）；`&mut self` 仍待实现。
             let mut receiver_ref = None;
             if let Some((_, HirType::Ref(inner, mutable))) = sig.params.first() {
@@ -1957,7 +2015,10 @@ impl<'a> TypeChecker<'a> {
                     .first()
                     .map(|e| self.check_expr(e))
                     .unwrap_or(HirType::Unknown);
-                HirType::Generic(Box::new(HirType::Path(vec!["Box".to_string()])), vec![inner])
+                HirType::Generic(
+                    Box::new(HirType::Path(vec!["Box".to_string()])),
+                    vec![inner],
+                )
             }
             _ => {
                 self.error(TypeCheckError::UnknownFunction {
@@ -2063,19 +2124,16 @@ impl<'a> TypeChecker<'a> {
         HirType::Path(name.split("::").map(str::to_string).collect())
     }
 
-    fn substitute_type(
-        &self,
-        ty: &HirType,
-        map: &HashMap<String, HirType>,
-    ) -> HirType {
+    fn substitute_type(&self, ty: &HirType, map: &HashMap<String, HirType>) -> HirType {
         match ty {
-            HirType::Path(segments) if segments.len() == 1 => map
-                .get(&segments[0])
-                .cloned()
-                .unwrap_or_else(|| ty.clone()),
+            HirType::Path(segments) if segments.len() == 1 => {
+                map.get(&segments[0]).cloned().unwrap_or_else(|| ty.clone())
+            }
             HirType::Generic(base, args) => HirType::Generic(
                 Box::new(self.substitute_type(base, map)),
-                args.iter().map(|arg| self.substitute_type(arg, map)).collect(),
+                args.iter()
+                    .map(|arg| self.substitute_type(arg, map))
+                    .collect(),
             ),
             HirType::Ref(inner, mutable) => {
                 HirType::Ref(Box::new(self.substitute_type(inner, map)), *mutable)
@@ -2083,11 +2141,12 @@ impl<'a> TypeChecker<'a> {
             HirType::Tuple(types) => {
                 HirType::Tuple(types.iter().map(|t| self.substitute_type(t, map)).collect())
             }
-            HirType::Array(inner) => {
-                HirType::Array(Box::new(self.substitute_type(inner, map)))
-            }
+            HirType::Array(inner) => HirType::Array(Box::new(self.substitute_type(inner, map))),
             HirType::FnPtr(params, rets) => HirType::FnPtr(
-                params.iter().map(|t| self.substitute_type(t, map)).collect(),
+                params
+                    .iter()
+                    .map(|t| self.substitute_type(t, map))
+                    .collect(),
                 rets.iter().map(|t| self.substitute_type(t, map)).collect(),
             ),
             _ => ty.clone(),
@@ -2189,11 +2248,7 @@ impl<'a> TypeChecker<'a> {
                 let Some(params) = self.generic_structs.get(&name) else {
                     return HirType::Unknown;
                 };
-                let map = params
-                    .iter()
-                    .cloned()
-                    .zip(args.iter().cloned())
-                    .collect();
+                let map = params.iter().cloned().zip(args.iter().cloned()).collect();
                 (name, map)
             }
             HirType::Unknown => return HirType::Unknown,
@@ -2250,12 +2305,7 @@ impl<'a> TypeChecker<'a> {
                         Some(field_def) => {
                             let expected = Self::hir_type_from_name(&field_def.type_name);
                             if let Some(params) = &generic_params {
-                                self.unify_generic(
-                                    &expected,
-                                    &found,
-                                    params,
-                                    &mut generic_map,
-                                );
+                                self.unify_generic(&expected, &found, params, &mut generic_map);
                             }
                             let expected = self.substitute_type(&expected, &generic_map);
                             if !is_assignable(&expected, &found) {
@@ -2263,9 +2313,7 @@ impl<'a> TypeChecker<'a> {
                                     expected,
                                     found,
                                     span,
-                                    context: format!(
-                                        "field `{field_name}` of `{type_name}`"
-                                    ),
+                                    context: format!("field `{field_name}` of `{type_name}`"),
                                 });
                             }
                         }
@@ -2281,12 +2329,7 @@ impl<'a> TypeChecker<'a> {
                 if let Some(params) = generic_params {
                     let args = params
                         .iter()
-                        .map(|param| {
-                            generic_map
-                                .get(param)
-                                .cloned()
-                                .unwrap_or(HirType::Unknown)
-                        })
+                        .map(|param| generic_map.get(param).cloned().unwrap_or(HirType::Unknown))
                         .collect();
                     HirType::Generic(Box::new(HirType::Path(name.to_vec())), args)
                 } else {
@@ -2298,7 +2341,10 @@ impl<'a> TypeChecker<'a> {
                     self.check_expr(expr);
                 }
                 // 大写开头的构造按用户类型处理；未登记类型仍返回其名字以便后续检查。
-                if name.first().is_some_and(|n| n.chars().next().is_some_and(|c| c.is_uppercase())) {
+                if name
+                    .first()
+                    .is_some_and(|n| n.chars().next().is_some_and(|c| c.is_uppercase()))
+                {
                     HirType::Path(name.to_vec())
                 } else {
                     self.error(TypeCheckError::UnknownStruct {
@@ -2384,12 +2430,7 @@ impl<'a> TypeChecker<'a> {
         if let Some(params) = generic_params {
             let args = params
                 .iter()
-                .map(|param| {
-                    generic_map
-                        .get(param)
-                        .cloned()
-                        .unwrap_or(HirType::Unknown)
-                })
+                .map(|param| generic_map.get(param).cloned().unwrap_or(HirType::Unknown))
                 .collect();
             HirType::Generic(Box::new(base_ty), args)
         } else {
@@ -2454,7 +2495,12 @@ impl<'a> TypeChecker<'a> {
                     self.bind_pattern(pat, &ty);
                 }
             }
-            ast::Pattern::Enum { name, variant, inner, span } => {
+            ast::Pattern::Enum {
+                name,
+                variant,
+                inner,
+                span,
+            } => {
                 let enum_name = name.join("::");
                 let generic_map: HashMap<String, HirType> = match scrutinee_ty {
                     HirType::Generic(base, args) => {
@@ -2464,11 +2510,7 @@ impl<'a> TypeChecker<'a> {
                             self.generic_enums
                                 .get(&enum_name)
                                 .map(|params| {
-                                    params
-                                        .iter()
-                                        .cloned()
-                                        .zip(args.iter().cloned())
-                                        .collect()
+                                    params.iter().cloned().zip(args.iter().cloned()).collect()
                                 })
                                 .unwrap_or_default()
                         } else {
@@ -2513,7 +2555,9 @@ impl<'a> TypeChecker<'a> {
                     self.bind_pattern(inner, &payload_ty);
                 }
             }
-            ast::Pattern::Struct { name, fields, span, .. } => {
+            ast::Pattern::Struct {
+                name, fields, span, ..
+            } => {
                 let struct_name = name.join("::");
                 let generic_map: HashMap<String, HirType> = match scrutinee_ty {
                     HirType::Generic(base, args) => {
@@ -2523,11 +2567,7 @@ impl<'a> TypeChecker<'a> {
                             self.generic_structs
                                 .get(&struct_name)
                                 .map(|params| {
-                                    params
-                                        .iter()
-                                        .cloned()
-                                        .zip(args.iter().cloned())
-                                        .collect()
+                                    params.iter().cloned().zip(args.iter().cloned()).collect()
                                 })
                                 .unwrap_or_default()
                         } else {
@@ -2604,8 +2644,7 @@ impl<'a> TypeChecker<'a> {
                     self.error(TypeCheckError::UnknownType { name, span });
                 }
             }
-            HirType::Ref(inner, _)
-            | HirType::Array(inner) => self.validate_type(inner, span),
+            HirType::Ref(inner, _) | HirType::Array(inner) => self.validate_type(inner, span),
             HirType::Generic(base, args) => {
                 self.validate_type(base, span);
                 for arg in args {
@@ -2640,9 +2679,10 @@ impl TypeChecker<'_> {
             return true;
         }
 
-        if arms.iter().any(|arm| {
-            arm.guard.is_none() && pattern_is_irrefutable(&arm.pattern)
-        }) {
+        if arms
+            .iter()
+            .any(|arm| arm.guard.is_none() && pattern_is_irrefutable(&arm.pattern))
+        {
             return true;
         }
 
@@ -2676,11 +2716,7 @@ impl TypeChecker<'_> {
                 if arm.guard.is_some() {
                     continue;
                 }
-                collect_covered_bools(
-                    &arm.pattern,
-                    &mut true_covered,
-                    &mut false_covered,
-                );
+                collect_covered_bools(&arm.pattern, &mut true_covered, &mut false_covered);
             }
             return true_covered && false_covered;
         }
@@ -2702,14 +2738,21 @@ fn pattern_key(pattern: &ast::Pattern) -> String {
             let elems: Vec<String> = elems.iter().map(pattern_key).collect();
             format!("tuple:{elems:?}:{}", rest.is_some())
         }
-        ast::Pattern::Struct { name, fields, rest, .. } => {
+        ast::Pattern::Struct {
+            name, fields, rest, ..
+        } => {
             let fields: Vec<(String, Option<String>)> = fields
                 .iter()
                 .map(|(field, pattern)| (field.clone(), pattern.as_ref().map(pattern_key)))
                 .collect();
             format!("struct:{}:{fields:?}:{rest}", name.join("::"))
         }
-        ast::Pattern::Enum { name, variant, inner, .. } => {
+        ast::Pattern::Enum {
+            name,
+            variant,
+            inner,
+            ..
+        } => {
             format!(
                 "enum:{}::{variant}:{:?}",
                 name.join("::"),
@@ -2788,7 +2831,11 @@ fn pattern_binding_names(pattern: &ast::Pattern) -> Vec<String> {
     names
 }
 
-fn collect_covered_bools(pattern: &ast::Pattern, true_covered: &mut bool, false_covered: &mut bool) {
+fn collect_covered_bools(
+    pattern: &ast::Pattern,
+    true_covered: &mut bool,
+    false_covered: &mut bool,
+) {
     match pattern {
         ast::Pattern::Lit(ast::Literal::Bool(value), _) => {
             if *value {
@@ -2821,7 +2868,11 @@ fn builtin_signature(def: &crate::io::BuiltinDef) -> FnSignature {
         .enumerate()
         .map(|(i, ty)| (format!("arg{i}"), builtin_type(ty)))
         .collect::<Vec<_>>();
-    let return_types = def.returns.iter().map(|ty| builtin_type(ty)).collect::<Vec<_>>();
+    let return_types = def
+        .returns
+        .iter()
+        .map(|ty| builtin_type(ty))
+        .collect::<Vec<_>>();
     FnSignature {
         name: def.name.to_string(),
         n: params.len() as u32,
@@ -2914,10 +2965,25 @@ fn is_castable(from: &HirType, to: &HirType) -> bool {
 fn is_primitive_type(name: &str) -> bool {
     matches!(
         name,
-        "i8" | "i16" | "i32" | "i64" | "isize"
-            | "u8" | "u16" | "u32" | "u64" | "usize"
-            | "f32" | "f64" | "bool" | "char" | "str" | "String"
-            | "()" | "!" | "_" | "Vec"
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "str"
+            | "String"
+            | "()"
+            | "!"
+            | "_"
+            | "Vec"
     )
 }
 
@@ -2941,8 +3007,7 @@ fn is_ordered(a: &HirType, b: &HirType) -> bool {
     if is_unknown(a) || is_unknown(b) {
         return true;
     }
-    (is_numeric(a) && is_numeric(b))
-        || (is_char(a) && is_char(b))
+    (is_numeric(a) && is_numeric(b)) || (is_char(a) && is_char(b))
 }
 
 fn is_char(ty: &HirType) -> bool {
@@ -2961,14 +3026,11 @@ fn is_assignable(expected: &HirType, found: &HirType) -> bool {
         return true;
     }
     match (expected, found) {
-        (HirType::Ref(e, e_mut), HirType::Ref(f, f_mut)) => {
-            e_mut == f_mut && is_assignable(e, f)
-        }
+        (HirType::Ref(e, e_mut), HirType::Ref(f, f_mut)) => e_mut == f_mut && is_assignable(e, f),
         (HirType::Array(e), HirType::Array(f)) => is_assignable(e, f),
         // `vec![...]` 目前以数组值实现，因此允许数组初始化 Vec<T> 标注。
         (HirType::Generic(base, args), HirType::Array(elem)) => {
-            base.name() == "Vec"
-                && args.first().is_none_or(|arg| is_assignable(arg, elem))
+            base.name() == "Vec" && args.first().is_none_or(|arg| is_assignable(arg, elem))
         }
         (HirType::Generic(e_base, e_args), HirType::Generic(f_base, f_args)) => {
             e_base == f_base
@@ -3141,7 +3203,9 @@ mod tests {
     fn test_condition_must_be_bool() {
         let errors = check("fn main() { if 1 { } }");
         assert!(
-            errors.iter().any(|e| matches!(e, TypeCheckError::ConditionNotBool { .. })),
+            errors
+                .iter()
+                .any(|e| matches!(e, TypeCheckError::ConditionNotBool { .. })),
             "{errors:?}"
         );
     }
@@ -3160,9 +3224,7 @@ mod tests {
 
     #[test]
     fn test_argument_type_mismatch() {
-        let errors = check(
-            "fn takes_bool(b: bool) { } fn main() { takes_bool(1); }",
-        );
+        let errors = check("fn takes_bool(b: bool) { } fn main() { takes_bool(1); }");
         assert!(
             errors.iter().any(|e| matches!(
                 e,
@@ -3208,9 +3270,7 @@ mod tests {
 
     #[test]
     fn test_for_infers_vec_element_type_through_ref() {
-        let errors = check(
-            "fn main() { let v = Vec::new(); for x in &v { let y: i32 = x; } }",
-        );
+        let errors = check("fn main() { let v = Vec::new(); for x in &v { let y: i32 = x; } }");
         // Vec::new() 的元素类型未知，不应误报；关键是引用包装不会触发 iterable 错误。
         assert!(errors.is_empty(), "{errors:?}");
     }
@@ -3231,7 +3291,9 @@ mod tests {
     fn test_ret_arity_mismatch() {
         let errors = check("fn f() -> i32 { ret 2; } fn main() { }");
         assert!(
-            errors.iter().any(|e| matches!(e, TypeCheckError::ReturnArityMismatch { .. })),
+            errors
+                .iter()
+                .any(|e| matches!(e, TypeCheckError::ReturnArityMismatch { .. })),
             "{errors:?}"
         );
     }

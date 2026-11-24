@@ -65,7 +65,9 @@ impl StackTracker {
 
     /// 压入命名变量
     pub fn push_var(&mut self, name: String) {
-        self.slots.push(SlotInfo { var_name: Some(name) });
+        self.slots.push(SlotInfo {
+            var_name: Some(name),
+        });
     }
 
     /// 将栈顶槽标记为命名变量（不改变栈深度）。
@@ -367,7 +369,11 @@ impl MirGen {
 
         // 确保函数以 ret 结束（如果没有显式 return）。
         // 隐式返回必须遵循函数签名的返回值个数：尾表达式的结果仍在栈顶。
-        if self.mir.last().is_none_or(|inst| !matches!(inst, MirInst::Ret { .. })) {
+        if self
+            .mir
+            .last()
+            .is_none_or(|inst| !matches!(inst, MirInst::Ret { .. }))
+        {
             self.mir.push(MirInst::Ret { argc: f.sig.m });
         }
 
@@ -439,7 +445,9 @@ impl MirGen {
     fn unwind_to(&mut self, ctx: &LoopContext) {
         let target = ctx.body_base.len();
         while self.stack.len() > target {
-            self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+            self.mir.push(MirInst::Pop {
+                ty: TypeId::Unknown,
+            });
             self.stack.pop();
         }
         self.stack = ctx.body_base.clone();
@@ -456,7 +464,9 @@ impl MirGen {
                 self.mir.push(MirInst::Roll { n: depth as i32 });
                 self.stack.roll(depth as i32);
             }
-            self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+            self.mir.push(MirInst::Pop {
+                ty: TypeId::Unknown,
+            });
             self.stack.pop();
         }
     }
@@ -499,7 +509,9 @@ impl MirGen {
                         self.mir.push(MirInst::Roll { n: depth as i32 });
                         self.stack.roll(depth as i32);
                     }
-                    self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                    self.mir.push(MirInst::Pop {
+                        ty: TypeId::Unknown,
+                    });
                     self.stack.pop();
                 }
             }
@@ -516,7 +528,12 @@ impl MirGen {
     fn collect_drop_vars(&self, block: &HirBlock) -> Vec<String> {
         let mut names = Vec::new();
         for stmt in &block.stmts {
-            if let HirStmt::Let { pattern, init: Some(_), .. } = stmt {
+            if let HirStmt::Let {
+                pattern,
+                init: Some(_),
+                ..
+            } = stmt
+            {
                 collect_pattern_names(pattern, &mut names);
             }
         }
@@ -539,7 +556,9 @@ impl MirGen {
                         self.gen_expr(init_expr, fn_sig);
                         if self.reachable {
                             while self.stack.len() > before {
-                                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                                self.mir.push(MirInst::Pop {
+                                    ty: TypeId::Unknown,
+                                });
                                 self.stack.pop();
                             }
                         }
@@ -569,7 +588,9 @@ impl MirGen {
                 // 不会向栈上压值，不能误 Pop 已有变量。
                 if self.reachable {
                     while self.stack.len() > before {
-                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.mir.push(MirInst::Pop {
+                            ty: TypeId::Unknown,
+                        });
                         self.stack.pop();
                     }
                 }
@@ -583,7 +604,9 @@ impl MirGen {
                             return;
                         }
                         // RHS 结果在栈顶 → WriteVar 消费 RHS 并写回变量槽
-                        self.mir.push(MirInst::WriteVar { name: var.name.clone() });
+                        self.mir.push(MirInst::WriteVar {
+                            name: var.name.clone(),
+                        });
                         self.stack.pop();
                         if let Some(pos) = self.stack.find_var(&var.name) {
                             self.stack.update_var(pos, var.name.clone());
@@ -640,7 +663,9 @@ impl MirGen {
                         if !self.reachable {
                             return;
                         }
-                        self.mir.push(MirInst::IndexStore { name: var.name.clone() });
+                        self.mir.push(MirInst::IndexStore {
+                            name: var.name.clone(),
+                        });
                         self.stack.pop(); // value
                         self.stack.pop(); // index
                     }
@@ -691,7 +716,9 @@ impl MirGen {
     /// 最后把隐藏变量槽从栈上移除。
     fn bind_single_pattern(&mut self, pattern: &ast::Pattern) {
         let hidden = self.fresh_hidden_name("let");
-        self.mir.push(MirInst::BindVar { name: hidden.clone() });
+        self.mir.push(MirInst::BindVar {
+            name: hidden.clone(),
+        });
         self.stack.bind_top(hidden.clone());
 
         let bindings = self.collect_pattern_bindings(pattern, &[]);
@@ -709,7 +736,9 @@ impl MirGen {
             self.mir.push(MirInst::Roll { n: below as i32 });
             self.stack.roll(below as i32);
         }
-        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+        self.mir.push(MirInst::Pop {
+            ty: TypeId::Unknown,
+        });
         self.stack.pop();
     }
 
@@ -720,13 +749,18 @@ impl MirGen {
         match expr {
             HirExpr::Lit(lit, _) => {
                 let value = literal_to_value(lit);
-                self.mir.push(MirInst::Push { value, ty: TypeId::Unknown });
+                self.mir.push(MirInst::Push {
+                    value,
+                    ty: TypeId::Unknown,
+                });
                 self.stack.push_temp();
             }
             HirExpr::Var(var_ref) => {
                 // scope_depth == usize::MAX 表示类型名或函数名，非变量
                 if var_ref.scope_depth != usize::MAX {
-                    self.mir.push(MirInst::ReadVar { name: var_ref.name.clone() });
+                    self.mir.push(MirInst::ReadVar {
+                        name: var_ref.name.clone(),
+                    });
                     self.stack.push_temp();
                 } else if let Some(fn_id) = self.name_to_id.get(&var_ref.name).copied() {
                     // 函数名作为值：压入 FnId。
@@ -752,7 +786,9 @@ impl MirGen {
                 self.gen_expr(inner, fn_sig);
                 match op {
                     UnOp::Neg => {
-                        self.mir.push(MirInst::Neg { ty: TypeId::Unknown });
+                        self.mir.push(MirInst::Neg {
+                            ty: TypeId::Unknown,
+                        });
                     }
                     UnOp::Not => {
                         self.mir.push(MirInst::Not);
@@ -763,7 +799,12 @@ impl MirGen {
                 }
                 // unary 操作 pop 1, push 1: 栈深度不变
             }
-            HirExpr::MethodCall { receiver, method, args, span } => {
+            HirExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                span,
+            } => {
                 // 类型检查记录了 `Option`/`Result` 的成功/失败变体标签；
                 // 缺少标注时按内建 `Option`（None=0 / Some=1）处理。
                 let resolution = self.method_variant_tags.get(span).cloned();
@@ -797,7 +838,10 @@ impl MirGen {
                         )));
                         FnId(0)
                     });
-                    self.mir.push(MirInst::Call { fn_id, return_arity: ret_count });
+                    self.mir.push(MirInst::Call {
+                        fn_id,
+                        return_arity: ret_count,
+                    });
                     for _ in 0..argc {
                         self.stack.pop();
                     }
@@ -807,13 +851,14 @@ impl MirGen {
                     }
                     return;
                 }
-                let tags = resolution
-                    .as_ref()
-                    .and_then(|r| r.variant_tags)
-                    .unwrap_or(MethodVariantTags {
-                        success: 1,
-                        failure: 0,
-                    });
+                let tags =
+                    resolution
+                        .as_ref()
+                        .and_then(|r| r.variant_tags)
+                        .unwrap_or(MethodVariantTags {
+                            success: 1,
+                            failure: 0,
+                        });
                 match method.as_str() {
                     "is_some" | "is_none" | "is_ok" | "is_err" => {
                         self.gen_expr(receiver, fn_sig);
@@ -836,12 +881,16 @@ impl MirGen {
                         // 丢弃枚举本体，只保留 bool。
                         self.mir.push(MirInst::Swap);
                         self.stack.swap();
-                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.mir.push(MirInst::Pop {
+                            ty: TypeId::Unknown,
+                        });
                         self.stack.pop();
                     }
                     "unwrap" => {
                         self.gen_expr(receiver, fn_sig);
-                        self.mir.push(MirInst::Unwrap { success_tag: tags.success });
+                        self.mir.push(MirInst::Unwrap {
+                            success_tag: tags.success,
+                        });
                         self.stack.pop();
                         self.stack.push_temp();
                     }
@@ -850,7 +899,9 @@ impl MirGen {
                         if let Some(arg) = args.first() {
                             self.gen_expr(arg, fn_sig);
                         }
-                        self.mir.push(MirInst::UnwrapOr { success_tag: tags.success });
+                        self.mir.push(MirInst::UnwrapOr {
+                            success_tag: tags.success,
+                        });
                         self.stack.pop();
                         self.stack.pop();
                         self.stack.push_temp();
@@ -987,7 +1038,9 @@ impl MirGen {
                         };
                         self.mir.push(MirInst::MakeArray { count: 0 });
                         self.stack.push_temp();
-                        self.mir.push(MirInst::WriteVar { name: var.name.clone() });
+                        self.mir.push(MirInst::WriteVar {
+                            name: var.name.clone(),
+                        });
                         self.stack.pop();
                     }
                     "len" => {
@@ -1007,23 +1060,31 @@ impl MirGen {
                             if let Some(arg) = args.first() {
                                 self.gen_expr(arg, fn_sig);
                             }
-                            self.mir.push(MirInst::VecPush { name: var.name.clone() });
+                            self.mir.push(MirInst::VecPush {
+                                name: var.name.clone(),
+                            });
                             if !args.is_empty() {
                                 self.stack.pop();
                             }
                         } else {
-                            self.mir.push(MirInst::VecPop { name: var.name.clone() });
+                            self.mir.push(MirInst::VecPop {
+                                name: var.name.clone(),
+                            });
                             self.stack.push_temp();
                         }
                     }
                     other => {
-                        self.mir.push(MirInst::Comment(format!(
-                            "ERROR: unknown method `{other}`"
-                        )));
+                        self.mir
+                            .push(MirInst::Comment(format!("ERROR: unknown method `{other}`")));
                     }
                 }
             }
-            HirExpr::TypeMethod { type_name, method, args, .. } => {
+            HirExpr::TypeMethod {
+                type_name,
+                method,
+                args,
+                ..
+            } => {
                 let name = type_name.join("::");
                 match (name.as_str(), method.as_str()) {
                     ("Vec", "new") | ("String", "new") => {
@@ -1045,7 +1106,13 @@ impl MirGen {
                     }
                 }
             }
-            HirExpr::Call { func, args, stack_pass, fn_sig: call_sig, span } => {
+            HirExpr::Call {
+                func,
+                args,
+                stack_pass,
+                fn_sig: call_sig,
+                span,
+            } => {
                 // 显式类型实参只影响类型检查；运行时按内层 callee 生成。
                 let func: &HirExpr = match func.as_ref() {
                     HirExpr::TypeApplied { callee, .. } => callee.as_ref(),
@@ -1179,11 +1246,16 @@ impl MirGen {
                 }
 
                 let fn_id = self.name_to_id.get(&fn_name).copied().unwrap_or_else(|| {
-                    self.mir.push(MirInst::Comment(format!("ERROR: unknown function '{fn_name}'")));
+                    self.mir.push(MirInst::Comment(format!(
+                        "ERROR: unknown function '{fn_name}'"
+                    )));
                     FnId(0)
                 });
                 let ret_count = call_sig.as_ref().map_or(0, |s| s.m);
-                self.mir.push(MirInst::Call { fn_id, return_arity: ret_count });
+                self.mir.push(MirInst::Call {
+                    fn_id,
+                    return_arity: ret_count,
+                });
                 // 清理调用者的栈追踪
                 if needs_call_element {
                     for _ in 0..argc {
@@ -1204,7 +1276,7 @@ impl MirGen {
                 if !self.reachable {
                     return;
                 }
-                self.mir.push(MirInst::Not);  // cond==false → true
+                self.mir.push(MirInst::Not); // cond==false → true
                 self.mir.push(MirInst::Jump(else_label));
                 self.stack.pop(); // pop cond
 
@@ -1291,7 +1363,9 @@ impl MirGen {
                     // 并把追踪器恢复到循环入口状态（循环体局部变量已在 ExitScope 弹出）。
                     let body_results = self.stack.len().saturating_sub(body_base.len());
                     for _ in 0..body_results {
-                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.mir.push(MirInst::Pop {
+                            ty: TypeId::Unknown,
+                        });
                     }
                     self.stack = body_base.clone();
                     self.mir.push(MirInst::UncondJump(loop_start));
@@ -1335,7 +1409,9 @@ impl MirGen {
                     // 正常迭代结束：清理循环体尾部结果，回到循环入口状态。
                     let body_results = self.stack.len().saturating_sub(body_base.len());
                     for _ in 0..body_results {
-                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.mir.push(MirInst::Pop {
+                            ty: TypeId::Unknown,
+                        });
                     }
                     self.stack = body_base.clone();
                     self.mir.push(MirInst::UncondJump(loop_start));
@@ -1347,16 +1423,21 @@ impl MirGen {
                 self.stack = body_base;
 
                 // 读取结果并移除隐藏变量槽，只留下结果值。
-                self.mir.push(MirInst::ReadVar {
-                    name: result_name,
-                });
+                self.mir.push(MirInst::ReadVar { name: result_name });
                 self.stack.push_temp();
                 self.mir.push(MirInst::Swap);
                 self.stack.swap();
-                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                self.mir.push(MirInst::Pop {
+                    ty: TypeId::Unknown,
+                });
                 self.stack.pop();
             }
-            HirExpr::For { pattern, iterable, body, .. } => {
+            HirExpr::For {
+                pattern,
+                iterable,
+                body,
+                ..
+            } => {
                 let loop_start = self.labels.fresh();
                 let loop_end = self.labels.fresh();
                 let continue_label = self.labels.fresh();
@@ -1374,28 +1455,43 @@ impl MirGen {
 
                 // 隐藏变量：iterable、长度、下标。
                 self.gen_expr(iterable, fn_sig);
-                self.mir.push(MirInst::BindVar { name: iter_name.clone() });
+                self.mir.push(MirInst::BindVar {
+                    name: iter_name.clone(),
+                });
                 self.stack.bind_top(iter_name.clone());
 
-                self.mir.push(MirInst::ReadVar { name: iter_name.clone() });
+                self.mir.push(MirInst::ReadVar {
+                    name: iter_name.clone(),
+                });
                 self.stack.push_temp();
                 self.mir.push(MirInst::ContainerLen);
                 self.stack.pop();
                 self.stack.push_temp();
-                self.mir.push(MirInst::BindVar { name: len_name.clone() });
+                self.mir.push(MirInst::BindVar {
+                    name: len_name.clone(),
+                });
                 self.stack.bind_top(len_name.clone());
 
-                self.mir.push(MirInst::Push { value: Value::I64(0), ty: TypeId::I64 });
+                self.mir.push(MirInst::Push {
+                    value: Value::I64(0),
+                    ty: TypeId::I64,
+                });
                 self.stack.push_temp();
-                self.mir.push(MirInst::BindVar { name: idx_name.clone() });
+                self.mir.push(MirInst::BindVar {
+                    name: idx_name.clone(),
+                });
                 self.stack.bind_top(idx_name.clone());
 
                 let body_base = self.stack.clone();
 
                 self.mir.push(MirInst::Mark(loop_start));
-                self.mir.push(MirInst::ReadVar { name: idx_name.clone() });
+                self.mir.push(MirInst::ReadVar {
+                    name: idx_name.clone(),
+                });
                 self.stack.push_temp();
-                self.mir.push(MirInst::ReadVar { name: len_name.clone() });
+                self.mir.push(MirInst::ReadVar {
+                    name: len_name.clone(),
+                });
                 self.stack.push_temp();
                 self.mir.push(MirInst::Lt);
                 self.stack.pop();
@@ -1409,9 +1505,13 @@ impl MirGen {
                 self.push_loop(loop_end, continue_label, body_base.clone(), None, label);
 
                 self.enter_scope();
-                self.mir.push(MirInst::ReadVar { name: iter_name.clone() });
+                self.mir.push(MirInst::ReadVar {
+                    name: iter_name.clone(),
+                });
                 self.stack.push_temp();
-                self.mir.push(MirInst::ReadVar { name: idx_name.clone() });
+                self.mir.push(MirInst::ReadVar {
+                    name: idx_name.clone(),
+                });
                 self.stack.push_temp();
                 self.mir.push(MirInst::IndexAccess);
                 self.stack.pop();
@@ -1425,7 +1525,9 @@ impl MirGen {
                 let fell_through = self.reachable;
                 if fell_through {
                     while self.stack.len() > body_base.len() {
-                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.mir.push(MirInst::Pop {
+                            ty: TypeId::Unknown,
+                        });
                         self.stack.pop();
                     }
                     self.stack = body_base.clone();
@@ -1434,20 +1536,26 @@ impl MirGen {
 
                 // continue 跳到递增标签；正常落穿与 continue 都能到达这里。
                 self.mir.push(MirInst::Mark(continue_label));
-                self.reachable =
-                    fell_through || ctx.is_some_and(|c| c.saw_continue);
+                self.reachable = fell_through || ctx.is_some_and(|c| c.saw_continue);
                 self.stack = body_base.clone();
                 if self.reachable {
                     // idx = idx + 1
-                    self.mir.push(MirInst::ReadVar { name: idx_name.clone() });
+                    self.mir.push(MirInst::ReadVar {
+                        name: idx_name.clone(),
+                    });
                     self.stack.push_temp();
-                    self.mir.push(MirInst::Push { value: Value::I64(1), ty: TypeId::I64 });
+                    self.mir.push(MirInst::Push {
+                        value: Value::I64(1),
+                        ty: TypeId::I64,
+                    });
                     self.stack.push_temp();
                     self.mir.push(MirInst::Add { ty: TypeId::I64 });
                     self.stack.pop();
                     self.stack.pop();
                     self.stack.push_temp();
-                    self.mir.push(MirInst::WriteVar { name: idx_name.clone() });
+                    self.mir.push(MirInst::WriteVar {
+                        name: idx_name.clone(),
+                    });
                     self.stack.pop();
                     self.mir.push(MirInst::UncondJump(loop_start));
                 }
@@ -1458,7 +1566,9 @@ impl MirGen {
                 self.stack = body_base.clone();
 
                 // 清理隐藏变量（从上到下），恢复循环前追踪状态。
-                self.mir.push(MirInst::DropVar { name: iter_name.clone() });
+                self.mir.push(MirInst::DropVar {
+                    name: iter_name.clone(),
+                });
                 self.remove_var_slot(&idx_name);
                 self.remove_var_slot(&len_name);
                 self.remove_var_slot(&iter_name);
@@ -1518,7 +1628,9 @@ impl MirGen {
                     } else {
                         // while/for 的带值 break 已在类型检查阶段拒绝；
                         // 这里保守丢弃值。
-                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.mir.push(MirInst::Pop {
+                            ty: TypeId::Unknown,
+                        });
                         self.stack.pop();
                     }
                 }
@@ -1529,7 +1641,8 @@ impl MirGen {
                     self.mir.push(MirInst::UncondJump(ctx.break_target));
                     self.reachable = false;
                 } else {
-                    self.mir.push(MirInst::Comment("break outside loop".to_string()));
+                    self.mir
+                        .push(MirInst::Comment("break outside loop".to_string()));
                 }
             }
             HirExpr::Continue(_) => {
@@ -1540,7 +1653,8 @@ impl MirGen {
                     self.mir.push(MirInst::UncondJump(ctx.continue_target));
                     self.reachable = false;
                 } else {
-                    self.mir.push(MirInst::Comment("continue outside loop".to_string()));
+                    self.mir
+                        .push(MirInst::Comment("continue outside loop".to_string()));
                 }
             }
             HirExpr::BreakLabel(label, value, _) => {
@@ -1558,7 +1672,9 @@ impl MirGen {
                         self.mir.push(MirInst::WriteVar { name: result_var });
                         self.stack.pop();
                     } else {
-                        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                        self.mir.push(MirInst::Pop {
+                            ty: TypeId::Unknown,
+                        });
                         self.stack.pop();
                     }
                 }
@@ -1567,7 +1683,8 @@ impl MirGen {
                     self.mir.push(MirInst::UncondJump(ctx.break_target));
                     self.reachable = false;
                 } else {
-                    self.mir.push(MirInst::Comment("break label outside loop".to_string()));
+                    self.mir
+                        .push(MirInst::Comment("break label outside loop".to_string()));
                 }
             }
             HirExpr::ContinueLabel(label, _) => {
@@ -1576,9 +1693,8 @@ impl MirGen {
                     self.mir.push(MirInst::UncondJump(ctx.continue_target));
                     self.reachable = false;
                 } else {
-                    self.mir.push(MirInst::Comment(
-                        "continue label outside loop".to_string(),
-                    ));
+                    self.mir
+                        .push(MirInst::Comment("continue label outside loop".to_string()));
                 }
             }
             HirExpr::Ref(inner, mutable, _) => {
@@ -1611,7 +1727,9 @@ impl MirGen {
                 for e in elems {
                     self.gen_expr(e, fn_sig);
                 }
-                self.mir.push(MirInst::MakeArray { count: elems.len() as u32 });
+                self.mir.push(MirInst::MakeArray {
+                    count: elems.len() as u32,
+                });
                 for _ in elems {
                     self.stack.pop();
                 }
@@ -1652,13 +1770,14 @@ impl MirGen {
             }
             HirExpr::StructLit { name, fields, .. } => {
                 // 按结构体字段声明顺序压入字段值
-                let field_order = self.type_table.lookup_struct(&name.join("::"))
+                let field_order = self
+                    .type_table
+                    .lookup_struct(&name.join("::"))
                     .map(|s| s.fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>())
                     .unwrap_or_else(|| fields.iter().map(|(n, _)| n.clone()).collect());
 
-                let mut field_values: HashMap<String, &HirExpr> = fields.iter()
-                    .map(|(n, e)| (n.clone(), e))
-                    .collect();
+                let mut field_values: HashMap<String, &HirExpr> =
+                    fields.iter().map(|(n, e)| (n.clone(), e)).collect();
 
                 for fname in &field_order {
                     if let Some(e) = field_values.remove(fname) {
@@ -1666,14 +1785,23 @@ impl MirGen {
                     }
                 }
                 // 结构体以单槽 Value::Tuple 表示，字段顺序与声明一致。
-                self.mir.push(MirInst::MakeArray { count: field_order.len() as u32 });
+                self.mir.push(MirInst::MakeArray {
+                    count: field_order.len() as u32,
+                });
                 for _ in 0..field_order.len() {
                     self.stack.pop();
                 }
                 self.stack.push_temp();
             }
-            HirExpr::EnumLit { name, variant, data, .. } => {
-                let tag = self.type_table.variant_tag(&name.join("::"), variant)
+            HirExpr::EnumLit {
+                name,
+                variant,
+                data,
+                ..
+            } => {
+                let tag = self
+                    .type_table
+                    .variant_tag(&name.join("::"), variant)
                     .unwrap_or(0);
                 // 压入标签值 + 可选数据
                 self.mir.push(MirInst::Push {
@@ -1687,7 +1815,10 @@ impl MirGen {
                 // MakeEnum: 将栈上 N+1 个槽合并为枚举
                 let has_data = data.is_some();
                 let data_slots = if has_data { 1 } else { 0 };
-                self.mir.push(MirInst::MakeEnum { variant: tag as usize, data_slots });
+                self.mir.push(MirInst::MakeEnum {
+                    variant: tag as usize,
+                    data_slots,
+                });
                 // 清理栈追踪
                 if has_data {
                     self.stack.pop(); // data
@@ -1705,26 +1836,23 @@ impl MirGen {
 
                 let scrutinee_var = self.fresh_hidden_name("match");
                 self.enter_scope();
-                self.mir.push(MirInst::BindVar { name: scrutinee_var.clone() });
+                self.mir.push(MirInst::BindVar {
+                    name: scrutinee_var.clone(),
+                });
                 self.stack.bind_top(scrutinee_var.clone());
                 let base = self.stack.clone();
                 let match_scope_depth = self.scope_depth;
 
                 let end_label = self.labels.fresh();
                 let no_match_label = self.labels.fresh();
-                let check_labels: Vec<usize> =
-                    arms.iter().map(|_| self.labels.fresh()).collect();
-                let body_labels: Vec<usize> =
-                    arms.iter().map(|_| self.labels.fresh()).collect();
+                let check_labels: Vec<usize> = arms.iter().map(|_| self.labels.fresh()).collect();
+                let body_labels: Vec<usize> = arms.iter().map(|_| self.labels.fresh()).collect();
 
                 // ── 模式检查 ──
                 // 每个检查从“只有隐藏被匹配变量”的栈状态出发：
                 // 模式条件为真 → 跳 bod 分支体；为假 → 跳下一个检查。
                 for (i, arm) in arms.iter().enumerate() {
-                    let next_check = check_labels
-                        .get(i + 1)
-                        .copied()
-                        .unwrap_or(no_match_label);
+                    let next_check = check_labels.get(i + 1).copied().unwrap_or(no_match_label);
                     self.mir.push(MirInst::Mark(check_labels[i]));
                     self.reachable = true;
                     self.stack = base.clone();
@@ -1742,10 +1870,7 @@ impl MirGen {
                 let mut merge_state: Option<StackTracker> = None;
                 let mut max_results = 0usize;
                 for (i, arm) in arms.iter().enumerate() {
-                    let next_check = check_labels
-                        .get(i + 1)
-                        .copied()
-                        .unwrap_or(no_match_label);
+                    let next_check = check_labels.get(i + 1).copied().unwrap_or(no_match_label);
 
                     self.mir.push(MirInst::Mark(body_labels[i]));
                     self.reachable = true;
@@ -1841,7 +1966,9 @@ impl MirGen {
                     self.mir.push(MirInst::Roll { n: results as i32 });
                     self.stack.roll(results as i32);
                 }
-                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                self.mir.push(MirInst::Pop {
+                    ty: TypeId::Unknown,
+                });
                 self.stack.pop();
                 self.exit_scope();
             }
@@ -1865,14 +1992,19 @@ impl MirGen {
             }
             HirExpr::Unsafe(block, _) => {
                 // unsafe 块：标记作用域并生成代码（跳过类型检查）
-                self.mir.push(MirInst::Comment("unsafe block begin".to_string()));
+                self.mir
+                    .push(MirInst::Comment("unsafe block begin".to_string()));
                 self.gen_block(block, fn_sig);
-                self.mir.push(MirInst::Comment("unsafe block end".to_string()));
+                self.mir
+                    .push(MirInst::Comment("unsafe block end".to_string()));
             }
 
             // 其他表达式：占位
             _ => {
-                self.mir.push(MirInst::Comment(format!("TODO: {:?}", std::mem::discriminant(expr))));
+                self.mir.push(MirInst::Comment(format!(
+                    "TODO: {:?}",
+                    std::mem::discriminant(expr)
+                )));
             }
         }
     }
@@ -1964,9 +2096,7 @@ impl MirGen {
                     let mut sub_path = path.to_vec();
                     sub_path.push(PatternPathStep::Field(index));
                     match field_pattern {
-                        Some(pat) => {
-                            self.gen_pattern_condition(pat, scrutinee_var, &sub_path)
-                        }
+                        Some(pat) => self.gen_pattern_condition(pat, scrutinee_var, &sub_path),
                         None => {
                             // 字段简写只做绑定，不附加检查。
                             let _ = sub_path;
@@ -1980,7 +2110,12 @@ impl MirGen {
                 }
                 self.combine_pattern_conditions(fields.len(), MirInst::And);
             }
-            ast::Pattern::Enum { name, variant, inner, .. } => {
+            ast::Pattern::Enum {
+                name,
+                variant,
+                inner,
+                ..
+            } => {
                 let tag = self.variant_tag_for_pattern(name, variant);
                 self.gen_pattern_tag_condition(scrutinee_var, path, tag);
                 if let Some(inner) = inner {
@@ -2037,7 +2172,9 @@ impl MirGen {
         self.stack.push_temp();
         self.mir.push(MirInst::Swap);
         self.stack.swap();
-        self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+        self.mir.push(MirInst::Pop {
+            ty: TypeId::Unknown,
+        });
         self.stack.pop();
         self.mir.push(MirInst::Push {
             value: Value::I32(tag as i64),
@@ -2086,9 +2223,7 @@ impl MirGen {
                     let mut sub_path = path.to_vec();
                     sub_path.push(PatternPathStep::Field(index));
                     match field_pattern {
-                        Some(pat) => {
-                            self.collect_pattern_bindings_into(pat, &sub_path, bindings)
-                        }
+                        Some(pat) => self.collect_pattern_bindings_into(pat, &sub_path, bindings),
                         None => bindings.push(PatternBinding {
                             name: field.clone(),
                             path: sub_path,
@@ -2156,7 +2291,9 @@ impl MirGen {
                 self.mir.push(MirInst::Roll { n: depth as i32 });
                 self.stack.roll(depth as i32);
             }
-            self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+            self.mir.push(MirInst::Pop {
+                ty: TypeId::Unknown,
+            });
             self.stack.pop();
         }
     }
@@ -2270,14 +2407,8 @@ impl MirGen {
                 self.stack.push_temp();
             }
             "str_to_int" => {
-                let some_tag = self
-                    .type_table
-                    .variant_tag("Option", "Some")
-                    .unwrap_or(1) as i64;
-                let none_tag = self
-                    .type_table
-                    .variant_tag("Option", "None")
-                    .unwrap_or(0) as i64;
+                let some_tag = self.type_table.variant_tag("Option", "Some").unwrap_or(1) as i64;
+                let none_tag = self.type_table.variant_tag("Option", "None").unwrap_or(0) as i64;
                 self.mir.push(MirInst::StrToInt { some_tag, none_tag });
                 self.stack.pop();
                 self.stack.push_temp();
@@ -2295,9 +2426,8 @@ impl MirGen {
                 self.stack.push_temp();
             }
             _ => {
-                self.mir.push(MirInst::Comment(format!(
-                    "ERROR: unknown builtin '{name}'"
-                )));
+                self.mir
+                    .push(MirInst::Comment(format!("ERROR: unknown builtin '{name}'")));
             }
         }
     }
@@ -2310,15 +2440,22 @@ impl MirGen {
     ) {
         match inst {
             crate::frontend::ast::StardustInst::Push(v) => {
-                self.mir.push(MirInst::Push { value: Value::I64(*v), ty: TypeId::Unknown });
+                self.mir.push(MirInst::Push {
+                    value: Value::I64(*v),
+                    ty: TypeId::Unknown,
+                });
                 self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Pop => {
-                self.mir.push(MirInst::Pop { ty: TypeId::Unknown });
+                self.mir.push(MirInst::Pop {
+                    ty: TypeId::Unknown,
+                });
                 self.stack.pop();
             }
             crate::frontend::ast::StardustInst::Dup => {
-                self.mir.push(MirInst::Dup { ty: TypeId::Unknown });
+                self.mir.push(MirInst::Dup {
+                    ty: TypeId::Unknown,
+                });
                 self.stack.dup();
             }
             crate::frontend::ast::StardustInst::Swap => {
@@ -2326,56 +2463,92 @@ impl MirGen {
                 self.stack.swap();
             }
             crate::frontend::ast::StardustInst::Add => {
-                self.mir.push(MirInst::Add { ty: TypeId::Unknown });
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.mir.push(MirInst::Add {
+                    ty: TypeId::Unknown,
+                });
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Sub => {
-                self.mir.push(MirInst::Sub { ty: TypeId::Unknown });
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.mir.push(MirInst::Sub {
+                    ty: TypeId::Unknown,
+                });
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Mul => {
-                self.mir.push(MirInst::Mul { ty: TypeId::Unknown });
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.mir.push(MirInst::Mul {
+                    ty: TypeId::Unknown,
+                });
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Div => {
-                self.mir.push(MirInst::Div { ty: TypeId::Unknown });
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.mir.push(MirInst::Div {
+                    ty: TypeId::Unknown,
+                });
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Mod => {
-                self.mir.push(MirInst::Mod { ty: TypeId::Unknown });
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.mir.push(MirInst::Mod {
+                    ty: TypeId::Unknown,
+                });
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Eq => {
                 self.mir.push(MirInst::Eq);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Ne => {
                 self.mir.push(MirInst::Ne);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Lt => {
                 self.mir.push(MirInst::Lt);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Gt => {
                 self.mir.push(MirInst::Gt);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Le => {
                 self.mir.push(MirInst::Le);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Ge => {
                 self.mir.push(MirInst::Ge);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::And => {
                 self.mir.push(MirInst::And);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Or => {
                 self.mir.push(MirInst::Or);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Not => {
                 self.mir.push(MirInst::Not);
@@ -2383,15 +2556,19 @@ impl MirGen {
             }
             crate::frontend::ast::StardustInst::Xor => {
                 self.mir.push(MirInst::Xor);
-                self.stack.pop(); self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::Store => {
                 self.mir.push(MirInst::HeapStore);
-                self.stack.pop(); self.stack.pop();
+                self.stack.pop();
+                self.stack.pop();
             }
             crate::frontend::ast::StardustInst::Load => {
                 self.mir.push(MirInst::HeapLoad);
-                self.stack.pop(); self.stack.push_temp();
+                self.stack.pop();
+                self.stack.push_temp();
             }
             crate::frontend::ast::StardustInst::ShiftL => {
                 // Stardust ShiftL：栈底元素移到栈顶（整帧循环移位，不是 Roll）。
@@ -2527,9 +2704,7 @@ fn literal_to_value(lit: &Literal) -> Value {
         Literal::Float(v) => Value::F64(*v),
         Literal::Bool(b) => Value::Bool(*b),
         Literal::Char(c) => Value::Char(*c),
-        Literal::String(s) => Value::Tuple(
-            s.chars().map(|c| Value::Char(c as u32)).collect()
-        ),
+        Literal::String(s) => Value::Tuple(s.chars().map(|c| Value::Char(c as u32)).collect()),
         Literal::Unit => Value::Unit,
     }
 }
@@ -2561,11 +2736,21 @@ fn hir_type_to_type_id(ty: &HirType) -> TypeId {
 
 fn binop_to_mir(op: BinOp) -> MirInst {
     match op {
-        BinOp::Add => MirInst::Add { ty: TypeId::Unknown },
-        BinOp::Sub => MirInst::Sub { ty: TypeId::Unknown },
-        BinOp::Mul => MirInst::Mul { ty: TypeId::Unknown },
-        BinOp::Div => MirInst::Div { ty: TypeId::Unknown },
-        BinOp::Mod => MirInst::Mod { ty: TypeId::Unknown },
+        BinOp::Add => MirInst::Add {
+            ty: TypeId::Unknown,
+        },
+        BinOp::Sub => MirInst::Sub {
+            ty: TypeId::Unknown,
+        },
+        BinOp::Mul => MirInst::Mul {
+            ty: TypeId::Unknown,
+        },
+        BinOp::Div => MirInst::Div {
+            ty: TypeId::Unknown,
+        },
+        BinOp::Mod => MirInst::Mod {
+            ty: TypeId::Unknown,
+        },
         BinOp::Eq => MirInst::Eq,
         BinOp::Ne => MirInst::Ne,
         BinOp::Lt => MirInst::Lt,

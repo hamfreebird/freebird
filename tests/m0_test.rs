@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use freebird::{build_stardust, check_source, run_source, RuntimeConfig};
+use freebird::{RuntimeConfig, build_stardust, check_source, run_source};
 
 fn run(source: &str) -> Result<Vec<u8>, String> {
     run_source(source, RuntimeConfig::test())
@@ -60,7 +60,8 @@ fn assert_backends_agree(source: &str, name: &str, expected: &[u8]) {
     assert_eq!(vm, expected, "VM output mismatch for {name}");
     let stardust = run_stardust(source, name);
     assert_eq!(
-        stardust, vm,
+        stardust,
+        vm,
         "Stardust output differs from VM for {name}: VM={:?}, Stardust={:?}",
         String::from_utf8_lossy(&vm),
         String::from_utf8_lossy(&stardust)
@@ -275,12 +276,19 @@ fn runtime_attributes_override_config() {
         }
     ";
     let error = run(source).expect_err("step limit should stop the VM");
-    assert!(error.contains("step limit exceeded"), "unexpected error: {error}");
+    assert!(
+        error.contains("step limit exceeded"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
 fn unknown_attribute_is_rejected() {
-    assert_rejected("unknown attribute", "#[bogus] fn main() { }", "unknown attribute `#[bogus]`");
+    assert_rejected(
+        "unknown attribute",
+        "#[bogus] fn main() { }",
+        "unknown attribute `#[bogus]`",
+    );
 }
 
 #[test]
@@ -329,8 +337,11 @@ fn check_cli_reports_borrow_errors() {
     let dir = PathBuf::from("target/m0-tests");
     fs::create_dir_all(&dir).expect("create m0 test dir");
     let path = dir.join("use_after_move.fb");
-    fs::write(&path, r#"fn main() { let s = "hi"; let t = s; print_str(s); }"#)
-        .expect("write source");
+    fs::write(
+        &path,
+        r#"fn main() { let s = "hi"; let t = s; print_str(s); }"#,
+    )
+    .expect("write source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_freebird"))
         .arg("check")

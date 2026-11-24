@@ -252,8 +252,13 @@ pub enum StardustInst {
     Depth,
     Reverse,
     Rotate,
-    Call { n: u32, m: u32 },
-    Ret { m: u32 },
+    Call {
+        n: u32,
+        m: u32,
+    },
+    Ret {
+        m: u32,
+    },
     /// 跳转标记（Stardust `Mark(n)`）；宏内标签与 MIR 内部标签隔离。
     Mark(u32),
     /// 条件跳转：弹出栈顶，非零则跳转到 `Mark(n)`。

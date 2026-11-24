@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{assert_same, fb_files, run_stardust, run_vm, Run};
+use common::{Run, assert_same, fb_files, run_stardust, run_vm};
 
 #[test]
 fn differential_fixtures() {

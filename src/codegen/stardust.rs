@@ -76,7 +76,11 @@ pub struct FnInfo {
 
 impl FnInfo {
     pub fn new(name: impl Into<String>, params: u32, returns: u32) -> Self {
-        Self { name: name.into(), params, returns }
+        Self {
+            name: name.into(),
+            params,
+            returns,
+        }
     }
 }
 
@@ -321,7 +325,11 @@ impl StardustGen {
             "---- FnId({}) `{}`{}: {} param(s) -> {} return(s) ----",
             fn_id.0,
             info.name,
-            if alias_body { " (mutual-recursion alias)" } else { "" },
+            if alias_body {
+                " (mutual-recursion alias)"
+            } else {
+                ""
+            },
             info.params,
             info.returns
         ));
@@ -526,9 +534,7 @@ impl StardustGen {
             }
             MirInst::HideCallElement => {
                 if !self.ce_hidden {
-                    self.emit_comment(
-                        "stardust! begin: hide Freebird CallElement (heap[13])",
-                    );
+                    self.emit_comment("stardust! begin: hide Freebird CallElement (heap[13])");
                     // [CE, users...] → [users...]
                     self.raw_inst(5, '*'); // Reverse
                     self.emit_push_int(HEAP_CE_TEMP as i64);
@@ -591,11 +597,9 @@ impl StardustGen {
                 // 宽整型/char 保持原常量；窄化或 bool 转换可能改变值，
                 // 保守地丢弃常量跟踪，避免后续折叠使用错误的数值。
                 let constant = match target {
-                    TypeId::I64
-                    | TypeId::Isize
-                    | TypeId::U64
-                    | TypeId::Usize
-                    | TypeId::Char => slot.constant,
+                    TypeId::I64 | TypeId::Isize | TypeId::U64 | TypeId::Usize | TypeId::Char => {
+                        slot.constant
+                    }
                     _ => None,
                 };
                 self.stack.push(Slot {
@@ -645,7 +649,11 @@ impl StardustGen {
             MirInst::CallIndirect { argc, return_arity } => {
                 self.gen_call_indirect(*argc, *return_arity);
             }
-            MirInst::ExternCall { stardust_id, argc, return_arity } => {
+            MirInst::ExternCall {
+                stardust_id,
+                argc,
+                return_arity,
+            } => {
                 self.gen_extern_call(*stardust_id, *argc, *return_arity);
             }
             MirInst::Ret { argc } => {
@@ -783,10 +791,7 @@ impl StardustGen {
                 self.stack.push(slot);
             }
             MirInst::ContainerLen => {
-                let constant = self
-                    .stack
-                    .last()
-                    .and_then(|slot| slot.constant.clone());
+                let constant = self.stack.last().and_then(|slot| slot.constant.clone());
                 if let Some(ConstValue::Str(s)) = constant {
                     self.emit_comment("ContainerLen on string literal: constant-folded");
                     self.pop_n_emit(1);
@@ -828,7 +833,10 @@ impl StardustGen {
                 self.emit_release_block(HEAP_HANDLE);
                 self.heap_bindings.remove(&binding);
             }
-            MirInst::MakeEnum { variant: _, data_slots } => {
+            MirInst::MakeEnum {
+                variant: _,
+                data_slots,
+            } => {
                 self.gen_build_array(*data_slots as usize + 1);
                 self.pop_n_model(*data_slots as usize + 1);
                 self.stack.push(Slot::unknown());
@@ -927,10 +935,7 @@ impl StardustGen {
                 self.stack.pop();
                 self.stack.push(Slot::unknown());
             }
-            MirInst::StrToInt {
-                some_tag,
-                none_tag,
-            } => {
+            MirInst::StrToInt { some_tag, none_tag } => {
                 self.gen_str_to_int(*some_tag, *none_tag);
                 self.stack.pop();
                 self.stack.push(Slot::unknown());
@@ -1115,7 +1120,10 @@ impl StardustGen {
             MirInst::StrOut { newline } => {
                 let top = self.stack.pop();
                 match top {
-                    Some(Slot { constant: Some(ConstValue::Str(s)), .. }) => {
+                    Some(Slot {
+                        constant: Some(ConstValue::Str(s)),
+                        ..
+                    }) => {
                         self.raw_inst(4, '+'); // 丢弃堆句柄
                         for ch in s.chars() {
                             self.emit_push_int(ch as i64);
@@ -1170,7 +1178,9 @@ impl StardustGen {
     }
 
     fn find_slot_index(&self, binding: usize) -> Option<usize> {
-        self.stack.iter().rposition(|slot| slot.binding == Some(binding))
+        self.stack
+            .iter()
+            .rposition(|slot| slot.binding == Some(binding))
     }
 
     fn gen_read_var(&mut self, name: &str) {
@@ -1181,9 +1191,7 @@ impl StardustGen {
             return;
         };
         let Some(index) = self.find_slot_index(binding) else {
-            self.emit_comment(&format!(
-                "ERROR: ReadVar({name}) has no stack slot; push 0"
-            ));
+            self.emit_comment(&format!("ERROR: ReadVar({name}) has no stack slot; push 0"));
             self.emit_push_int(0);
             self.stack.push(Slot::unknown());
             return;
@@ -1310,7 +1318,8 @@ impl StardustGen {
         }
     }
 
-    fn gen_call(&mut self, fn_id: FnId) {        let info = self.fn_info.get(&fn_id).cloned();
+    fn gen_call(&mut self, fn_id: FnId) {
+        let info = self.fn_info.get(&fn_id).cloned();
         if info.is_none() || fn_id.0 == 0 {
             self.emit_comment(&format!(
                 "ERROR: call to unknown FnId({}); call skipped",
@@ -1414,9 +1423,13 @@ impl StardustGen {
     // ─── 控制流汇合 ───
 
     fn record_branch_state(&mut self, label: usize) {
-        let state = BranchState { stack: self.stack.clone(), scopes: self.scopes.clone() };
+        let state = BranchState {
+            stack: self.stack.clone(),
+            scopes: self.scopes.clone(),
+        };
         if let Some(existing) = self.branch_states.get(&label).cloned() {
-            self.branch_states.insert(label, merge_branch_states(existing, state));
+            self.branch_states
+                .insert(label, merge_branch_states(existing, state));
         } else {
             self.branch_states.insert(label, state);
         }
@@ -3668,7 +3681,10 @@ fn merge_branch_states(a: BranchState, b: BranchState) -> BranchState {
         // 栈高度不一致时保留先记录的状态；代码生成阶段会再输出警告。
         return a;
     }
-    BranchState { stack: merge_slots(&a.stack, &b.stack), scopes: b.scopes }
+    BranchState {
+        stack: merge_slots(&a.stack, &b.stack),
+        scopes: b.scopes,
+    }
 }
 
 fn merge_slots(a: &[Slot], b: &[Slot]) -> Vec<Slot> {
@@ -3770,7 +3786,10 @@ mod tests {
     fn test_variable_read_uses_depth_and_pick() {
         let mir = vec![
             MirInst::EnterScope,
-            MirInst::Push { value: Value::I64(7), ty: TypeId::I64 },
+            MirInst::Push {
+                value: Value::I64(7),
+                ty: TypeId::I64,
+            },
             MirInst::BindVar { name: "x".into() },
             MirInst::ReadVar { name: "x".into() },
         ];
@@ -3829,10 +3848,22 @@ mod tests {
         map.insert(FnId(1), FnInfo::new("main", 0, 0));
         map.insert(FnId(2), FnInfo::new("add", 2, 1));
         let mir = vec![
-            MirInst::Push { value: Value::CallElement { argc: 2 }, ty: TypeId::Unknown },
-            MirInst::Push { value: Value::I64(1), ty: TypeId::I64 },
-            MirInst::Push { value: Value::I64(2), ty: TypeId::I64 },
-            MirInst::Call { fn_id: FnId(2), return_arity: 1 },
+            MirInst::Push {
+                value: Value::CallElement { argc: 2 },
+                ty: TypeId::Unknown,
+            },
+            MirInst::Push {
+                value: Value::I64(1),
+                ty: TypeId::I64,
+            },
+            MirInst::Push {
+                value: Value::I64(2),
+                ty: TypeId::I64,
+            },
+            MirInst::Call {
+                fn_id: FnId(2),
+                return_arity: 1,
+            },
         ];
         let mut generator = StardustGen::new();
         let code = generator.generate_program(&[(FnId(1), mir)], &map, Some(FnId(1)));
@@ -3847,18 +3878,35 @@ mod tests {
         map.insert(FnId(2), FnInfo::new("fact", 1, 1));
 
         let main_mir = vec![
-            MirInst::Push { value: Value::CallElement { argc: 0 }, ty: TypeId::Unknown },
-            MirInst::Call { fn_id: FnId(2), return_arity: 1 },
-            MirInst::Pop { ty: TypeId::Unknown },
+            MirInst::Push {
+                value: Value::CallElement { argc: 0 },
+                ty: TypeId::Unknown,
+            },
+            MirInst::Call {
+                fn_id: FnId(2),
+                return_arity: 1,
+            },
+            MirInst::Pop {
+                ty: TypeId::Unknown,
+            },
         ];
         let fact_mir = vec![
             MirInst::EnterScope,
             MirInst::BindVar { name: "n".into() },
-            MirInst::Push { value: Value::CallElement { argc: 1 }, ty: TypeId::Unknown },
+            MirInst::Push {
+                value: Value::CallElement { argc: 1 },
+                ty: TypeId::Unknown,
+            },
             MirInst::ReadVar { name: "n".into() },
-            MirInst::Push { value: Value::I64(1), ty: TypeId::I64 },
+            MirInst::Push {
+                value: Value::I64(1),
+                ty: TypeId::I64,
+            },
             MirInst::Sub { ty: TypeId::I64 },
-            MirInst::Call { fn_id: FnId(2), return_arity: 1 },
+            MirInst::Call {
+                fn_id: FnId(2),
+                return_arity: 1,
+            },
             MirInst::Ret { argc: 1 },
         ];
         let functions = vec![(FnId(1), main_mir), (FnId(2), fact_mir)];
@@ -3868,9 +3916,15 @@ mod tests {
         // 自递归函数生成两个副本，别名名从最大 FnId 之后开始（3）。
         assert!(code.contains("(mutual-recursion alias)"));
         // 主副本内的递归调用使用别名 FnId(3)，argc = 参数 1 + CallElement。
-        assert!(code.contains("\n   :\n  ;\n"), "missing alias call:\n{code}");
+        assert!(
+            code.contains("\n   :\n  ;\n"),
+            "missing alias call:\n{code}"
+        );
         // 别名副本内的调用回到原函数 FnId(2)。
-        assert!(code.contains("\n  :\n  ;\n"), "missing primary call:\n{code}");
+        assert!(
+            code.contains("\n  :\n  ;\n"),
+            "missing primary call:\n{code}"
+        );
     }
 
     #[test]

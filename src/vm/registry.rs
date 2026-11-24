@@ -18,11 +18,7 @@ impl GlobalRegistry {
     }
 
     /// 分配新的远程栈，返回 StackId
-    pub fn alloc_remote(
-        &mut self,
-        alloc: &mut IdAllocator,
-        _call_id: ElementId,
-    ) -> StackId {
+    pub fn alloc_remote(&mut self, alloc: &mut IdAllocator, _call_id: ElementId) -> StackId {
         let sid = alloc.alloc_stack();
         self.remote_stacks.insert(sid, DualStack::new());
         sid

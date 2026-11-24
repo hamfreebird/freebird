@@ -10,7 +10,11 @@ pub struct Span {
 
 impl Span {
     pub fn new(line: usize, column: usize, byte_pos: usize) -> Self {
-        Self { line, column, byte_pos }
+        Self {
+            line,
+            column,
+            byte_pos,
+        }
     }
 }
 
@@ -27,7 +31,7 @@ pub enum TokenKind {
     IntLiteral(i64, IntSuffix),
     FloatLiteral(f64),
     BoolLiteral(bool),
-    CharLiteral(u32),     // Unicode 标量值
+    CharLiteral(u32), // Unicode 标量值
     StringLiteral(String),
 
     // === 标识符 ===
@@ -61,29 +65,29 @@ pub enum TokenKind {
     Continue,
     True,
     False,
-    Stardust, // stardust! 宏关键字
+    Stardust,  // stardust! 宏关键字
     ElementId, // #var 的 # 前缀（词法归类为关键字）
 
     // === 运算符与分隔符 ===
     // 单字符
-    Plus,       // +
-    Minus,      // -
-    Star,       // *
-    Slash,      // /
-    Percent,    // %
-    Eq,         // =
-    Bang,       // !
-    Lt,         // <
-    Gt,         // >
-    And,        // &
-    Or,         // |
-    Caret,      // ^
-    Dot,        // .
-    Comma,      // ,
-    Colon,      // :
-    Semicolon,  // ;
-    Hash,       // #
-    At,         // @
+    Plus,      // +
+    Minus,     // -
+    Star,      // *
+    Slash,     // /
+    Percent,   // %
+    Eq,        // =
+    Bang,      // !
+    Lt,        // <
+    Gt,        // >
+    And,       // &
+    Or,        // |
+    Caret,     // ^
+    Dot,       // .
+    Comma,     // ,
+    Colon,     // :
+    Semicolon, // ;
+    Hash,      // #
+    At,        // @
 
     // 双字符
     EqEq,       // ==
@@ -99,15 +103,15 @@ pub enum TokenKind {
     DotDotEq,   // ..=
 
     // === 分隔符 ===
-    LParen,    // (
-    RParen,    // )
-    LBrace,    // {
-    RBrace,    // }
-    LBracket,  // [
-    RBracket,  // ]
+    LParen,   // (
+    RParen,   // )
+    LBrace,   // {
+    RBrace,   // }
+    LBracket, // [
+    RBracket, // ]
 
     // === 特殊 ===
-    Underscore,  // _
+    Underscore, // _
     Eof,
     Error(String),
 }
@@ -115,7 +119,7 @@ pub enum TokenKind {
 /// 整数后缀类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntSuffix {
-    None,  // 无后缀，默认 i32
+    None, // 无后缀，默认 i32
     I8,
     I16,
     I32,

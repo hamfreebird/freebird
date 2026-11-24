@@ -18,31 +18,107 @@ pub struct BuiltinDef {
 ///
 /// `print` 是历史兼容入口，等价于 `print_int`。
 pub const BUILTINS: &[BuiltinDef] = &[
-    BuiltinDef { name: "print", params: &["i64"], returns: &[] },
-    BuiltinDef { name: "print_int", params: &["i64"], returns: &[] },
-    BuiltinDef { name: "print_char", params: &["char"], returns: &[] },
-    BuiltinDef { name: "print_str", params: &["String"], returns: &[] },
-    BuiltinDef { name: "println_str", params: &["String"], returns: &[] },
-    BuiltinDef { name: "read_int", params: &[], returns: &["i64"] },
-    BuiltinDef { name: "read_char", params: &[], returns: &["char"] },
-    BuiltinDef { name: "read_line", params: &[], returns: &["String"] },
-    BuiltinDef { name: "file_read", params: &["String"], returns: &["String"] },
+    BuiltinDef {
+        name: "print",
+        params: &["i64"],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "print_int",
+        params: &["i64"],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "print_char",
+        params: &["char"],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "print_str",
+        params: &["String"],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "println_str",
+        params: &["String"],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "read_int",
+        params: &[],
+        returns: &["i64"],
+    },
+    BuiltinDef {
+        name: "read_char",
+        params: &[],
+        returns: &["char"],
+    },
+    BuiltinDef {
+        name: "read_line",
+        params: &[],
+        returns: &["String"],
+    },
+    BuiltinDef {
+        name: "file_read",
+        params: &["String"],
+        returns: &["String"],
+    },
     BuiltinDef {
         name: "file_write",
         params: &["String", "String"],
         returns: &[],
     },
-    BuiltinDef { name: "abs", params: &["i64"], returns: &["i64"] },
-    BuiltinDef { name: "int_to_str", params: &["i64"], returns: &["String"] },
-    BuiltinDef { name: "str_to_int", params: &["String"], returns: &["Option<i64>"] },
+    BuiltinDef {
+        name: "abs",
+        params: &["i64"],
+        returns: &["i64"],
+    },
+    BuiltinDef {
+        name: "int_to_str",
+        params: &["i64"],
+        returns: &["String"],
+    },
+    BuiltinDef {
+        name: "str_to_int",
+        params: &["String"],
+        returns: &["Option<i64>"],
+    },
     // unsafe 块的低级栈内建（ADR 0004）。
-    BuiltinDef { name: "push", params: &["i64"], returns: &[] },
-    BuiltinDef { name: "pop", params: &[], returns: &["i64"] },
-    BuiltinDef { name: "swap", params: &[], returns: &[] },
-    BuiltinDef { name: "dup", params: &[], returns: &[] },
-    BuiltinDef { name: "roll", params: &["i64"], returns: &[] },
-    BuiltinDef { name: "min", params: &["i64", "i64"], returns: &["i64"] },
-    BuiltinDef { name: "max", params: &["i64", "i64"], returns: &["i64"] },
+    BuiltinDef {
+        name: "push",
+        params: &["i64"],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "pop",
+        params: &[],
+        returns: &["i64"],
+    },
+    BuiltinDef {
+        name: "swap",
+        params: &[],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "dup",
+        params: &[],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "roll",
+        params: &["i64"],
+        returns: &[],
+    },
+    BuiltinDef {
+        name: "min",
+        params: &["i64", "i64"],
+        returns: &["i64"],
+    },
+    BuiltinDef {
+        name: "max",
+        params: &["i64", "i64"],
+        returns: &["i64"],
+    },
 ];
 
 /// 按名字查找内建函数
@@ -159,7 +235,10 @@ mod tests {
         assert_eq!(insts.len(), 10);
         assert!(!insts.iter().any(|i| matches!(
             i,
-            MirInst::Push { value: Value::Char(10), .. }
+            MirInst::Push {
+                value: Value::Char(10),
+                ..
+            }
         )));
     }
 
@@ -169,7 +248,10 @@ mod tests {
         assert_eq!(insts.len(), 6); // Push+CharOut ×2 + newline Push+CharOut
         assert!(matches!(
             insts[insts.len() - 2],
-            MirInst::Push { value: Value::Char(10), .. }
+            MirInst::Push {
+                value: Value::Char(10),
+                ..
+            }
         ));
     }
 

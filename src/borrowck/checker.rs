@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::frontend::ast;
 use crate::frontend::token::Span;
 use crate::hir::types::{
-    HirAssignTarget, HirBlock, HirCallArg, HirDecl, HirExpr, HirFnDecl, HirProgram, HirStmt, HirType,
+    HirAssignTarget, HirBlock, HirCallArg, HirDecl, HirExpr, HirFnDecl, HirProgram, HirStmt,
+    HirType,
 };
 
 /// 借用状态
@@ -37,13 +38,22 @@ impl std::fmt::Display for BorrowError {
                 write!(f, "{span}: use of moved value `{name}`")
             }
             BorrowError::UseWhileBorrowedMut { name, span } => {
-                write!(f, "{span}: cannot use `{name}` while it is mutably borrowed")
+                write!(
+                    f,
+                    "{span}: cannot use `{name}` while it is mutably borrowed"
+                )
             }
             BorrowError::BorrowWhileBorrowedMut { name, span } => {
-                write!(f, "{span}: cannot borrow `{name}` while it is mutably borrowed")
+                write!(
+                    f,
+                    "{span}: cannot borrow `{name}` while it is mutably borrowed"
+                )
             }
             BorrowError::MutBorrowWhileBorrowed { name, span } => {
-                write!(f, "{span}: cannot mutably borrow `{name}` while it is borrowed")
+                write!(
+                    f,
+                    "{span}: cannot mutably borrow `{name}` while it is borrowed"
+                )
             }
             BorrowError::MoveWhileBorrowed { name, span } => {
                 write!(f, "{span}: cannot move `{name}` while it is borrowed")
@@ -170,18 +180,22 @@ impl BorrowChecker {
         span: Span,
     ) -> Result<(), BorrowError> {
         if let Some(existing) = self.var(name)
-            && existing.scope_depth == self.scope_depth {
-                return Err(BorrowError::CannotAssignToImmutable {
-                    name: format!("duplicate variable `{name}`"),
-                    span,
-                });
-            }
-        self.vars.entry(name.to_string()).or_default().push(VarInfo {
-            mutable,
-            is_move_type,
-            borrow_state: BorrowState::Unused,
-            scope_depth: self.scope_depth,
-        });
+            && existing.scope_depth == self.scope_depth
+        {
+            return Err(BorrowError::CannotAssignToImmutable {
+                name: format!("duplicate variable `{name}`"),
+                span,
+            });
+        }
+        self.vars
+            .entry(name.to_string())
+            .or_default()
+            .push(VarInfo {
+                mutable,
+                is_move_type,
+                borrow_state: BorrowState::Unused,
+                scope_depth: self.scope_depth,
+            });
         if let Some(frame) = self.scope_vars.last_mut() {
             frame.push(name.to_string());
         }
@@ -210,10 +224,12 @@ impl BorrowChecker {
 
     /// 检查变量写入（赋值）
     pub fn check_write(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.var_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
-            name: format!("undefined variable `{name}`"),
-            span,
-        })?;
+        let info = self
+            .var_mut(name)
+            .ok_or_else(|| BorrowError::UseAfterMove {
+                name: format!("undefined variable `{name}`"),
+                span,
+            })?;
 
         if !info.mutable {
             return Err(BorrowError::CannotAssignToImmutable {
@@ -241,10 +257,12 @@ impl BorrowChecker {
 
     /// 创建共享引用 &x
     pub fn borrow_shared(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.var_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
-            name: format!("undefined variable `{name}`"),
-            span,
-        })?;
+        let info = self
+            .var_mut(name)
+            .ok_or_else(|| BorrowError::UseAfterMove {
+                name: format!("undefined variable `{name}`"),
+                span,
+            })?;
 
         match &info.borrow_state {
             BorrowState::Moved => Err(BorrowError::UseAfterMove {
@@ -268,10 +286,12 @@ impl BorrowChecker {
 
     /// 创建独占引用 &mut x
     pub fn borrow_mut(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.var_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
-            name: format!("undefined variable `{name}`"),
-            span,
-        })?;
+        let info = self
+            .var_mut(name)
+            .ok_or_else(|| BorrowError::UseAfterMove {
+                name: format!("undefined variable `{name}`"),
+                span,
+            })?;
 
         match &info.borrow_state {
             BorrowState::Moved => Err(BorrowError::UseAfterMove {
@@ -345,10 +365,12 @@ impl BorrowChecker {
 
     /// 重新初始化变量（赋值给已移动的变量时允许恢复）。
     pub fn reinit_var(&mut self, name: &str, span: Span) -> Result<(), BorrowError> {
-        let info = self.var_mut(name).ok_or_else(|| BorrowError::UseAfterMove {
-            name: format!("undefined variable `{name}`"),
-            span,
-        })?;
+        let info = self
+            .var_mut(name)
+            .ok_or_else(|| BorrowError::UseAfterMove {
+                name: format!("undefined variable `{name}`"),
+                span,
+            })?;
         if !info.mutable {
             return Err(BorrowError::CannotAssignToImmutable {
                 name: name.to_string(),
@@ -504,7 +526,13 @@ impl BorrowChecker {
 
     fn check_stmt(&mut self, stmt: &HirStmt) {
         match stmt {
-            HirStmt::Let { pattern, ty, init, mutable, span } => {
+            HirStmt::Let {
+                pattern,
+                ty,
+                init,
+                mutable,
+                span,
+            } => {
                 let pattern_names = pattern_var_names(pattern);
 
                 if let (Some(HirExpr::Ref(inner, ref_mutable, _)), ast::Pattern::Var(name, _)) =
@@ -534,16 +562,18 @@ impl BorrowChecker {
                     self.record(result);
                 }
 
-                if move_ty
-                    && let Some(HirExpr::Var(source)) = init.as_ref()
-                {
+                if move_ty && let Some(HirExpr::Var(source)) = init.as_ref() {
                     let result = self.move_var(&source.name, *span);
                     self.record(result);
                     self.note_use(&source.name);
                 }
             }
             HirStmt::Expr(expr, _) => self.check_expr(expr),
-            HirStmt::Assign { target, value, span } => {
+            HirStmt::Assign {
+                target,
+                value,
+                span,
+            } => {
                 self.check_expr(value);
                 self.move_value_if_var(value, *span);
 
@@ -656,35 +686,43 @@ impl BorrowChecker {
                     self.check_expr(arg_expr);
                 }
             }
-            HirExpr::MethodCall { receiver, method, args, span } => {
-                match (method.as_str(), receiver.as_ref()) {
-                    ("push" | "pop", HirExpr::Var(var)) => {
-                        let result = self.borrow_mut(&var.name, *span);
-                        self.record(result);
-                        self.note_use(&var.name);
-                        for arg in args {
-                            self.check_expr(arg);
-                        }
-                        self.release_ref(&var.name);
+            HirExpr::MethodCall {
+                receiver,
+                method,
+                args,
+                span,
+            } => match (method.as_str(), receiver.as_ref()) {
+                ("push" | "pop", HirExpr::Var(var)) => {
+                    let result = self.borrow_mut(&var.name, *span);
+                    self.record(result);
+                    self.note_use(&var.name);
+                    for arg in args {
+                        self.check_expr(arg);
                     }
-                    ("len", HirExpr::Var(var)) => {
-                        let result = self.borrow_shared(&var.name, *span);
-                        self.record(result);
-                        self.note_use(&var.name);
-                        for arg in args {
-                            self.check_expr(arg);
-                        }
-                        self.release_ref(&var.name);
+                    self.release_ref(&var.name);
+                }
+                ("len", HirExpr::Var(var)) => {
+                    let result = self.borrow_shared(&var.name, *span);
+                    self.record(result);
+                    self.note_use(&var.name);
+                    for arg in args {
+                        self.check_expr(arg);
                     }
-                    _ => {
-                        self.check_expr(receiver);
-                        for arg in args {
-                            self.check_expr(arg);
-                        }
+                    self.release_ref(&var.name);
+                }
+                _ => {
+                    self.check_expr(receiver);
+                    for arg in args {
+                        self.check_expr(arg);
                     }
                 }
-            }
-            HirExpr::TypeMethod { type_name, method, args, span } => {
+            },
+            HirExpr::TypeMethod {
+                type_name,
+                method,
+                args,
+                span,
+            } => {
                 let name = type_name.join("::");
                 if name == "Box" && method == "new" {
                     for arg in args {
@@ -755,7 +793,12 @@ impl BorrowChecker {
                 self.check_expr(cond);
                 self.check_block(block);
             }
-            HirExpr::For { pattern, iterable, body, span } => {
+            HirExpr::For {
+                pattern,
+                iterable,
+                body,
+                span,
+            } => {
                 self.check_expr(iterable);
                 self.enter_scope();
                 for name in pattern_var_names(pattern) {
@@ -850,7 +893,9 @@ fn expr_is_move_value(expr: &HirExpr) -> bool {
     match expr {
         HirExpr::Lit(ast::Literal::String(_), _) => true,
         HirExpr::Array(_, _) | HirExpr::Repeat(_, _, _) => true,
-        HirExpr::TypeMethod { type_name, method, .. } => {
+        HirExpr::TypeMethod {
+            type_name, method, ..
+        } => {
             method == "new"
                 && type_name
                     .last()

@@ -116,8 +116,7 @@ impl Vm {
 
     /// 注册函数
     pub fn register_fn(&mut self, fn_id: FnId, instructions: Vec<MirInst>) {
-        self.fn_table
-            .insert(fn_id, Rc::new(instructions));
+        self.fn_table.insert(fn_id, Rc::new(instructions));
     }
 
     /// 取出并清空当前输出缓冲
@@ -333,10 +332,18 @@ impl Vm {
             MirInst::Sub { .. } => self.binary_arith_op(|a, b| Ok(a - b))?,
             MirInst::Mul { .. } => self.binary_arith_op(|a, b| Ok(a * b))?,
             MirInst::Div { .. } => self.binary_arith_op(|a, b| {
-                if b == 0 { Err(VmError::DivisionByZero) } else { Ok(a / b) }
+                if b == 0 {
+                    Err(VmError::DivisionByZero)
+                } else {
+                    Ok(a / b)
+                }
             })?,
             MirInst::Mod { .. } => self.binary_arith_op(|a, b| {
-                if b == 0 { Err(VmError::DivisionByZero) } else { Ok(a % b) }
+                if b == 0 {
+                    Err(VmError::DivisionByZero)
+                } else {
+                    Ok(a % b)
+                }
             })?,
             MirInst::Neg { .. } => {
                 let new_id = self.id_alloc.alloc_element();
@@ -401,7 +408,10 @@ impl Vm {
                     found: cond.type_name().to_string(),
                 })?;
                 if cond_val != 0 {
-                    let target = *frame.marks.get(mark).ok_or(VmError::InvalidJumpTarget(*mark))?;
+                    let target = *frame
+                        .marks
+                        .get(mark)
+                        .ok_or(VmError::InvalidJumpTarget(*mark))?;
                     frame.pc = target;
                 } else {
                     frame.advance_pc();
@@ -410,18 +420,26 @@ impl Vm {
             }
             MirInst::UncondJump(mark) => {
                 let mut frame = self.pop_frame()?;
-                let target = *frame.marks.get(mark).ok_or(VmError::InvalidJumpTarget(*mark))?;
+                let target = *frame
+                    .marks
+                    .get(mark)
+                    .ok_or(VmError::InvalidJumpTarget(*mark))?;
                 frame.pc = target;
                 self.call_stack.push(frame);
             }
-            MirInst::Call { fn_id, return_arity } => {
+            MirInst::Call {
+                fn_id,
+                return_arity,
+            } => {
                 self.execute_call(*fn_id, *return_arity)?;
             }
             MirInst::CallIndirect { argc, return_arity } => {
                 self.execute_call_indirect(*argc, *return_arity)?;
             }
             MirInst::ExternCall { stardust_id, .. } => {
-                return Err(VmError::FfiUnsupported { stardust_id: *stardust_id });
+                return Err(VmError::FfiUnsupported {
+                    stardust_id: *stardust_id,
+                });
             }
             MirInst::Ret { argc } => {
                 self.execute_ret(*argc)?;
@@ -494,7 +512,7 @@ impl Vm {
                         return Err(VmError::TypeMismatch {
                             expected: "&T, &mut T or Box<T>".to_string(),
                             found: ref_val.type_name().to_string(),
-                        })
+                        });
                     }
                 };
                 let new_id = self.id_alloc.alloc_element();
@@ -512,10 +530,13 @@ impl Vm {
                 let (_, aggregate) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
                 let val = match aggregate {
                     Value::Tuple(elems) => {
-                        elems.get(*index).cloned().ok_or(VmError::IndexOutOfBounds {
-                            index: *index as i64,
-                            len: elems.len(),
-                        })?
+                        elems
+                            .get(*index)
+                            .cloned()
+                            .ok_or(VmError::IndexOutOfBounds {
+                                index: *index as i64,
+                                len: elems.len(),
+                            })?
                     }
                     other => {
                         return Err(VmError::TypeMismatch {
@@ -565,7 +586,10 @@ impl Vm {
                 let val_idx = len
                     .checked_sub(1)
                     .and_then(|last| last.checked_sub(idx))
-                    .ok_or(VmError::IndexOutOfBounds { index: idx as i64, len })?;
+                    .ok_or(VmError::IndexOutOfBounds {
+                        index: idx as i64,
+                        len,
+                    })?;
 
                 let val = frame.data.values[val_idx].clone();
                 let new_id = self.id_alloc.alloc_element();
@@ -658,10 +682,13 @@ impl Vm {
                     .vars
                     .lookup(name)
                     .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
-                let pos = frame.data.find_id(var_id).ok_or(VmError::DanglingReference {
-                    id: var_id.0,
-                    name: name.clone(),
-                })?;
+                let pos = frame
+                    .data
+                    .find_id(var_id)
+                    .ok_or(VmError::DanglingReference {
+                        id: var_id.0,
+                        name: name.clone(),
+                    })?;
                 let idx = frame.data.len() - 1 - pos;
                 match &mut frame.data.values[idx] {
                     Value::Tuple(elems) => {
@@ -699,10 +726,13 @@ impl Vm {
                     .vars
                     .lookup(name)
                     .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
-                let pos = frame.data.find_id(var_id).ok_or(VmError::DanglingReference {
-                    id: var_id.0,
-                    name: name.clone(),
-                })?;
+                let pos = frame
+                    .data
+                    .find_id(var_id)
+                    .ok_or(VmError::DanglingReference {
+                        id: var_id.0,
+                        name: name.clone(),
+                    })?;
                 let idx = frame.data.len() - 1 - pos;
                 match &mut frame.data.values[idx] {
                     Value::Tuple(elems) => {
@@ -745,7 +775,10 @@ impl Vm {
                     found: count_val.type_name().to_string(),
                 })?;
                 if count < 0 {
-                    return Err(VmError::IndexOutOfBounds { index: count, len: 0 });
+                    return Err(VmError::IndexOutOfBounds {
+                        index: count,
+                        len: 0,
+                    });
                 }
                 let (_, elem) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
                 let values = vec![elem; count as usize];
@@ -787,10 +820,13 @@ impl Vm {
                     .vars
                     .lookup(name)
                     .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
-                let pos = frame.data.find_id(var_id).ok_or(VmError::DanglingReference {
-                    id: var_id.0,
-                    name: name.clone(),
-                })?;
+                let pos = frame
+                    .data
+                    .find_id(var_id)
+                    .ok_or(VmError::DanglingReference {
+                        id: var_id.0,
+                        name: name.clone(),
+                    })?;
                 let idx = frame.data.len() - 1 - pos;
                 match &mut frame.data.values[idx] {
                     Value::Tuple(elems) => elems.push(value),
@@ -810,10 +846,13 @@ impl Vm {
                     .vars
                     .lookup(name)
                     .ok_or_else(|| VmError::UndefinedVariable(name.clone()))?;
-                let pos = frame.data.find_id(var_id).ok_or(VmError::DanglingReference {
-                    id: var_id.0,
-                    name: name.clone(),
-                })?;
+                let pos = frame
+                    .data
+                    .find_id(var_id)
+                    .ok_or(VmError::DanglingReference {
+                        id: var_id.0,
+                        name: name.clone(),
+                    })?;
                 let idx = frame.data.len() - 1 - pos;
                 let popped = match &mut frame.data.values[idx] {
                     Value::Tuple(elems) => elems.pop().unwrap_or(Value::Unit),
@@ -829,7 +868,10 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
-            MirInst::MakeEnum { variant: _, data_slots } => {
+            MirInst::MakeEnum {
+                variant: _,
+                data_slots,
+            } => {
                 // 将 [tag, data...] 合并为单槽 Value::Tuple。
                 // 变量绑定只跟踪一个 ElementId，因此枚举必须作为单槽值保存；
                 // 原先的多槽布局会让 ReadVar 只复制最后一个槽。
@@ -850,9 +892,7 @@ impl Vm {
                 // 从栈顶枚举值读取标签并压入副本，保留枚举本身。
                 let mut frame = self.pop_frame()?;
                 let tag = match frame.data.top_value() {
-                    Some(Value::Tuple(values)) => {
-                        values.first().cloned().unwrap_or(Value::Unit)
-                    }
+                    Some(Value::Tuple(values)) => values.first().cloned().unwrap_or(Value::Unit),
                     Some(other) => other.clone(),
                     None => return Err(VmError::StackUnderflow),
                 };
@@ -1047,10 +1087,7 @@ impl Vm {
                 let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
                 let payload = match &value {
                     Value::Tuple(values) => {
-                        let tag = values
-                            .first()
-                            .and_then(Value::as_i64)
-                            .unwrap_or(i64::MIN);
+                        let tag = values.first().and_then(Value::as_i64).unwrap_or(i64::MIN);
                         if tag != *success_tag {
                             return Err(VmError::AssertionFailed(
                                 "unwrap on empty/failed value".to_string(),
@@ -1076,10 +1113,7 @@ impl Vm {
                 let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
                 let payload = match &value {
                     Value::Tuple(values) => {
-                        let tag = values
-                            .first()
-                            .and_then(Value::as_i64)
-                            .unwrap_or(i64::MIN);
+                        let tag = values.first().and_then(Value::as_i64).unwrap_or(i64::MIN);
                         if tag == *success_tag {
                             values.get(1).cloned().unwrap_or(Value::Unit)
                         } else {
@@ -1102,10 +1136,7 @@ impl Vm {
                 let (_, value) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
                 let converted = match &value {
                     Value::Tuple(values) => {
-                        let tag = values
-                            .first()
-                            .and_then(Value::as_i64)
-                            .unwrap_or(i64::MIN);
+                        let tag = values.first().and_then(Value::as_i64).unwrap_or(i64::MIN);
                         if tag == *match_tag {
                             Value::Tuple(vec![
                                 Value::I32(*some_tag),
@@ -1339,7 +1370,11 @@ impl Vm {
             expected: "comparable".to_string(),
             found: rhs.type_name().to_string(),
         })?;
-        let result = if op(a, b) { Value::Bool(true) } else { Value::Bool(false) };
+        let result = if op(a, b) {
+            Value::Bool(true)
+        } else {
+            Value::Bool(false)
+        };
         frame.data.push(new_id, result);
         frame.advance_pc();
         self.call_stack.push(frame);
@@ -1372,15 +1407,9 @@ impl Vm {
         };
 
         // 获取被调用函数的指令
-        let callee_instructions = self
-            .fn_table
-            .get(&fn_id)
-            .cloned()
-            .ok_or_else(|| {
-                VmError::AssertionFailed(format!(
-                    "function {fn_id:?} not found in fn_table"
-                ))
-            })?;
+        let callee_instructions = self.fn_table.get(&fn_id).cloned().ok_or_else(|| {
+            VmError::AssertionFailed(format!("function {fn_id:?} not found in fn_table"))
+        })?;
 
         // 从调用者栈弹出：argc 个参数 + CallElement
         let mut params: Vec<(ElementId, Value)> = Vec::with_capacity(argc as usize);
@@ -1415,10 +1444,9 @@ impl Vm {
         );
 
         // 压入调用元素（被调函数 slot 0）
-        new_frame.data.push(
-            self.id_alloc.alloc_element(),
-            Value::CallElement { argc },
-        );
+        new_frame
+            .data
+            .push(self.id_alloc.alloc_element(), Value::CallElement { argc });
 
         // 压入参数
         for (id, val) in params {
@@ -1461,17 +1489,11 @@ impl Vm {
         let call_element_id = self.id_alloc.alloc_element();
         let callee_stack_id = self.id_alloc.derive_stack(call_element_id);
 
-        let mut new_frame = CallFrame::new_call(
-            callee_stack_id,
-            callee,
-            ret_pc,
-            return_arity,
-            None,
-        );
-        new_frame.data.push(
-            self.id_alloc.alloc_element(),
-            Value::CallElement { argc },
-        );
+        let mut new_frame =
+            CallFrame::new_call(callee_stack_id, callee, ret_pc, return_arity, None);
+        new_frame
+            .data
+            .push(self.id_alloc.alloc_element(), Value::CallElement { argc });
         for (id, val) in params.drain(..) {
             new_frame.data.push(id, val);
         }
@@ -1480,7 +1502,8 @@ impl Vm {
     }
 
     /// 执行返回
-    fn execute_ret(&mut self, argc: u32) -> Result<(), VmError> {        if self.call_stack.len() < 2 {
+    fn execute_ret(&mut self, argc: u32) -> Result<(), VmError> {
+        if self.call_stack.len() < 2 {
             // 主程序返回：保留栈顶 argc 个元素
             let mut frame = self.pop_frame()?;
             let keep_start = frame.data.len().saturating_sub(argc as usize);
@@ -1580,10 +1603,13 @@ impl Vm {
                 .vars
                 .lookup(name)
                 .ok_or_else(|| VmError::UndefinedVariable(name.to_string()))?;
-            let pos = frame.data.find_id(id_old).ok_or(VmError::DanglingReference {
-                id: id_old.0,
-                name: name.to_string(),
-            })?;
+            let pos = frame
+                .data
+                .find_id(id_old)
+                .ok_or(VmError::DanglingReference {
+                    id: id_old.0,
+                    name: name.to_string(),
+                })?;
             self.call_stack.push(frame);
             pos
         };
@@ -1665,8 +1691,13 @@ fn cast_value(value: Value, target: TypeId) -> Result<Value, VmError> {
                 })?;
             Ok(Value::Char(ch as u32))
         }
-        TypeId::Unit | TypeId::Ref | TypeId::MutRef | TypeId::ElementId
-        | TypeId::StackHandle | TypeId::FnPtr | TypeId::Unknown => Ok(value),
+        TypeId::Unit
+        | TypeId::Ref
+        | TypeId::MutRef
+        | TypeId::ElementId
+        | TypeId::StackHandle
+        | TypeId::FnPtr
+        | TypeId::Unknown => Ok(value),
     }
 }
 
@@ -1684,9 +1715,8 @@ fn value_to_string(value: &Value) -> Result<String, VmError> {
                     });
                 }
             };
-            let c = char::from_u32(code).ok_or_else(|| {
-                VmError::IoError(format!("invalid char code in string: {code}"))
-            })?;
+            let c = char::from_u32(code)
+                .ok_or_else(|| VmError::IoError(format!("invalid char code in string: {code}")))?;
             s.push(c);
         }
         return Ok(s);
@@ -1724,8 +1754,14 @@ mod tests {
     fn test_simple_arithmetic() {
         let mut vm = make_vm();
         let mir = vec![
-            MirInst::Push { value: i64_val(3), ty: TypeId::I64 },
-            MirInst::Push { value: i64_val(5), ty: TypeId::I64 },
+            MirInst::Push {
+                value: i64_val(3),
+                ty: TypeId::I64,
+            },
+            MirInst::Push {
+                value: i64_val(5),
+                ty: TypeId::I64,
+            },
             MirInst::Add { ty: TypeId::I64 },
         ];
         vm.execute_mir(mir).unwrap();
@@ -1738,12 +1774,24 @@ mod tests {
         let mut vm = make_vm();
         let mir = vec![
             MirInst::EnterScope,
-            MirInst::Push { value: i64_val(10), ty: TypeId::I64 },
-            MirInst::BindVar { name: "x".to_string() },
-            MirInst::ReadVar { name: "x".to_string() },
-            MirInst::Push { value: i64_val(1), ty: TypeId::I64 },
+            MirInst::Push {
+                value: i64_val(10),
+                ty: TypeId::I64,
+            },
+            MirInst::BindVar {
+                name: "x".to_string(),
+            },
+            MirInst::ReadVar {
+                name: "x".to_string(),
+            },
+            MirInst::Push {
+                value: i64_val(1),
+                ty: TypeId::I64,
+            },
             MirInst::Add { ty: TypeId::I64 },
-            MirInst::BindVar { name: "y".to_string() },
+            MirInst::BindVar {
+                name: "y".to_string(),
+            },
             MirInst::ExitScope,
         ];
         vm.execute_mir(mir).unwrap();
@@ -1758,13 +1806,30 @@ mod tests {
         let mut vm = make_vm();
         let mir = vec![
             MirInst::EnterScope,
-            MirInst::Push { value: i64_val(1), ty: TypeId::I64 },
-            MirInst::BindVar { name: "a".to_string() },
-            MirInst::Push { value: i64_val(2), ty: TypeId::I64 },
-            MirInst::BindVar { name: "b".to_string() },
-            MirInst::Push { value: i64_val(3), ty: TypeId::I64 },
-            MirInst::BindVar { name: "c".to_string() },
-            MirInst::ReadVar { name: "b".to_string() },
+            MirInst::Push {
+                value: i64_val(1),
+                ty: TypeId::I64,
+            },
+            MirInst::BindVar {
+                name: "a".to_string(),
+            },
+            MirInst::Push {
+                value: i64_val(2),
+                ty: TypeId::I64,
+            },
+            MirInst::BindVar {
+                name: "b".to_string(),
+            },
+            MirInst::Push {
+                value: i64_val(3),
+                ty: TypeId::I64,
+            },
+            MirInst::BindVar {
+                name: "c".to_string(),
+            },
+            MirInst::ReadVar {
+                name: "b".to_string(),
+            },
             MirInst::ExitScope,
         ];
         vm.execute_mir(mir).unwrap();
@@ -1778,13 +1843,25 @@ mod tests {
         let mut vm = make_vm();
         let mir = vec![
             MirInst::EnterScope,
-            MirInst::Push { value: i64_val(5), ty: TypeId::I64 },
-            MirInst::BindVar { name: "x".to_string() },
+            MirInst::Push {
+                value: i64_val(5),
+                ty: TypeId::I64,
+            },
+            MirInst::BindVar {
+                name: "x".to_string(),
+            },
             // x = x + 3
-            MirInst::ReadVar { name: "x".to_string() },
-            MirInst::Push { value: i64_val(3), ty: TypeId::I64 },
+            MirInst::ReadVar {
+                name: "x".to_string(),
+            },
+            MirInst::Push {
+                value: i64_val(3),
+                ty: TypeId::I64,
+            },
             MirInst::Add { ty: TypeId::I64 },
-            MirInst::WriteVar { name: "x".to_string() },
+            MirInst::WriteVar {
+                name: "x".to_string(),
+            },
             MirInst::ExitScope,
         ];
         vm.execute_mir(mir).unwrap();
@@ -1797,15 +1874,32 @@ mod tests {
         let mut vm = make_vm();
         let mir = vec![
             MirInst::EnterScope,
-            MirInst::Push { value: i64_val(1), ty: TypeId::I64 },
-            MirInst::BindVar { name: "a".to_string() },
-            MirInst::Push { value: i64_val(2), ty: TypeId::I64 },
-            MirInst::BindVar { name: "b".to_string() },
+            MirInst::Push {
+                value: i64_val(1),
+                ty: TypeId::I64,
+            },
+            MirInst::BindVar {
+                name: "a".to_string(),
+            },
+            MirInst::Push {
+                value: i64_val(2),
+                ty: TypeId::I64,
+            },
+            MirInst::BindVar {
+                name: "b".to_string(),
+            },
             // a = a + 10
-            MirInst::ReadVar { name: "a".to_string() },
-            MirInst::Push { value: i64_val(10), ty: TypeId::I64 },
+            MirInst::ReadVar {
+                name: "a".to_string(),
+            },
+            MirInst::Push {
+                value: i64_val(10),
+                ty: TypeId::I64,
+            },
             MirInst::Add { ty: TypeId::I64 },
-            MirInst::WriteVar { name: "a".to_string() },
+            MirInst::WriteVar {
+                name: "a".to_string(),
+            },
             MirInst::ExitScope,
         ];
         vm.execute_mir(mir).unwrap();
@@ -1820,15 +1914,24 @@ mod tests {
         let mut vm = make_vm();
         // if true { push(1) } else { push(2) }
         let mir = vec![
-            MirInst::Push { value: Value::Bool(true), ty: TypeId::Bool },
-            MirInst::Jump(1),         // if true, jump to mark 1
-            MirInst::UncondJump(2),   // else branch → mark 2
-            MirInst::Mark(1),         // then branch
-            MirInst::Push { value: i64_val(1), ty: TypeId::I64 },
-            MirInst::UncondJump(3),   // skip else
-            MirInst::Mark(2),         // else branch
-            MirInst::Push { value: i64_val(2), ty: TypeId::I64 },
-            MirInst::Mark(3),         // merge point
+            MirInst::Push {
+                value: Value::Bool(true),
+                ty: TypeId::Bool,
+            },
+            MirInst::Jump(1),       // if true, jump to mark 1
+            MirInst::UncondJump(2), // else branch → mark 2
+            MirInst::Mark(1),       // then branch
+            MirInst::Push {
+                value: i64_val(1),
+                ty: TypeId::I64,
+            },
+            MirInst::UncondJump(3), // skip else
+            MirInst::Mark(2),       // else branch
+            MirInst::Push {
+                value: i64_val(2),
+                ty: TypeId::I64,
+            },
+            MirInst::Mark(3), // merge point
         ];
         vm.execute_mir(mir).unwrap();
         let frame = vm.call_stack.last().unwrap();
@@ -1841,19 +1944,28 @@ mod tests {
 
         // 被调函数: 弹出 2 个参数，相加，返回 1 个值
         let callee_id = FnId(1);
-        let callee_mir = vec![
-            MirInst::Add { ty: TypeId::I64 },
-            MirInst::Ret { argc: 1 },
-        ];
+        let callee_mir = vec![MirInst::Add { ty: TypeId::I64 }, MirInst::Ret { argc: 1 }];
         vm.register_fn(callee_id, callee_mir);
 
         // 主程序: add(20, 22) → 42
         let main_mir = vec![
             // 调用布局: [..., call_element, param_1, param_2]
-            MirInst::Push { value: Value::CallElement { argc: 2 }, ty: TypeId::Unknown },
-            MirInst::Push { value: i64_val(20), ty: TypeId::I64 },
-            MirInst::Push { value: i64_val(22), ty: TypeId::I64 },
-            MirInst::Call { fn_id: callee_id, return_arity: 1 },
+            MirInst::Push {
+                value: Value::CallElement { argc: 2 },
+                ty: TypeId::Unknown,
+            },
+            MirInst::Push {
+                value: i64_val(20),
+                ty: TypeId::I64,
+            },
+            MirInst::Push {
+                value: i64_val(22),
+                ty: TypeId::I64,
+            },
+            MirInst::Call {
+                fn_id: callee_id,
+                return_arity: 1,
+            },
         ];
         vm.execute_mir(main_mir).unwrap();
         let frame = vm.call_stack.last().unwrap();
@@ -1866,11 +1978,20 @@ mod tests {
         let mut vm = make_vm();
         let mir = vec![
             // heap[5] = 42：栈布局 [value, addr]
-            MirInst::Push { value: Value::I64(42), ty: TypeId::I64 },
-            MirInst::Push { value: Value::I64(5), ty: TypeId::I64 },
+            MirInst::Push {
+                value: Value::I64(42),
+                ty: TypeId::I64,
+            },
+            MirInst::Push {
+                value: Value::I64(5),
+                ty: TypeId::I64,
+            },
             MirInst::HeapStore,
             // load heap[5]
-            MirInst::Push { value: Value::I64(5), ty: TypeId::I64 },
+            MirInst::Push {
+                value: Value::I64(5),
+                ty: TypeId::I64,
+            },
             MirInst::HeapLoad,
         ];
         vm.execute_mir(mir).unwrap();
@@ -1883,7 +2004,10 @@ mod tests {
     fn test_heap_load_unwritten_is_zero() {
         let mut vm = make_vm();
         let mir = vec![
-            MirInst::Push { value: Value::I64(99), ty: TypeId::I64 },
+            MirInst::Push {
+                value: Value::I64(99),
+                ty: TypeId::I64,
+            },
             MirInst::HeapLoad,
         ];
         vm.execute_mir(mir).unwrap();
