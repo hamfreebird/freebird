@@ -21,6 +21,11 @@
 - **MIR 优化**：常量条件跳转折叠、无用跳转消除、Div/Mod/比较/逻辑常量折叠；
   `build --no-opt` 可关闭优化；`Line` 调试标记保留。
 
+### Fixed
+
+- MIR 不再对未知表达式生成 `TODO` 注释；`#id` 统一由类型检查报 T018。
+- 多文件项目 `check` 的诊断携带 `file`（相对清单根）与文件内行号。
+
 ### Changed
 
 - 编译流水线新增 `CompileOptions` 与 `compile_*_with_options` 入口；

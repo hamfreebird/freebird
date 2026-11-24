@@ -63,7 +63,7 @@ util = { path = "../util" }
 - `run`/`check`/`build` 支持 `--manifest-path <freebird.toml|目录>`；省略文件参数时自动读取当前目录的 `freebird.toml`。
 - 依赖只支持路径（`{ path = "..." }` 或字符串简写），当前没有版本解析、registry 或锁定文件。
 - 依赖入口：依赖目录自带 `freebird.toml` 时使用其 `entry`，否则依次查找 `src/lib.fb`、`src/main.fb`、`lib.fb`、`main.fb`；依赖的顶层项以 `<依赖名>::` 前缀注册。
-- 项目 `check` 的 JSON 使用入口文件作为 `source`；跨文件诊断的行号来自各自文件。
+- 项目 `check` 的 JSON 使用入口文件作为 `source`；每条诊断新增 `file` 字段（相对清单根，依赖在外部时为 `../...`）与文件内行号。
 
 ### 格式化
 

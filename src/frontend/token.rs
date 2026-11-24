@@ -6,6 +6,8 @@ pub struct Span {
     pub line: usize,   // 1-based
     pub column: usize, // 1-based
     pub byte_pos: usize,
+    /// 多文件项目的文件 ID（单文件源码为 0）。
+    pub file_id: u32,
 }
 
 impl Span {
@@ -14,6 +16,16 @@ impl Span {
             line,
             column,
             byte_pos,
+            file_id: 0,
+        }
+    }
+
+    pub fn with_file(line: usize, column: usize, byte_pos: usize, file_id: u32) -> Self {
+        Self {
+            line,
+            column,
+            byte_pos,
+            file_id,
         }
     }
 }

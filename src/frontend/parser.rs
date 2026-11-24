@@ -1949,5 +1949,6 @@ static EOF_TOKEN: Token = Token {
         line: 0,
         column: 0,
         byte_pos: 0,
+        file_id: 0,
     },
 };

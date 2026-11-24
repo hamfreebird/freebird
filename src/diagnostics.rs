@@ -34,6 +34,12 @@ pub struct Diagnostic {
     pub suggestion: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub related: Vec<RelatedLocation>,
+    /// 多文件项目中诊断所在文件（相对清单根；单文件为 None）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// 内部文件 ID（不序列化）。
+    #[serde(skip)]
+    pub file_id: u32,
 }
 
 /// 相关位置（例如重复定义第一次出现的位置）。
@@ -181,6 +187,8 @@ pub fn frontend_to_diagnostics(errors: &[FrontendError]) -> Vec<Diagnostic> {
             Diagnostic {
                 level: DiagnosticLevel::Error,
                 code: frontend_code(&e.kind),
+                file_id: e.span.file_id,
+                file: None,
                 message: format!("{e}"),
                 span: SourceSpan::from_span(e.span),
                 notes: vec![],
@@ -248,6 +256,8 @@ pub fn resolve_to_diagnostics(errors: &[ResolveError]) -> Vec<Diagnostic> {
             Diagnostic {
                 level: DiagnosticLevel::Error,
                 code: resolve_code(e),
+                file_id: span.file_id,
+                file: None,
                 message: format!("{e}"),
                 span: SourceSpan::from_span(span),
                 notes: vec![],
@@ -339,6 +349,8 @@ pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
             Diagnostic {
                 level: DiagnosticLevel::Error,
                 code: type_code(e),
+                file_id: e.span().file_id,
+                file: None,
                 message: format!("{e}"),
                 span: SourceSpan::from_span(e.span()),
                 notes: vec![],
@@ -384,6 +396,8 @@ pub fn borrow_to_diagnostics(errors: &[BorrowError]) -> Vec<Diagnostic> {
             Diagnostic {
                 level: DiagnosticLevel::Error,
                 code: borrow_code(e),
+                file_id: span.file_id,
+                file: None,
                 message: format!("{e}"),
                 span: SourceSpan::from_span(span),
                 notes: vec![],
@@ -457,6 +471,8 @@ pub fn type_warnings_to_diagnostics(warnings: &[TypeCheckWarning]) -> Vec<Diagno
             Diagnostic {
                 level: DiagnosticLevel::Warning,
                 code: "W001",
+                file_id: span.file_id,
+                file: None,
                 message: warning.to_string(),
                 span: SourceSpan::from_span(span),
                 notes: Vec::new(),
@@ -542,6 +558,38 @@ pub fn diagnostics_json(diagnostics: Vec<Diagnostic>, source: &str) -> (String, 
     };
     let json = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
     (json, error_count, warning_count)
+}
+
+/// 把诊断的 file_id 映射为文件路径（相对清单根）。
+pub fn attach_source_map(
+    diagnostics: &mut [Diagnostic],
+    source_map: &crate::frontend::SourceMap,
+    root: &std::path::Path,
+) {
+    for diagnostic in diagnostics {
+        if let Some(path) = source_map.path(diagnostic.file_id) {
+            diagnostic.file = Some(relative_path(path, root));
+        }
+    }
+}
+
+fn relative_path(path: &std::path::Path, base: &std::path::Path) -> String {
+    use std::path::PathBuf;
+    let path_components: Vec<_> = path.components().collect();
+    let base_components: Vec<_> = base.components().collect();
+    let common = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut result = PathBuf::new();
+    for _ in common..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common..] {
+        result.push(component.as_os_str());
+    }
+    result.to_string_lossy().replace('\\', "/")
 }
 
 #[cfg(test)]

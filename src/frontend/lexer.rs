@@ -8,17 +8,23 @@ pub struct Lexer {
     line: usize,
     column: usize,
     byte_pos: usize,
+    file_id: u32,
     errors: Vec<FrontendError>,
 }
 
 impl Lexer {
     pub fn new(source: &str) -> Self {
+        Self::with_file(source, 0)
+    }
+
+    pub fn with_file(source: &str, file_id: u32) -> Self {
         Self {
             source: source.chars().collect(),
             pos: 0,
             line: 1,
             column: 1,
             byte_pos: 0,
+            file_id,
             errors: Vec::new(),
         }
     }
@@ -248,11 +254,14 @@ impl Lexer {
     // ─── 内部方法 ───
 
     fn make_token(&self, kind: TokenKind) -> Token {
-        Token::new(kind, Span::new(self.line, self.column, self.byte_pos))
+        Token::new(
+            kind,
+            Span::with_file(self.line, self.column, self.byte_pos, self.file_id),
+        )
     }
 
     fn current_span(&self) -> Span {
-        Span::new(self.line, self.column, self.byte_pos)
+        Span::with_file(self.line, self.column, self.byte_pos, self.file_id)
     }
 
     fn current_char(&self) -> char {

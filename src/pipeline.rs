@@ -6,7 +6,7 @@ use crate::borrowck::check_borrow;
 use crate::codegen::ffi::{stardust_id_for_fn, validate_stardust_id};
 use crate::codegen::stardust::FnInfo;
 use crate::codegen::{StardustGen, optimize_mir};
-use crate::frontend::parse;
+use crate::frontend::{SourceMap, parse, parse_with_file};
 use crate::hir::lower;
 use crate::mir::MirGen;
 use crate::typeck::{TypeTable, check_program_with_tags, check_program_with_warnings};
@@ -28,7 +28,7 @@ pub fn run_source(source: &str, config: RuntimeConfig) -> Result<Vec<u8>, String
 
 /// 从文件加载并执行程序（支持 `mod name;` 递归加载同目录模块）。
 pub fn run_file(path: &Path, config: RuntimeConfig) -> Result<Vec<u8>, String> {
-    let ast = load_program(path)?;
+    let (ast, _source_map) = load_program(path)?;
     run_ast(ast, config)
 }
 
@@ -36,37 +36,48 @@ pub fn run_file(path: &Path, config: RuntimeConfig) -> Result<Vec<u8>, String> {
 ///
 /// 依赖先于根程序加载，`use dep::item;` 与 `dep::item` 全名访问均可解析。
 /// 当前只支持单层路径依赖（依赖的依赖不递归展开）。
-pub fn load_project(manifest_path: &Path) -> Result<crate::frontend::ast::Program, String> {
+pub fn load_project(
+    manifest_path: &Path,
+) -> Result<(crate::frontend::ast::Program, SourceMap), String> {
     let manifest = crate::manifest::Manifest::load(manifest_path)?;
     let mut loading: Vec<std::path::PathBuf> = Vec::new();
     let mut pub_names: HashMap<String, HashSet<String>> = HashMap::new();
     let mut decls = Vec::new();
+    let mut source_map = SourceMap::new();
 
     for dependency in &manifest.dependencies {
         let entry = dependency.entry_path()?;
-        let module = load_module(&entry, Some(&dependency.name), &mut loading, &mut pub_names)?;
+        let module = load_module(
+            &entry,
+            Some(&dependency.name),
+            &mut loading,
+            &mut pub_names,
+            &mut source_map,
+        )?;
         decls.extend(module.decls);
     }
 
     let entry = manifest.root.join(&manifest.entry);
-    let root = load_module(&entry, None, &mut loading, &mut pub_names)?;
+    let root = load_module(&entry, None, &mut loading, &mut pub_names, &mut source_map)?;
     decls.extend(root.decls);
 
-    Ok(crate::frontend::ast::Program { decls })
+    Ok((crate::frontend::ast::Program { decls }, source_map))
 }
 
 /// 运行 `freebird.toml` 项目。
 pub fn run_project(manifest_path: &Path, config: RuntimeConfig) -> Result<Vec<u8>, String> {
-    let ast = load_project(manifest_path)?;
+    let (ast, _source_map) = load_project(manifest_path)?;
     run_ast(ast, config)
 }
 
 /// 递归加载模块：`mod foo;` 读取同目录 `foo.fb`，其顶层函数以 `foo::name` 注册。
-fn load_program(path: &Path) -> Result<crate::frontend::ast::Program, String> {
+fn load_program(path: &Path) -> Result<(crate::frontend::ast::Program, SourceMap), String> {
     let mut loading: Vec<std::path::PathBuf> = Vec::new();
     let mut pub_names: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
-    load_module(path, None, &mut loading, &mut pub_names)
+    let mut source_map = SourceMap::new();
+    let program = load_module(path, None, &mut loading, &mut pub_names, &mut source_map)?;
+    Ok((program, source_map))
 }
 
 fn load_module(
@@ -74,6 +85,7 @@ fn load_module(
     prefix: Option<&str>,
     loading: &mut Vec<std::path::PathBuf>,
     pub_names: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
+    source_map: &mut SourceMap,
 ) -> Result<crate::frontend::ast::Program, String> {
     let canonical = path
         .canonicalize()
@@ -86,7 +98,8 @@ fn load_module(
     }
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read module `{}`: {e}", path.display()))?;
-    let (mut parsed, errors) = parse(&source);
+    let file_id = source_map.add(canonical.clone());
+    let (mut parsed, errors) = parse_with_file(&source, file_id);
     if !errors.is_empty() {
         let msg: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
         return Err(format!(
@@ -128,8 +141,8 @@ fn load_module(
                     Some(p) => format!("{p}::{name}"),
                     None => name.clone(),
                 };
-                let sub =
-                    load_module(&sub_path, Some(&sub_prefix), loading, pub_names).map_err(|e| {
+                let sub = load_module(&sub_path, Some(&sub_prefix), loading, pub_names, source_map)
+                    .map_err(|e| {
                         format!("while loading module `{name}` (declared at {span}): {e}")
                     })?;
                 decls.extend(sub.decls);
@@ -1073,14 +1086,13 @@ pub fn check_project(
     manifest_path: &Path,
 ) -> Result<(Vec<crate::diagnostics::Diagnostic>, String), String> {
     let manifest = crate::manifest::Manifest::load(manifest_path)?;
-    let ast = load_project(manifest_path)?;
+    let (ast, source_map) = load_project(manifest_path)?;
     let entry = manifest.root.join(&manifest.entry);
     let source = std::fs::read_to_string(&entry)
         .map_err(|error| format!("failed to read `{}`: {error}", entry.display()))?;
-    Ok((
-        crate::diagnostics::collect_diagnostics_for_program(&ast),
-        source,
-    ))
+    let mut diagnostics = crate::diagnostics::collect_diagnostics_for_program(&ast);
+    crate::diagnostics::attach_source_map(&mut diagnostics, &source_map, &manifest.root);
+    Ok((diagnostics, source))
 }
 
 /// 编译 `freebird.toml` 项目到 MIR/Stardust。
@@ -1093,7 +1105,8 @@ pub fn compile_project_with_options(
     manifest_path: &Path,
     options: CompileOptions,
 ) -> Result<CompiledProgram, String> {
-    compile_ast_with_options(load_project(manifest_path)?, options)
+    let (ast, _source_map) = load_project(manifest_path)?;
+    compile_ast_with_options(ast, options)
 }
 
 /// 编译 `freebird.toml` 项目到 Stardust 源码。
