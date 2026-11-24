@@ -180,6 +180,17 @@ fn main() {
 }
 
 #[test]
+fn closures_are_rejected_clearly() {
+    let errors = freebird::check_source("fn main() { let f = |x: i64| x + 1; }")
+        .expect_err("closures must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("closures"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
 fn const_evaluation_runs_on_both_backends() {
     let source = r#"
 const BASE: i64 = 40;

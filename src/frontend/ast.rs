@@ -87,6 +87,12 @@ pub enum IntSuffix {
 pub enum Expr {
     /// 字面量
     Lit(Literal, Span),
+    /// 闭包 `|params| body`（M6-5.3 尚未实现；类型检查显式拒绝）
+    Closure {
+        params: Vec<FnParam>,
+        body: Box<Expr>,
+        span: Span,
+    },
     /// 变量引用
     Var(String, Span),
     /// ElementId 引用: #var

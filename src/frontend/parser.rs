@@ -648,6 +648,40 @@ impl Parser {
     }
 
     /// 前缀表达式
+    /// 解析闭包 `|params| body` / `|| body`（参数必须带类型标注）。
+    fn parse_closure(&mut self) -> Result<Expr, FrontendError> {
+        let span = self.peek_span();
+        let mut params = Vec::new();
+        if self.eat(TokenKind::OrOr) {
+            // 零参数闭包：`|| body`。
+        } else {
+            self.expect(TokenKind::Or)?;
+            if !self.check(TokenKind::Or) {
+                loop {
+                    let param_span = self.peek_span();
+                    let name = self.expect_ident("closure parameter")?;
+                    self.expect(TokenKind::Colon)?;
+                    let ty = self.parse_type()?;
+                    params.push(FnParam {
+                        name,
+                        ty,
+                        span: param_span,
+                    });
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+            }
+            self.expect(TokenKind::Or)?;
+        }
+        let body = self.parse_expr(0)?;
+        Ok(Expr::Closure {
+            params,
+            body: Box::new(body),
+            span,
+        })
+    }
+
     fn parse_expr_prefix(&mut self) -> Result<Expr, FrontendError> {
         let tk = self.peek();
         let span = self.peek_span();
@@ -684,6 +718,9 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Lit(Literal::String(s), span))
             }
+
+            // 闭包 `|params| body`（语法先落地，语义在类型检查阶段显式拒绝）。
+            TokenKind::Or | TokenKind::OrOr => self.parse_closure(),
 
             // 标识符
             TokenKind::Ident(name) => {
@@ -1952,6 +1989,7 @@ fn expr_span_of(expr: &Expr) -> Span {
         Expr::Lit(_, span)
         | Expr::Var(_, span)
         | Expr::IdRef(_, span)
+        | Expr::Closure { span, .. }
         | Expr::Deref(_, span)
         | Expr::Ref(_, _, span)
         | Expr::Binary(_, _, _, span)

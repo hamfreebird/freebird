@@ -273,6 +273,7 @@ fn check_expr_refs(expr: &crate::frontend::ast::Expr, pub_names: &PubNames) -> R
         Expr::Var(name, span) => check_path_str(name, *span, pub_names),
         Expr::Lit(..)
         | Expr::IdRef(..)
+        | Expr::Closure { .. }
         | Expr::StardustMacro(..)
         | Expr::Ret(..)
         | Expr::Continue(..)

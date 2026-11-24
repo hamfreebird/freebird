@@ -70,6 +70,10 @@ impl HirType {
 #[derive(Debug, Clone)]
 pub enum HirExpr {
     Lit(ast::Literal, Span),
+    /// 闭包语法（M6-5.3 尚未实现；类型检查报 T018）。
+    Closure {
+        span: Span,
+    },
     Var(HirVarRef),
     IdRef(String, Span),
     Deref(Box<HirExpr>, Span),

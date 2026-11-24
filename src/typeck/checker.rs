@@ -880,6 +880,14 @@ impl<'a> TypeChecker<'a> {
     fn check_expr(&mut self, expr: &HirExpr) -> HirType {
         match expr {
             HirExpr::Lit(lit, _) => literal_type(lit),
+            HirExpr::Closure { span } => {
+                self.error(TypeCheckError::UnsupportedFeature {
+                    feature: "closures".to_string(),
+                    reference: "docs/adr/0006-language-evolution.md (M6-5.3)".to_string(),
+                    span: *span,
+                });
+                HirType::Unknown
+            }
             HirExpr::Var(var) => {
                 if var.scope_depth == usize::MAX {
                     // extern 函数没有 Freebird 函数体，不能作为函数值/间接调用。
@@ -3412,6 +3420,7 @@ fn binop_name(op: ast::BinOp) -> &'static str {
 fn expr_span(expr: &HirExpr) -> Span {
     match expr {
         HirExpr::Lit(_, span)
+        | HirExpr::Closure { span }
         | HirExpr::IdRef(_, span)
         | HirExpr::Deref(_, span)
         | HirExpr::Ref(_, _, span)

@@ -371,6 +371,8 @@ impl Lowering {
     fn lower_expr(&mut self, expr: &ast::Expr) -> Option<HirExpr> {
         match expr {
             ast::Expr::Lit(lit, span) => Some(HirExpr::Lit(lit.clone(), *span)),
+            // 闭包体不求值：类型检查会显式拒绝闭包（M6-5.3）。
+            ast::Expr::Closure { span, .. } => Some(HirExpr::Closure { span: *span }),
             ast::Expr::Var(name, span) => {
                 match self.resolver.resolve_var(name, *span) {
                     Ok(depth) => Some(HirExpr::Var(HirVarRef {

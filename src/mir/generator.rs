@@ -771,6 +771,12 @@ impl MirGen {
                 });
                 self.stack.push_temp();
             }
+            HirExpr::Closure { .. } => {
+                // 类型检查已拒绝闭包；这里只保证 MIR 生成可穷尽匹配。
+                self.mir.push(MirInst::Comment(
+                    "ERROR: closures are not implemented (M6-5.3)".to_string(),
+                ));
+            }
             HirExpr::Var(var_ref) => {
                 // scope_depth == usize::MAX 表示类型名或函数名，非变量
                 if var_ref.scope_depth != usize::MAX {

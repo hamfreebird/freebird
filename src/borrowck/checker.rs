@@ -610,7 +610,7 @@ impl BorrowChecker {
 
     fn check_expr(&mut self, expr: &HirExpr) {
         match expr {
-            HirExpr::Lit(_, _) | HirExpr::Ret(_, _) => {}
+            HirExpr::Lit(_, _) | HirExpr::Ret(_, _) | HirExpr::Closure { .. } => {}
             HirExpr::Var(var) => {
                 if var.scope_depth == usize::MAX {
                     // 函数名/类型名不是变量，借用检查忽略。
@@ -951,7 +951,8 @@ fn count_uses_expr(expr: &HirExpr, uses: &mut HashMap<String, usize>) {
         | HirExpr::Ret(_, _)
         | HirExpr::Continue(_)
         | HirExpr::ContinueLabel(_, _)
-        | HirExpr::StardustMacro(_, _) => {}
+        | HirExpr::StardustMacro(_, _)
+        | HirExpr::Closure { .. } => {}
         HirExpr::Deref(inner, _)
         | HirExpr::Unary(_, inner, _)
         | HirExpr::FieldAccess(inner, _, _)
