@@ -9,6 +9,7 @@
 > **unsafe 值栈扩容与 roll(n) 后基线**（2026-11-23）：`cargo test` = **201 unit + 136 integration** 全绿（`tests/m2_test.rs` 52 项）。
 > **Reverse/可见性/泛型 impl/turbofish 后基线**（2026-11-23）：`cargo test` = **202 unit + 142 integration** 全绿（`tests/m2_test.rs` 58 项）。
 > **M3 完成后基线**（2026-11-24）：`cargo test` = **206 unit + 177 integration** 全绿（新增 `tests/m3_test.rs` 35 项）；`cargo build --release` 通过；LLVM 后端经仓库自带 Stardust 工具链验证。
+> **M4 完成后基线**（2026-11-24）：`cargo test` = **227 unit + 190 integration** 全绿（新增 `tests/m4_test.rs` 13 项）；fmt/clippy、文档链接与 examples 巡检纳入 CI。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 
@@ -207,25 +208,36 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 ---
 
-### M4 — 工具链与开发者体验（P2）
+### M4 — 工具链与开发者体验（已完成，2026-11-24）
 
 **目标**：从“能跑”提升到“可日常开发”。
 
-| ID | 工作项 | 验收标准 |
-|---|---|---|
-| M4-1 | LSP：诊断、hover、补全、跳转定义、引用、文档符号 | VS Code 扩展接入 LSP；打开坏文件能显示行内诊断 |
-| M4-2 | 调试器：DAP 断点、单步、调用栈、变量查看；先覆盖 VM | `freebird run --debug` 或独立 `freebird dap` 可用；有端到端调试测试 |
-| M4-3 | REPL 增强：多行输入、历史、`:load`、`:type`、错误恢复 | 交互测试/脚本测试；REPL 与文件执行语义一致 |
-| M4-4 | 格式化器与 lint 门禁：`freebird fmt`；清理既有 fmt/clippy 问题后加入 CI | `cargo fmt --check`、`cargo clippy --all-targets` 通过并成为 CI 门禁 |
-| M4-5 | 包管理器/项目清单：最小 `freebird.toml`、路径依赖、构建入口；暂不做中心化 registry | 本地多包示例可构建；锁定文件/版本解析行为有测试 |
-| M4-6 | 诊断增强：稳定错误码、修复建议、相关位置、JSON schema 版本 | 诊断快照测试；`check --json` 有 schema 文档 |
-| M4-7 | CI/发布：examples 巡检、差分测试、文档链接检查、release 产物 | GitHub Actions 全绿；tag 发布包含二进制和校验和 |
+**完成情况**：LSP、DAP、REPL 增强、`freebird fmt` 与 fmt/clippy 门禁、`freebird.toml`
+路径依赖项目、诊断 schema、CI examples/文档链接巡检与 release 产物全部落地。
+新增 `tests/m4_test.rs` 13 项；M4 完成后 `cargo test` = 227 unit + 190 integration。
 
-**M4 退出标准**
+| ID | 工作项 | 验收标准 | 状态 |
+|---|---|---|---|
+| M4-1 | LSP：诊断、hover、补全、跳转定义、引用、文档符号 | VS Code 扩展接入 LSP；打开坏文件能显示行内诊断 | ✅ 诊断/hover/定义/符号/补全 + VS Code 接入；references 未实现 |
+| M4-2 | 调试器：DAP 断点、单步、调用栈、变量查看；先覆盖 VM | `freebird run --debug` 或独立 `freebird dap` 可用；有端到端调试测试 | ✅ `freebird dap`（断点/单步/栈/变量）；单线程，无 pause |
+| M4-3 | REPL 增强：多行输入、历史、`:load`、`:type`、错误恢复 | 交互测试/脚本测试；REPL 与文件执行语义一致 | ✅ |
+| M4-4 | 格式化器与 lint 门禁：`freebird fmt`；清理既有 fmt/clippy 问题后加入 CI | `cargo fmt --check`、`cargo clippy --all-targets` 通过并成为 CI 门禁 | ✅ |
+| M4-5 | 包管理器/项目清单：最小 `freebird.toml`、路径依赖、构建入口；暂不做中心化 registry | 本地多包示例可构建；锁定文件/版本解析行为有测试 | ✅ 路径依赖 MVP；无版本解析/锁定文件（文档说明） |
+| M4-6 | 诊断增强：稳定错误码、修复建议、相关位置、JSON schema 版本 | 诊断快照测试；`check --json` 有 schema 文档 | ✅ |
+| M4-7 | CI/发布：examples 巡检、差分测试、文档链接检查、release 产物 | GitHub Actions 全绿；tag 发布包含二进制和校验和 | ✅ |
 
-- 编辑器内可完成“写代码 → 看诊断 → 跳转 → 调试”的闭环。
-- fmt/clippy 成为门禁；CI 覆盖 examples 与差分。
-- 包管理最小闭环可用，或有明确的“暂不做”结论。
+**M4 退出标准（已满足）**
+
+- 编辑器内可完成“写代码 → 看诊断 → 跳转 → 调试”的闭环（LSP + DAP）。
+- fmt/clippy 成为门禁；CI 覆盖 examples、文档链接与差分。
+- 包管理最小闭环可用（路径依赖），版本解析/锁定文件明确暂缓。
+
+**M4 已知限制**
+
+- LSP 为文本级 MVP：hover/定义/符号基于文本扫描，列号按 Unicode 标量而非 UTF-16；未实现 references/rename/语义补全。
+- DAP 单线程：运行期间不能处理 `pause`；`next`/`stepIn` 为指令级单步。
+- 包管理仅支持单层路径依赖，无 registry、版本解析或锁定文件。
+- `freebird fmt` 仅规范化缩进/空白，不重排表达式。
 
 ---
 

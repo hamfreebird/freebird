@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-24。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **206 unit + 177 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 35，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **227 unit + 190 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 35，`tests/m4_test.rs` 13，`tests/differential_test.rs` 2）。
 > 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 在 LLVM 目标上编译期拒绝，非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 限制。
 
 ## 1. 语言与运行时
@@ -133,3 +133,15 @@
   `Reverse`/`Call` 全部落地；未知指令改为编译错误。宏入口/出口隐藏并恢复 Freebird 的
   `CallElement`（堆槽 13），因此宏内整栈指令只操作用户数据栈，VM 与 Stardust 输出一致。
 - **测试基线**：206 unit + 177 integration；`tests/m3_test.rs` 35 个测试。
+
+## 8. M4 工具链与开发者体验（已完成，2026-11-24）
+
+- **M4-1 LSP**：`freebird lsp`（stdio JSON-RPC）：诊断、hover、跳转定义、文档符号、补全；VS Code 扩展通过 `vscode-languageclient` 接入，`freebird.serverPath` 可配置。
+- **M4-2 DAP**：`freebird dap`（stdio DAP）：launch、setBreakpoints、configurationDone、stackTrace/scopes/variables、continue/next/stepIn/stepOut；基于 `MirInst::Line` 行标记；单线程，运行期间不支持 pause。
+- **M4-3 REPL**：多行输入（括号/字符串/块注释未闭合继续）、`:history`/`:run n`、`:load`、`:type`（复用 `typeck::infer_expression_type`）、类型/借用检查后的错误恢复。
+- **M4-4 fmt/lint**：`freebird fmt [--check|--write|--stdin]`；全树 `cargo fmt` 清理；clippy 清零并纳入 CI（`-D warnings`）。
+- **M4-5 包管理**：`freebird.toml`（`[package] name/entry`、`[dependencies]` 路径）；`run/check/build` 支持 `--manifest-path` 与当前目录自动发现；依赖以 `<dep>::` 前缀加载。仅路径依赖，无版本解析/registry/锁定文件。
+- **M4-6 诊断**：JSON `schema_version: 1`、稳定错误码（P/R/T/B/W）、`related` 位置与修复建议。
+- **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。
+- **测试基线**：227 unit + 190 integration；`tests/m4_test.rs` 13 项。
+- **已知限制**：LSP 为文本级 MVP（UTF-16 列近似）；DAP 单线程无 pause；包管理仅单层路径依赖、无锁定文件；格式化器只规范化空白/缩进。

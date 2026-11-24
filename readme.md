@@ -6,7 +6,7 @@
 >
 > 本规范是 Freebird 语言实现的权威参考文档。
 >
-> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如泛型约束与按实例单态化、字符串格式化 API）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 在 LLVM 目标上编译期拒绝，非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 限制。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
+> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如泛型约束与按实例单态化、字符串格式化 API）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 在 LLVM 目标上编译期拒绝，非 ASCII `CharOut` 受 Stardust LLVM 的 ASCII 限制。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。M4 工具链已落地：`freebird fmt`、`freebird lsp`、`freebird dap`、`freebird.toml` 路径依赖项目、诊断 `schema_version` 与稳定错误码；LSP 为文本级 MVP，DAP 为单线程适配器，包管理仅路径依赖。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
 
 ---
 

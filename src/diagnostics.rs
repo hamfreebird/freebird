@@ -477,42 +477,6 @@ struct DiagnosticReport {
     warning_count: usize,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::frontend::token::Span;
-
-    #[test]
-    fn test_empty_diagnostics() {
-        let json = generate_diagnostic_json("", &[], &[], &[], &[]);
-        assert!(json.contains("\"error_count\": 0"));
-        assert!(json.contains("\"schema_version\": 1"));
-    }
-
-    #[test]
-    fn test_parse_error_diagnostic() {
-        let errors = vec![FrontendError::new(
-            crate::frontend::error::FrontendErrorKind::UnexpectedChar('@'),
-            Span::new(1, 1, 0),
-        )];
-        let json = generate_diagnostic_json("@", &errors, &[], &[], &[]);
-        assert!(json.contains("unexpected character"));
-        assert!(json.contains("\"code\": \"P005\""));
-    }
-
-    #[test]
-    fn test_type_error_diagnostic() {
-        let errors = vec![TypeCheckError::ConditionNotBool {
-            found: crate::hir::types::HirType::Path(vec!["i32".to_string()]),
-            span: Span::new(2, 5, 0),
-        }];
-        let json = generate_diagnostic_json("", &[], &[], &errors, &[]);
-        assert!(json.contains("condition must be bool"));
-        assert!(json.contains("\"error_count\": 1"));
-        assert!(json.contains("\"code\": \"T003\""));
-    }
-}
-
 /// 收集源码的全部诊断（parse → resolve → type → borrow），供 LSP 复用。
 ///
 /// 与 `freebird check` 使用同一套检查顺序：解析/名称解析失败时不再做
@@ -578,4 +542,40 @@ pub fn diagnostics_json(diagnostics: Vec<Diagnostic>, source: &str) -> (String, 
     };
     let json = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
     (json, error_count, warning_count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontend::token::Span;
+
+    #[test]
+    fn test_empty_diagnostics() {
+        let json = generate_diagnostic_json("", &[], &[], &[], &[]);
+        assert!(json.contains("\"error_count\": 0"));
+        assert!(json.contains("\"schema_version\": 1"));
+    }
+
+    #[test]
+    fn test_parse_error_diagnostic() {
+        let errors = vec![FrontendError::new(
+            crate::frontend::error::FrontendErrorKind::UnexpectedChar('@'),
+            Span::new(1, 1, 0),
+        )];
+        let json = generate_diagnostic_json("@", &errors, &[], &[], &[]);
+        assert!(json.contains("unexpected character"));
+        assert!(json.contains("\"code\": \"P005\""));
+    }
+
+    #[test]
+    fn test_type_error_diagnostic() {
+        let errors = vec![TypeCheckError::ConditionNotBool {
+            found: crate::hir::types::HirType::Path(vec!["i32".to_string()]),
+            span: Span::new(2, 5, 0),
+        }];
+        let json = generate_diagnostic_json("", &[], &[], &errors, &[]);
+        assert!(json.contains("condition must be bool"));
+        assert!(json.contains("\"error_count\": 1"));
+        assert!(json.contains("\"code\": \"T003\""));
+    }
 }
