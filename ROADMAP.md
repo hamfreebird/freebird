@@ -255,7 +255,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | M5-1 | 基准套件：VM 启动/算术/调用/集合；Stardust 生成代码体积与运行时间；LLVM 对比 | 基准数据入库；回归超过阈值时 CI 警告 | ✅ `freebird-bench` + `bench/baseline.json` + 非阻塞 CI job |
 | M5-2 | MIR 优化：常量折叠、死代码消除、分支简化、内联（谨慎）；保持可关闭 | 优化前后输出一致；有优化开关和测试 | ✅ `--no-opt`；常量跳转/无用跳转/比较折叠；内联暂缓 |
 | M5-3 | 模糊测试/属性测试：parser、typeck、MIR、VM；差分 fuzz | 持续运行 corpus；崩溃/差异自动最小化并归档 | ✅ 固定 seed 差分 + 坏输入 + 最小化归档；未接持续 fuzz |
-| M5-4 | 内存与 UB 审计：Rust `unsafe` 代码、Miri、sanitizer（可用时）；堆/远程栈生命周期 | 审计记录；关键路径无未解释 UB | ✅ 无 Rust unsafe；Miri/sanitizer 不可用，记录在案 |
+| M5-4 | 内存与 UB 审计：Rust `unsafe` 代码、Miri、sanitizer（可用时）；堆/远程栈生命周期 | 审计记录；关键路径无未解释 UB | ✅ 无 Rust unsafe；Miri 后续在 M6-4.1 接入 CI（本地 stable 不可用），记录在案 |
 | M5-5 | 测试基础设施：`tests/programs` 自动发现、fixture 命名规范、快照更新流程 | 新增 `.fb` 自动进入测试；不再有未使用 fixture | ✅ fixture 检查 + 诊断快照 |
 | M5-6 | 发布与兼容：语义化版本、CHANGELOG、破坏性变更流程、文档一致性检查 | 每次发布有迁移说明；文档与测试基线一致 | ✅ CHANGELOG + release.md + check-docs + tag 校验 |
 
@@ -267,7 +267,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 **M5 已知限制 / 后续**
 
-- Miri/sanitizer 需要 nightly 组件，当前环境不可用；未接入 CI。
+- Miri/sanitizer 需要 nightly 组件：Miri 已在 M6-4.1 接入 CI（非阻塞过渡期），本地 stable 无法运行；ASan/UBSan 未接入。
 - fuzz 为固定 seed 的有限规模 smoke，未持续运行；深层递归输入未覆盖。
 - 内联优化未实现；bench job 仅告警，不作为门禁。
 
@@ -296,7 +296,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | 包管理仅单层路径依赖、无锁定文件 | M6-3.3（已解决：递归依赖 + `freebird.lock`） |
 | REPL 变量不跨输入保留、无持久历史 | M6-3.4 |
 | `fmt` 只做空白/缩进规范化 | M6-3.5 |
-| Miri/sanitizer 未接入 CI | M6-4.1 |
+| Miri/sanitizer 未接入 CI | M6-4.1（已解决：CI `miri` job，非阻塞过渡期） |
 | fuzz 为固定 seed 的有限 smoke | M6-4.2 |
 | MIR 无内联优化 | M6-4.3 |
 | bench 仅告警、非门禁 | M6-4.4 |
@@ -339,7 +339,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 | ID | 工作项 | 验收标准 |
 |---|---|---|
-| M6-4.1 | Miri/sanitizer CI：nightly job 跑核心模块 Miri；ASan/UBSan 可选 | CI 有独立 job；已知问题清零或基线化；不阻塞主门禁的过渡期明确（P1） |
+| M6-4.1 | Miri/sanitizer CI：nightly job 跑核心模块 Miri；ASan/UBSan 可选 | CI 有独立 job；已知问题清零或基线化；不阻塞主门禁的过渡期明确（P1，已完成：`miri` job + release.md §7 策略；ASan 未接入并记录原因） |
 | M6-4.2 | 持续 fuzz：`tests/fuzz/corpus` 与定时 job，扩展深层递归/长输入 | 定时运行；失败自动归档/最小化；corpus 可重现（P2） |
 | M6-4.3 | MIR 内联与更多优化：小函数内联、分支简化、死代码；保留开关与 `Line` | 优化前后输出一致；指令数/bench 改善；`--no-opt` 可关闭（P2） |
 | M6-4.4 | bench 门禁：稳定 runner/阈值，或明确保持告警并记录噪声基线 | 阈值可复现；CI 策略写入文档（P2） |
@@ -435,7 +435,7 @@ M0 语义收敛 ──→ M1 运行时一致性 ──→ M2 语言补全 ──
 | Stardust VM 限制 | 外部解释器没有远程栈/资源限制原语 | 用堆块模拟并在文档标注差异；或在生成代码中插入检查 |
 | 包管理器 | 中心化 registry 成本高 | 先做本地路径依赖和 `freebird.toml`；registry 暂缓 |
 | Stardust 跨仓库变更 | LLVM 文件 I/O/Unicode/EOF 需要修改 `esolang_stardust` 并发布新二进制 | 单独提交/测试/推送；Freebird 只引用发布后的二进制，避免双仓库状态漂移 |
-| Miri/sanitizer 工具链 | stable 无 miri 组件，CI 需要 nightly 或额外镜像 | 独立 non-blocking job，先覆盖核心模块，再决定是否成为门禁 |
+| Miri/sanitizer 工具链 | stable 无 miri 组件，CI 需要 nightly 或额外镜像 | 已落地独立 non-blocking `miri` job（核心模块），过渡期后视告警情况转门禁 |
 | DAP 异步执行 | 当前 VM 单线程，运行中 `pause` 需要协作式检查或执行线程 | 先实现协作式 pause 点，避免引入数据竞争 |
 | 泛型约束/单态化 | 范围大且会改变 MIR/布局 | 先 ADR 与分阶段验收，不进入 M6 硬承诺 |
 | GC vs 所有权 | 规范主打所有权/借用/Drop | 不引入 GC；Stardust 堆用 free list + Drop 回收 |

@@ -23,6 +23,8 @@
 - **M6 包管理**：依赖递归展开（传递依赖同样以包名为模块前缀注册，同名包冲突与循环依赖在解析期报错）；
   `freebird lock` 生成 `freebird.lock`（依赖相对路径 + 包内 `.fb` 内容哈希），
   `run`/`check`/`build` 在锁文件存在时校验，缺失/路径变化/哈希不一致都会报错。
+- **CI Miri job**：nightly 上运行核心模块（`vm`/`mir`/`borrowck`）的 `cargo miri test`，
+  过渡期 `continue-on-error`；门禁策略见 `docs/release.md` §7。
 
 ### Fixed
 

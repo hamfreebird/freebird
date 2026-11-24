@@ -69,3 +69,26 @@ python3 scripts/check-docs.py
 - `Cargo.toml` 版本在 `CHANGELOG.md` 中有对应 `## [x.y.z]` 条目，且存在 `## [Unreleased]`。
 
 该脚本在 CI 的 `test` job 中运行；基线变化时同步更新三份文档。
+
+## 7. CI 门禁策略
+
+`.github/workflows/ci.yml` 的 job 分为阻塞与告警两类：
+
+| job | 阻塞合并 | 说明 |
+|---|---|---|
+| `test` | 是 | `cargo fmt --check`、`clippy -D warnings`、`cargo test`、文档链接/一致性、fixture、MIR 占位符、examples 冒烟 |
+| `differential` | 是 | VM/Stardust 差分测试 |
+| `llvm` | 是 | 安装 clang 后跑 `m3_test`（bundled Stardust 工具链） |
+| `bench` | 否 | 基准受机器噪声影响，`--tolerance 2.5`，只告警 |
+| `miri` | 否（过渡期） | nightly + `cargo miri setup`，仅跑核心模块 `vm::`/`mir::`/`borrowck::` |
+
+`miri` job 的过渡期约定（M6-4.1）：
+
+- 使用 `MIRIFLAGS="-Zmiri-disable-isolation"`，因为核心模块的测试会访问临时文件；
+- 首次接入若暴露未定义行为/未初始化读取，先在 issue 与其对应文档中登记（基线化），
+  修复完成后再把该 job 从 `continue-on-error` 改为阻塞门禁；
+- 本地 stable 工具链没有 `miri` 组件，Miri 只能在 nightly 上运行；本地验证请用
+  `cargo +nightly miri test --lib vm::`（首次需 `rustup component add miri --toolchain nightly`）。
+
+ASan/UBSan 目前**未接入**：ASan 需要 `-Zbuild-std` 与 `rust-src`，构建成本高且与 LLVM 后端
+的 clang 链接相互影响。需要时在本地按需运行，接入前先在 `STATUS.md` 记录结论。

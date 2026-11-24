@@ -15,8 +15,8 @@
 | `cargo clippy --all-targets -- -D warnings` | 通过 |
 | Rust `unsafe` / `transmute` / `static mut` / `from_raw` / `as_ptr` | **无**（Freebird 语言中的 `unsafe` 关键字只是语法，VM 实现为安全的 Rust 指令） |
 | `RefCell` / `Cell` / 内部可变性 | **无** |
-| Miri | **不可用**：当前 stable toolchain 未安装 `miri` 组件（`cargo miri --version` 报组件不可用）；未运行 |
-| AddressSanitizer / UBSan | 未接入（未安装对应 nightly 组件） |
+| Miri | **CI 已接入**（M6-4.1）：nightly job 跑核心模块 `vm::`/`mir::`/`borrowck::`，过渡期非阻塞；本地 stable 无 `miri` 组件，未在本地运行 |
+| AddressSanitizer / UBSan | 未接入（需要 `-Zbuild-std` 与 rust-src；原因见 `docs/release.md` §7） |
 | 坏输入 fuzz | `tests/m5_test.rs` 固定 seed 生成 60 个随机 token 输入，`check_source` 经 `catch_unwind` 断言不 panic |
 
 Miri/sanitizer 的缺失是工具链环境限制，不是审计结论的替代；`unsafe` 为零意味着 Rust 层面没有直接 UB 入口。
@@ -76,7 +76,7 @@ Miri/sanitizer 的缺失是工具链环境限制，不是审计结论的替代�
 | 级别 | 发现 | 建议 |
 |---|---|---|
 | 信息 | Rust `unsafe` 为零 | 保持；新增代码继续避免 `unsafe` |
-| 中 | Miri/sanitizer 未接入 | 在具备 nightly 组件的 CI 中加入 `cargo miri test`（可先只跑核心模块）与 ASan 构建 |
+| 中 | Miri/sanitizer 未接入 | M6-4.1 已接入 CI `miri` job（核心模块、非阻塞过渡期）；ASan/UBSan 待评估 |
 | 中 | 深层递归输入可能栈溢出（panic/abort，`catch_unwind` 捕获不到栈溢出） | 扩展 fuzz 的长度/嵌套维度；parser 增加显式递归深度限制与诊断 |
 | 低 | 内部 `unwrap` 依赖不变量 | 逐步替换为 `expect("invariant: ...")` 或在关键路径返回 `VmError`；启用 `clippy::unwrap_used` 分级 |
 | 低 | `src/mir/generator.rs` 对未知 `HirExpr` 只生成 `TODO` 注释 | 改为编译期错误（避免静默降级） |

@@ -62,3 +62,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Benchmark check (warning only)
         run: cargo run --release --bin freebird-bench -- --check --tolerance 2.5
+
+  miri:
+    runs-on: ubuntu-latest
+    # Miri 需要 nightly 组件，且首次接入可能需要清理历史告警：
+    # 过渡期作为非阻塞检查，策略见 docs/release.md「CI 门禁策略」。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Miri setup
+        run: cargo miri setup
+      - name: Miri（核心模块：vm / mir / borrowck）
+        run: |
+          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib vm::
+          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib mir::
+          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib borrowck::
