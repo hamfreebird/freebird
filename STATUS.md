@@ -98,7 +98,7 @@
 
 - **已完成**：差分测试框架与 CI `differential` job；`read_line` 的 UTF-8/CRLF/非法字节解码与 VM 逐字节一致；远程栈收敛为“逻辑远程栈 + 全局堆块”（ADR 0001）；索引越界检查；I/O 与 VM 资源限制测试；Stardust 占位清理。
 - **M1-3 堆回收**：free list 复用；`VecPush` 原地追加/2 倍扩容并释放旧块，`VecPop` 原地缩减；`DropVar` 对未被返回/别名的 Vec/Box 绑定释放块。循环内创建/销毁 Vec 的 `HEAP_ALLOC_PTR` 稳定（ADR 0002）。
-- **保守边界**：数组/结构体等 Copy 类型的 COW 旧块、嵌套容器内层块、从未 push/pop 的 Vec/String 不回收（安全泄漏）；完整引用计数留待后续。
+- **保守边界**：数组/结构体等 Copy 类型的 COW 旧块、嵌套容器内层块、从未 push/pop 的 Vec/String 不回收（安全泄漏）；完整引用计数留待后续。M6-2.5 实测 COW 写入约 10 堆元素/次（1M 堆上限 ≈ 10 万次写入），压力护栏见 `tests/m6_test.rs`，细节见 ADR 0002。
 - **已知后端差异**：Stardust 越界用除零陷阱退出，错误消息与 VM 不同（分类一致）。
 
 ## 6. M2 语言补全（已完成：M2-1～M2-9；M2-1 类型擦除、格式化 API 规范未定义）

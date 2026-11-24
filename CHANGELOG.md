@@ -46,6 +46,9 @@
 - **M6-4.5 跨平台**：明确只发布并支持 Linux x86_64（Stardust 工具链目前只有 Linux 构建）；
   CI 新增 `cross-platform` job，在 macOS/Windows 上做 `cargo check --all-targets` 探测（非阻塞）；
   平台边界与后续工作写入 `docs/release.md` §8。
+- **M6-2.5 堆回收上限**：明确维持 Stardust 的保守回收策略，并测量 COW 写入的堆增长
+  （约 10 个堆元素/次，1M 上限 ≈ 10 万次写入）；数据与结论写入 ADR 0002，
+  `tests/m6_test.rs` 增加 1000 次 COW 压力的双后端一致性护栏。
 
 ### Fixed
 

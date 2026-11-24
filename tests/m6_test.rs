@@ -111,6 +111,31 @@ fn run_stardust_text(text: &str) -> Result<Vec<u8>, String> {
 }
 
 #[test]
+fn stardust_heap_growth_is_bounded_under_cow_pressure() {
+    if !Path::new("stardust/stardust-linux-x86_64").exists() {
+        eprintln!("skipping: stardust interpreter not available");
+        return;
+    }
+    // 数组写时复制的旧块保守不回收（ADR 0002）：实测约 10 个堆元素/次迭代。
+    // 1000 次迭代约 1 万元素，远低于 1M 堆上限；两端输出必须一致。
+    let source = r#"fn main() {
+    let mut i = 0;
+    let mut acc = 0;
+    while i < 1000 {
+        let mut a = [i, i + 1, i + 2];
+        a[0] = acc;
+        acc = acc + a[1];
+        i = i + 1;
+    }
+    print(acc);
+}"#;
+    let vm = run_source(source, RuntimeConfig::test()).expect("vm run");
+    let text = build_stardust(source).expect("stardust build");
+    let stardust = run_stardust_text(&text).expect("stardust run");
+    assert_eq!(stardust, vm, "COW pressure must not change output");
+}
+
+#[test]
 fn stardust_call_arity_declares_return_values() {
     if !Path::new("stardust/stardust-linux-x86_64").exists() {
         eprintln!("skipping: stardust interpreter not available");
