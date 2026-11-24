@@ -1,18 +1,74 @@
-use crate::vm::mir::MirInst;
+use crate::vm::mir::{MirInst, TypeId};
 
 /// MIR 优化器 — 对 MIR 指令序列进行基本优化
 pub fn optimize_mir(mir: &mut Vec<MirInst>) {
-    // 多遍优化直到收敛
+    // 多遍优化直到收敛。每遍运行所有优化（不要用 `||` 短路，否则后面的
+    // 优化要等前面的优化不再变化才执行）。
     for _ in 0..3 {
-        let changed = constant_folding(mir)
-            || peephole_optimize(mir)
-            || remove_dead_code(mir)
-            || eliminate_redundant_roll(mir)
-            || jump_optimization(mir);
+        let mut changed = false;
+        changed |= constant_folding(mir);
+        changed |= fold_constant_jumps(mir);
+        changed |= remove_noop_jumps(mir);
+        changed |= peephole_optimize(mir);
+        changed |= remove_dead_code(mir);
+        changed |= eliminate_redundant_roll(mir);
+        changed |= jump_optimization(mir);
         if !changed {
             break;
         }
     }
+}
+
+/// 无副作用跳转消除：
+/// - `UncondJump A; Mark A` → 删除跳转
+/// - `Jump A; Mark A` → `Pop`（条件仍须弹出）
+fn remove_noop_jumps(mir: &mut Vec<MirInst>) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    while i + 1 < mir.len() {
+        match (&mir[i], &mir[i + 1]) {
+            (MirInst::UncondJump(target), MirInst::Mark(mark)) if target == mark => {
+                mir.remove(i);
+                changed = true;
+                continue;
+            }
+            (MirInst::Jump(target), MirInst::Mark(mark)) if target == mark => {
+                mir[i] = MirInst::Pop {
+                    ty: TypeId::Unknown,
+                };
+                changed = true;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    changed
+}
+
+/// 常量条件跳转：`Push(c); Jump A` → `UncondJump A`（c != 0）或 `Pop`（c == 0）。
+fn fold_constant_jumps(mir: &mut Vec<MirInst>) -> bool {
+    let mut changed = false;
+    let mut i = 0;
+    while i + 1 < mir.len() {
+        if let (MirInst::Push { value, .. }, MirInst::Jump(target)) = (&mir[i], &mir[i + 1])
+            && let Some(condition) = value.as_i64()
+        {
+            if condition != 0 {
+                mir[i] = MirInst::UncondJump(*target);
+                mir.remove(i + 1);
+            } else {
+                mir[i] = MirInst::Pop {
+                    ty: TypeId::Unknown,
+                };
+                mir.remove(i + 1);
+            }
+            changed = true;
+            continue;
+        }
+        i += 1;
+    }
+    changed
 }
 
 /// 常量折叠: Push(a) Push(b) Add → Push(a+b)
@@ -24,28 +80,37 @@ fn constant_folding(mir: &mut Vec<MirInst>) -> bool {
         if let (MirInst::Push { value: a, .. }, MirInst::Push { value: b, .. }, op) =
             (&mir[i], &mir[i + 1], &mir[i + 2])
         {
+            let (Some(va), Some(vb)) = (a.as_i64(), b.as_i64()) else {
+                i += 1;
+                continue;
+            };
             let result = match op {
-                MirInst::Add { .. } => {
-                    if let (Some(va), Some(vb)) = (a.as_i64(), b.as_i64()) {
-                        Some(Value::I64(va + vb))
-                    } else {
+                MirInst::Add { .. } => va.checked_add(vb).map(Value::I64),
+                MirInst::Sub { .. } => va.checked_sub(vb).map(Value::I64),
+                MirInst::Mul { .. } => va.checked_mul(vb).map(Value::I64),
+                MirInst::Div { .. } => {
+                    if vb == 0 {
                         None
+                    } else {
+                        va.checked_div(vb).map(Value::I64)
                     }
                 }
-                MirInst::Sub { .. } => {
-                    if let (Some(va), Some(vb)) = (a.as_i64(), b.as_i64()) {
-                        Some(Value::I64(va - vb))
-                    } else {
+                MirInst::Mod { .. } => {
+                    if vb == 0 {
                         None
+                    } else {
+                        va.checked_rem(vb).map(Value::I64)
                     }
                 }
-                MirInst::Mul { .. } => {
-                    if let (Some(va), Some(vb)) = (a.as_i64(), b.as_i64()) {
-                        Some(Value::I64(va * vb))
-                    } else {
-                        None
-                    }
-                }
+                MirInst::Eq => Some(Value::Bool(va == vb)),
+                MirInst::Ne => Some(Value::Bool(va != vb)),
+                MirInst::Lt => Some(Value::Bool(va < vb)),
+                MirInst::Gt => Some(Value::Bool(va > vb)),
+                MirInst::Le => Some(Value::Bool(va <= vb)),
+                MirInst::Ge => Some(Value::Bool(va >= vb)),
+                MirInst::And => Some(Value::Bool(va != 0 && vb != 0)),
+                MirInst::Or => Some(Value::Bool(va != 0 || vb != 0)),
+                MirInst::Xor => Some(Value::Bool((va != 0) ^ (vb != 0))),
                 _ => None,
             };
             if let Some(val) = result {
@@ -243,5 +308,86 @@ mod tests {
         ];
         optimize_mir(&mut mir);
         assert_eq!(mir.len(), 1);
+    }
+
+    #[test]
+    fn test_fold_constant_jump_true() {
+        let mut mir = vec![
+            MirInst::Push {
+                value: Value::I64(1),
+                ty: TypeId::Unknown,
+            },
+            MirInst::Jump(7),
+        ];
+        optimize_mir(&mut mir);
+        assert_eq!(mir.len(), 1);
+        assert!(matches!(&mir[0], MirInst::UncondJump(7)));
+    }
+
+    #[test]
+    fn test_fold_constant_jump_false() {
+        let mut mir = vec![
+            MirInst::Push {
+                value: Value::I64(0),
+                ty: TypeId::Unknown,
+            },
+            MirInst::Jump(7),
+        ];
+        optimize_mir(&mut mir);
+        assert_eq!(mir.len(), 1);
+        assert!(matches!(&mir[0], MirInst::Pop { .. }));
+    }
+
+    #[test]
+    fn test_remove_noop_unconditional_jump() {
+        let mut mir = vec![MirInst::UncondJump(3), MirInst::Mark(3)];
+        optimize_mir(&mut mir);
+        assert_eq!(mir.len(), 1);
+        assert!(matches!(&mir[0], MirInst::Mark(3)));
+    }
+
+    #[test]
+    fn test_fold_comparison() {
+        let mut mir = vec![
+            MirInst::Push {
+                value: Value::I64(3),
+                ty: TypeId::Unknown,
+            },
+            MirInst::Push {
+                value: Value::I64(5),
+                ty: TypeId::Unknown,
+            },
+            MirInst::Lt,
+        ];
+        optimize_mir(&mut mir);
+        assert_eq!(mir.len(), 1);
+        assert!(matches!(
+            &mir[0],
+            MirInst::Push {
+                value: Value::Bool(true),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_line_marker_is_preserved() {
+        let mut mir = vec![
+            MirInst::Line(7),
+            MirInst::Push {
+                value: Value::I64(1),
+                ty: TypeId::Unknown,
+            },
+            MirInst::Push {
+                value: Value::I64(2),
+                ty: TypeId::Unknown,
+            },
+            MirInst::Add {
+                ty: TypeId::Unknown,
+            },
+        ];
+        optimize_mir(&mut mir);
+        assert!(matches!(mir[0], MirInst::Line(7)));
+        assert_eq!(mir.len(), 2);
     }
 }
