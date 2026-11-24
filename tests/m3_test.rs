@@ -817,3 +817,15 @@ fn stardust_macro_raw_call() {
         "unexpected error: {error}"
     );
 }
+
+#[test]
+fn llvm_unicode_output_matches() {
+    assert_same_output(
+        "unicode output",
+        r#"fn main() {
+            print_char('你');
+            println_str("你好");
+        }"#,
+        b"",
+    );
+}

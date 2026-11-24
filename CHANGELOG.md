@@ -26,6 +26,7 @@
 - MIR 不再对未知表达式生成 `TODO` 注释；`#id` 统一由类型检查报 T018。
 - 多文件项目 `check` 的诊断携带 `file`（相对清单根）与文件内行号。
 - `stardust!` 的 `Call(n, m[, r])` 支持显式返回 arity（ADR 0005）；默认为 0。
+- LLVM 后端支持 `#[char_mode=unicode]`，`CharOut` 按 UTF-8 输出（bundled Stardust 同步更新）。
 
 ### Changed
 
