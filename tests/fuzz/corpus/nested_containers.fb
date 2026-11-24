@@ -1,0 +1,16 @@
+struct Row {
+    label: String,
+    total: i64
+}
+
+fn main() {
+    let mut values: Vec<i64> = vec![1, 2, 3];
+    values.push(4);
+    let mut total = 0;
+    for value in values {
+        total = total + value;
+    }
+    let row = Row { label: "sum", total: total };
+    print_str(row.label);
+    print(row.total);
+}

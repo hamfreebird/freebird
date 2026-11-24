@@ -81,6 +81,7 @@ python3 scripts/check-docs.py
 | `llvm` | 是 | 安装 clang 后跑 `m3_test`（bundled Stardust 工具链） |
 | `bench` | 否 | 基准受机器噪声影响，`--tolerance 2.5`，只告警 |
 | `miri` | 否（过渡期） | nightly + `cargo miri setup`，仅跑核心模块 `vm::`/`mir::`/`borrowck::` |
+| `fuzz` | 否（仅定时/手动） | 每周一 03:00 UTC + `workflow_dispatch`；`FREEBIRD_FUZZ_SCALE=10` 跑 `tests/m5_test.rs`（固定 corpus + 随机用例），失败上传 `target/fuzz-failures` |
 
 `miri` job 的过渡期约定（M6-4.1）：
 

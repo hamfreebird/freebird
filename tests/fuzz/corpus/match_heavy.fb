@@ -1,0 +1,19 @@
+enum Shape {
+    Circle(i64),
+    Rect(i64),
+    Empty
+}
+
+fn area(shape: Shape) -> i64 {
+    match shape {
+        Shape::Circle(r) => r * r * 3,
+        Shape::Rect(w) => w * w,
+        Shape::Empty => 0
+    }
+}
+
+fn main() {
+    print(area(Shape::Circle(2)));
+    print(area(Shape::Rect(4)));
+    print(area(Shape::Empty));
+}

@@ -3,6 +3,10 @@ name: CI
 on:
   push:
   pull_request:
+  # 定时运行扩展 fuzz（固定 corpus + 更大规模的随机用例）；也可手动触发。
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 jobs:
   test:
@@ -80,3 +84,20 @@ jobs:
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib vm::
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib mir::
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib borrowck::
+
+  fuzz:
+    # 定时/手动触发：固定 corpus + 更大规模的随机用例（FREEBIRD_FUZZ_SCALE）。
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Extended differential fuzz（corpus + 随机用例）
+        run: FREEBIRD_FUZZ_SCALE=10 cargo test --test m5_test -- --nocapture
+      - name: Upload minimized failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: target/fuzz-failures
+          if-no-files-found: ignore

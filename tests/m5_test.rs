@@ -95,6 +95,21 @@ fn optimization_reduces_instruction_count() {
 
 // ─── M5-3：固定 seed 属性测试与差分 fuzz ───
 
+/// 固定语料目录：仓库内的 `.fb` 文件即 fuzz corpus，任何时候都可重现。
+const CORPUS_DIR: &str = "tests/fuzz/corpus";
+
+/// fuzz 规模倍数：`FREEBIRD_FUZZ_SCALE` 控制用例数与表达式深度。
+///
+/// 默认 1（CI 主门禁保持快速）；定时 job 用更大值扩展深层递归/长输入。
+fn fuzz_scale() -> u64 {
+    std::env::var("FREEBIRD_FUZZ_SCALE")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|scale| *scale > 0)
+        .unwrap_or(1)
+        .min(50)
+}
+
 struct Lcg(u64);
 
 impl Lcg {
@@ -135,9 +150,9 @@ fn gen_expr(rng: &mut Lcg, depth: u32) -> String {
     }
 }
 
-fn gen_program(rng: &mut Lcg) -> String {
-    let a = gen_expr(rng, 2);
-    let b = gen_expr(rng, 2);
+fn gen_program(rng: &mut Lcg, depth: u32) -> String {
+    let a = gen_expr(rng, depth);
+    let b = gen_expr(rng, depth);
     if rng.below(2) == 0 {
         format!(
             "fn main() {{ let a = {a}; let b = {b}; if a > b {{ print(a - b); }} else {{ print(b - a); }} }}"
@@ -230,14 +245,54 @@ fn random_programs_match_across_backends() {
         return;
     }
     let mut rng = Lcg(0x5EED_2026);
-    for index in 0..30 {
-        let source = gen_program(&mut rng);
+    let scale = fuzz_scale();
+    let depth = if scale > 1 { 3 } else { 2 };
+    let cases = 30 * scale;
+    for index in 0..cases {
+        let source = gen_program(&mut rng, depth);
         if differential_mismatch(&source) {
             let minimal = minimize(&source, differential_mismatch);
             let path = archive("differential", &minimal, &format!("generated case {index}"));
             panic!(
                 "VM/Stardust mismatch on generated case {index}; archived at {}",
                 path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn fuzz_corpus_matches_across_backends() {
+    if !PathBuf::from("stardust/stardust-linux-x86_64").exists() {
+        eprintln!("skipping: stardust interpreter not available");
+        return;
+    }
+    let dir = PathBuf::from(CORPUS_DIR);
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("read {CORPUS_DIR}: {error}"))
+        .map(|entry| entry.expect("corpus entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "fb"))
+        .collect();
+    entries.sort();
+    assert!(
+        !entries.is_empty(),
+        "{CORPUS_DIR} should contain .fb corpus files"
+    );
+
+    for path in entries {
+        let source = std::fs::read_to_string(&path).expect("read corpus file");
+        if differential_mismatch(&source) {
+            let minimal = minimize(&source, differential_mismatch);
+            let archived = archive(
+                "corpus",
+                &minimal,
+                &format!("corpus file {}", path.display()),
+            );
+            panic!(
+                "VM/Stardust mismatch on {}{}archived at {}",
+                path.display(),
+                "\n",
+                archived.display()
             );
         }
     }
@@ -288,7 +343,8 @@ fn malformed_inputs_do_not_panic() {
         "\n",
     ];
     let mut rng = Lcg(0xBAD_2026);
-    for index in 0..60 {
+    let cases = 60 * fuzz_scale();
+    for index in 0..cases {
         let length = 1 + rng.below(18) as usize;
         let mut source = String::new();
         for _ in 0..length {
