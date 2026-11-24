@@ -1,2 +1,5 @@
 /target
 .claude/worktrees/
+
+# Local sibling Stardust repository (separate project)
+esolang_stardust/
