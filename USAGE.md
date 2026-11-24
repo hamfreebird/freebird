@@ -118,6 +118,17 @@ freebird lsp
 通过 stdio JSON-RPC 提供诊断、hover、跳转定义、文档符号与补全。VS Code 扩展（`vscode/`）
 通过 `freebird.serverPath` 指向该二进制；安装扩展后打开 `.fb` 文件会自动启动服务。
 
+### 调试适配器（DAP）
+
+```bash
+freebird dap
+```
+
+通过 stdio 提供 DAP：`launch`（`program` 为 `.fb` 路径）、`setBreakpoints`、
+`configurationDone`、`stackTrace`/`scopes`/`variables`、`continue`/`next`/`stepIn`/`stepOut`。
+断点按源码行设置；`next`/`stepIn` 为指令级单步，`stepOut` 运行到调用者。
+当前是单线程适配器，运行期间不支持 `pause`；VM 的 stdout 通过 `output` 事件返回。
+
 ### 交互式 REPL
 
 ```bash

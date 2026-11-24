@@ -244,3 +244,104 @@ fn lsp_stdio_initialize_and_diagnostics() {
     drop(stdin);
     let _ = child.wait();
 }
+
+// ─── M4-2：DAP ───
+
+fn dap_request(seq: i64, command: &str, arguments: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "seq": seq,
+        "type": "request",
+        "command": command,
+        "arguments": arguments
+    })
+}
+
+#[test]
+fn dap_stdio_breakpoint_and_continue() {
+    let path = temp_path("dap-program.fb");
+    std::fs::write(
+        &path,
+        "fn main() {\n    let a = 1;\n    let b = 2;\n    print(a + b);\n}\n",
+    )
+    .unwrap();
+
+    let mut child = freebird()
+        .arg("dap")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+
+    write_lsp(
+        &mut stdin,
+        &dap_request(1, "initialize", serde_json::json!({})),
+    );
+    let initialize = read_lsp(&mut stdout);
+    assert_eq!(initialize["success"], true);
+    let initialized = read_lsp(&mut stdout);
+    assert_eq!(initialized["event"], "initialized");
+
+    write_lsp(
+        &mut stdin,
+        &dap_request(
+            2,
+            "launch",
+            serde_json::json!({ "program": path.to_string_lossy() }),
+        ),
+    );
+    assert_eq!(read_lsp(&mut stdout)["success"], true);
+
+    write_lsp(
+        &mut stdin,
+        &dap_request(
+            3,
+            "setBreakpoints",
+            serde_json::json!({ "breakpoints": [{ "line": 3 }] }),
+        ),
+    );
+    assert_eq!(read_lsp(&mut stdout)["success"], true);
+
+    write_lsp(
+        &mut stdin,
+        &dap_request(4, "configurationDone", serde_json::json!({})),
+    );
+    assert_eq!(read_lsp(&mut stdout)["success"], true);
+    let stopped = read_lsp(&mut stdout);
+    assert_eq!(stopped["event"], "stopped");
+
+    write_lsp(
+        &mut stdin,
+        &dap_request(5, "stackTrace", serde_json::json!({ "threadId": 1 })),
+    );
+    let stack = read_lsp(&mut stdout);
+    assert_eq!(stack["body"]["stackFrames"][0]["name"], "main");
+    assert_eq!(stack["body"]["stackFrames"][0]["line"], 3);
+
+    write_lsp(
+        &mut stdin,
+        &dap_request(6, "continue", serde_json::json!({ "threadId": 1 })),
+    );
+    let continued = read_lsp(&mut stdout);
+    assert_eq!(continued["success"], true);
+    // continue 之后可能先收到 stdout output 事件，再收到 exited/terminated。
+    let mut saw_exited = false;
+    for _ in 0..3 {
+        let message = read_lsp(&mut stdout);
+        if message["event"] == "exited" {
+            saw_exited = true;
+            break;
+        }
+    }
+    assert!(saw_exited, "expected an exited event");
+
+    write_lsp(
+        &mut stdin,
+        &dap_request(7, "disconnect", serde_json::json!({})),
+    );
+    drop(stdin);
+    let _ = child.wait();
+    let _ = std::fs::remove_file(path);
+}

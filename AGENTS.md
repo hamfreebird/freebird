@@ -28,6 +28,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 
 - `freebird fmt` normalises indentation/blank lines (idempotent, comment-preserving).
 - `freebird lsp` serves stdio JSON-RPC (Content-Length framing): diagnostics via `diagnostics::collect_diagnostics`, hover/definition/documentSymbol/completion are text-based MVP implementations in `src/lsp.rs`.
+- `freebird dap` serves DAP over stdio (`src/dap.rs`): `launch` compiles via `compile_program`, breakpoints use `MirInst::Line` markers, and the VM exposes `prepare_mir`/`run_debug`/`continue_debug`/`step_debug`/`step_out_debug`. `next`/`stepIn` are instruction-level; the adapter is single-threaded and does not support `pause` while running.
 
 ## Language surface
 

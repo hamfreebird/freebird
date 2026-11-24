@@ -44,6 +44,8 @@ enum Command {
     Repl,
     /// 启动 LSP 语言服务（stdio JSON-RPC，供编辑器使用）
     Lsp,
+    /// 启动 DAP 调试适配器（stdio，供编辑器调试使用）
+    Dap,
     /// 格式化 Freebird 源码（缩进/空白规范化）
     Fmt {
         /// 源文件路径；省略或使用 --stdin 时从标准输入读取
@@ -202,6 +204,12 @@ fn main() {
                 }
             } else {
                 print!("{}", result.output);
+            }
+        }
+        Some(Command::Dap) => {
+            if let Err(e) = freebird::dap::DapServer::new().run_stdio() {
+                eprintln!("DAP error: {e}");
+                process::exit(1);
             }
         }
         Some(Command::Lsp) => {
