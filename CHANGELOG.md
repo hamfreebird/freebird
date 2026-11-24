@@ -43,6 +43,9 @@
 - **M6-4.4 bench 噪声基线**：新增 `bench/README.md`，记录测量方式（计时项三次取中位数）、
   本机连续 `--check --tolerance 2.5` 的噪声基线、阈值策略（本地 1.5x / CI 2.5x）与复现步骤；
   bench 仍是非阻塞告警。
+- **M6-4.5 跨平台**：明确只发布并支持 Linux x86_64（Stardust 工具链目前只有 Linux 构建）；
+  CI 新增 `cross-platform` job，在 macOS/Windows 上做 `cargo check --all-targets` 探测（非阻塞）；
+  平台边界与后续工作写入 `docs/release.md` §8。
 
 ### Fixed
 

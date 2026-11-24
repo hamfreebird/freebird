@@ -142,7 +142,7 @@
 - **M4-4 fmt/lint**：`freebird fmt [--check|--write|--stdin]`；M6-3.5 起除缩进/空行外还做 token 级行内空白整理与 `}`/`else` 合并（保留注释与字符串、幂等、`examples/` 全量可解析）；全树 `cargo fmt` 清理；clippy 清零并纳入 CI（`-D warnings`）。
 - **M4-5 包管理**：`freebird.toml`（`[package] name/entry`、`[dependencies]` 路径）；`run/check/build` 支持 `--manifest-path` 与当前目录自动发现；依赖以 `<dep>::` 前缀加载。M6-3.3 起依赖递归展开（传递依赖同样注册），`freebird lock` 生成 `freebird.lock`（相对路径 + 包内 `.fb` 内容哈希），构建时校验。仅路径依赖，无版本解析/registry。
 - **M4-6 诊断**：JSON `schema_version: 1`、稳定错误码（P/R/T/B/W）、`related` 位置与修复建议。
-- **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。
+- **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。M6-4.5 起 CI 增加 macOS/Windows 的 `cargo check` 探测（非阻塞）；发布仍只覆盖 Linux x86_64（见 `docs/release.md` §8）。
 - **M4 完成时测试基线**：227 unit + 190 integration；`tests/m4_test.rs` 13 项。
 - **已知限制**：LSP 为文本级 MVP（UTF-16 列近似）；包管理仅单层路径依赖、无锁定文件；格式化器只规范化空白/缩进。
 

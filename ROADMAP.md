@@ -300,7 +300,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | fuzz 为固定 seed 的有限 smoke | M6-4.2（已解决：`tests/fuzz/corpus` + 定时 job） |
 | MIR 无内联优化 | M6-4.3（已解决：零参常量叶子函数内联） |
 | bench 仅告警、非门禁 | M6-4.4（已解决：噪声基线与阈值策略写入 `bench/README.md`） |
-| 仅 Linux x86_64 验证/发布 | M6-4.5 |
+| 仅 Linux x86_64 验证/发布 | M6-4.5（已解决：明确仅 Linux 发布 + 跨平台编译探测 job） |
 | 泛型无约束/单态化 | M6-5.1 |
 | 无字符串格式化 API | M6-5.2 |
 | 闭包/`const`/trait 未实现 | M6-5.3 |
@@ -343,7 +343,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | M6-4.2 | 持续 fuzz：`tests/fuzz/corpus` 与定时 job，扩展深层递归/长输入 | 定时运行；失败自动归档/最小化；corpus 可重现（P2，已完成：corpus 差分测试 + `FREEBIRD_FUZZ_SCALE` + 每周定时 job） |
 | M6-4.3 | MIR 内联与更多优化：小函数内联、分支简化、死代码；保留开关与 `Line` | 优化前后输出一致；指令数/bench 改善；`--no-opt` 可关闭（P2，已完成：零参常量叶子函数调用点内联；死代码/分支简化沿用既有优化；`--no-opt` 关闭） |
 | M6-4.4 | bench 门禁：稳定 runner/阈值，或明确保持告警并记录噪声基线 | 阈值可复现；CI 策略写入文档（P2，已完成：`bench/README.md` 记录中位数采样、噪声基线与阈值策略；CI 保持告警） |
-| M6-4.5 | 跨平台：macOS/Windows 构建与发布（含 Stardust 工具链可用性） | CI 矩阵；release 多平台产物，或明确仅 Linux 的结论（P2） |
+| M6-4.5 | 跨平台：macOS/Windows 构建与发布（含 Stardust 工具链可用性） | CI 矩阵；release 多平台产物，或明确仅 Linux 的结论（P2，已完成：明确仅 Linux 发布；CI 增加 macOS/Windows `cargo check` 探测，见 release.md §8） |
 
 #### M6-5 语言演进（P2/P3，需 ADR）
 

@@ -93,3 +93,17 @@ python3 scripts/check-docs.py
 
 ASan/UBSan 目前**未接入**：ASan 需要 `-Zbuild-std` 与 `rust-src`，构建成本高且与 LLVM 后端
 的 clang 链接相互影响。需要时在本地按需运行，接入前先在 `STATUS.md` 记录结论。
+
+## 8. 平台支持
+
+- **发布产物**：`freebird-linux-x86_64`（+ `.sha256`）。`release.yml` 只在 `ubuntu-latest`
+  上构建，由 `v*` tag 触发；tag 必须与 `Cargo.toml` 版本一致。
+- **代码层面**：VM 后端、前端/类型/借用检查与 `fmt`/`lsp`/`dap`/`repl`/`check` 只依赖 `std`；
+  `#[cfg(unix)]` 仅用于可执行位检查（`codegen/llvm.rs`）。CI 的 `cross-platform` job 在
+  macOS/Windows 上运行 `cargo check --all-targets` 做编译探测（`continue-on-error`，不阻塞合并）。
+- **Stardust / LLVM 后端**：需要对应平台的 `stardust` 可执行文件。仓库自带的
+  `stardust/stardust-linux-x86_64` 与兄弟仓库 `esolang_stardust` 目前只有 Linux x86_64 构建；
+  在 macOS/Windows 上使用 Stardust/LLVM 目标需要自行构建 stardust，并通过
+  `--stardust-bin` 或 `STARDUST_BIN` 指定（LLVM 目标还需要同平台的 clang）。
+- **结论（M6-4.5）**：当前明确只支持并发布 Linux x86_64。多平台发布依赖 Stardust 工具链
+  在对应平台产出二进制，作为后续工作跟踪。

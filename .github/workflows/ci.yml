@@ -101,3 +101,20 @@ jobs:
           name: fuzz-failures
           path: target/fuzz-failures
           if-no-files-found: ignore
+
+  cross-platform:
+    # 跨平台可用性探测：VM 后端与工具链应在 macOS/Windows 上可编译。
+    # Stardust/LLVM 后端需要对应平台的 stardust 可执行文件，目前只发布 Linux 产物
+    # （见 docs/release.md「平台支持」），因此这里只做 check、且不阻塞。
+    if: github.event_name != 'schedule'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo check（跨平台编译探测）
+        run: cargo check --all-targets
