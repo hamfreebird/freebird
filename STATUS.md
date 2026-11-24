@@ -132,7 +132,7 @@
   `CharIn`/`DumpStack`/`DumpState`/`Breakpoint`/`Nop` 以及 `ShiftL`/`ShiftR`/`Rotate`/`Depth`/
   `Reverse`/`Call` 全部落地；未知指令改为编译错误。宏入口/出口隐藏并恢复 Freebird 的
   `CallElement`（堆槽 13），因此宏内整栈指令只操作用户数据栈，VM 与 Stardust 输出一致。
-- **测试基线**：206 unit + 177 integration；`tests/m3_test.rs` 35 个测试。
+- **M3 完成时测试基线**：206 unit + 177 integration；`tests/m3_test.rs` 35 个测试。
 
 ## 8. M4 工具链与开发者体验（已完成，2026-11-24）
 
@@ -143,7 +143,7 @@
 - **M4-5 包管理**：`freebird.toml`（`[package] name/entry`、`[dependencies]` 路径）；`run/check/build` 支持 `--manifest-path` 与当前目录自动发现；依赖以 `<dep>::` 前缀加载。仅路径依赖，无版本解析/registry/锁定文件。
 - **M4-6 诊断**：JSON `schema_version: 1`、稳定错误码（P/R/T/B/W）、`related` 位置与修复建议。
 - **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。
-- **测试基线**：227 unit + 190 integration；`tests/m4_test.rs` 13 项。
+- **M4 完成时测试基线**：227 unit + 190 integration；`tests/m4_test.rs` 13 项。
 - **已知限制**：LSP 为文本级 MVP（UTF-16 列近似）；DAP 单线程无 pause；包管理仅单层路径依赖、无锁定文件；格式化器只规范化空白/缩进。
 
 ## 9. M5 质量基线（基线已完成，2026-11-24）

@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 202 unit + 142 integration 全绿（2026-11-23；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 58 + `tests/differential_test.rs` 2）。
+> 当前：`cargo test` = 232 unit + 196 integration 全绿（2026-11-24；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 58 + `tests/m3_test.rs` 35 + `tests/m4_test.rs` 13 + `tests/m5_test.rs` 5 + `tests/snapshot_test.rs` 1 + `tests/differential_test.rs` 2）。
 > 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)，能力矩阵见 [`STATUS.md`](STATUS.md)；本表保留已完成项的历史记录。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
 
@@ -66,7 +66,7 @@
 | VEC-1 | 前端 / 类型 / VM | `vec![...]` 未解析，数组是裸栈槽 | 宏直接 parse error；数组索引顺序错误 | 已完成 |
 | VEC-2 | 类型 / VM | `Vec` 方法（push/pop/len）、`String`、`Box<T>` 与远程栈未落地 | `v.push(4)`、`Box::new(42)` 等不可用 | 已完成（单槽 Tuple 表示） |
 | CGEN-1 | Stardust 后端 | 曾只支持数值/字符/变量/控制流/函数调用/递归，复杂值只输出注释 | 复杂值现已落为全局堆块 | 已完成（数组/结构体/枚举/字符串/Box/Vec push-pop-索引写入/ReadLine UTF-8 解码与堆块扩容/NumIn/CharIn；`&mut` 引用堆单元支持跨函数写回；FileRead/FileWrite 已实现；远程栈收敛为全局堆块（ADR 0001）） |
-| CGEN-2 | LLVM 后端 | `--target llvm` 未实现 | 直接退出 “not implemented” | 暂缓 |
+| CGEN-2 | LLVM 后端 | `--target llvm` 经 Stardust 工具链生成 IR/可执行文件 | 支持标量/复合类型；文件 I/O 编译期拒绝 | 已完成（M3） |
 | BORROW-1 | 借用检查 | `BorrowChecker` 未接入流水线 | 借用/移动错误无法在编译期发现 | 已完成 |
 | DROP-1 | MIR / 借用检查 | `collect_drop_vars` 恒空，`DropGen` 未调用 | 远程栈资源不会在作用域退出时释放 | 已完成 |
 
