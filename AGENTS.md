@@ -14,6 +14,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 
 - CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, a release build, `cargo test`, `python3 scripts/check-doc-links.py`, and an examples smoke test (`run` + `build --target stardust`). The `llvm` job runs `tests/m3_test.rs` with clang. `.github/workflows/release.yml` packages `freebird-linux-x86_64` (+ sha256) for `v*` tags.
 - Pipeline tests now assert output values for fib/while/struct/enum/`stardust!`; only the two `check_source` positive cases remain `is_ok()`. The Stardust integration tests compare interpreter output against `run_source` byte-for-byte. `tests/m0_test.rs` holds the M0 negative diagnostics and VM/Stardust differential cases; add output or VM-state assertions when changing behavior.
+- `tests/snapshot_test.rs` pins diagnostics as `code level line` in `tests/snapshots/diagnostics.txt`; update with `UPDATE_SNAPSHOTS=1 cargo test --test snapshot_test`. `scripts/check-fixtures.py` validates fixture naming/stdin pairs.
 - `RuntimeConfig::test()` is the convention for program tests (max_stack 1024, max_call_depth 64, max_steps 1M, debug=true); CLI defaults are much larger. `run --debug` now selects `RuntimeConfig::debug()` and affects runtime errors.
 
 ## Architecture

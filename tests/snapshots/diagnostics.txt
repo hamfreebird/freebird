@@ -1,0 +1,21 @@
+== type_mismatch ==
+T001 error 1
+
+== undefined_variable ==
+R001 error 1
+
+== duplicate_let ==
+R003 error 1
+
+== use_after_move ==
+B001 error 1
+
+== non_exhaustive_match ==
+T015 error 2
+
+== ffi_outside_unsafe ==
+T017 error 2
+
+== unknown_stardust_instruction ==
+P014 error 1
+
