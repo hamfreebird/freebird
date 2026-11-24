@@ -1,8 +1,11 @@
 //! M6 正确性与一致性测试。
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use common::{Run, assert_same_output, run_stardust, run_vm};
 use freebird::codegen::llvm::{locate_clang, locate_stardust};
 use freebird::{RuntimeConfig, build_stardust, compile_program, run_source};
 
@@ -158,6 +161,113 @@ fn stardust_call_arity_declares_return_values() {
 
     let error = run_source(source, RuntimeConfig::test()).unwrap_err();
     assert!(error.contains("Call"), "unexpected error: {error}");
+}
+
+#[test]
+fn format_renders_supported_kinds_on_both_backends() {
+    let source = r#"
+fn main() {
+    let s: String = format("n={} b={} c={} s={}", 42, true, 'Z', "ok");
+    print_str(s);
+    print_str("\n");
+    print_str(format("plain"));
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "format_kinds", b"");
+}
+
+#[test]
+fn format_handles_escapes_negative_and_variable_templates() {
+    let source = r#"
+fn main() {
+    let t: String = "{{x}} = {} / {}";
+    print_str(format(t, -7, "y"));
+    print_str("\n");
+    let empty: String = "no placeholders";
+    print_str(format(empty));
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "format_template", b"");
+}
+
+#[test]
+fn format_literal_template_mismatch_is_rejected() {
+    let errors = freebird::check_source(r#"fn main() { let s: String = format("{} {}", 1); }"#)
+        .expect_err("placeholder mismatch must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("placeholder"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
+fn format_rejects_unsupported_argument_type() {
+    let source = r#"
+struct P { x: i64 }
+fn main() { let s: String = format("{}", P { x: 1 }); }
+"#;
+    let errors = freebird::check_source(source).expect_err("struct argument must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("cannot be formatted"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
+fn format_runtime_mismatch_fails_on_both_backends() {
+    let source = r#"
+fn main() {
+    let t: String = "{} {}";
+    print_str(format(t, 1));
+}
+"#;
+    assert!(matches!(run_vm(source, b""), Run::Failed(_)));
+    assert!(matches!(
+        run_stardust(source, "format_runtime_mismatch", b""),
+        Run::Failed(_)
+    ));
+}
+
+#[test]
+fn format_works_on_llvm_target() {
+    if locate_stardust(None).is_err() || locate_clang().is_err() {
+        eprintln!("skipping: LLVM toolchain not available");
+        return;
+    }
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join(format!("m6-format-llvm-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let program = base.join("program.fb");
+    let exe = base.join("format_exe");
+    std::fs::write(
+        &program,
+        r#"fn main() {
+            print_str(format("v={} b={}", 7, false));
+            print_str("\n");
+        }"#,
+    )
+    .unwrap();
+    let build = freebird()
+        .args(["build", "--target", "llvm", "--emit", "exe"])
+        .arg(&program)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&exe).output().unwrap();
+    assert!(run.status.success());
+    assert_eq!(run.stdout, b"v=7 b=false\n");
+    let _ = std::fs::remove_dir_all(base);
 }
 
 fn freebird() -> Command {

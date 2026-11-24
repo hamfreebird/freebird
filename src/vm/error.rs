@@ -39,6 +39,8 @@ pub enum VmError {
     AssertionFailed(String),
     /// I/O 错误
     IoError(String),
+    /// `format` 模板与实参不匹配，或模板中的占位符非法。
+    FormatError(String),
     /// Stardust FFI 调用无法在 VM 上执行。
     FfiUnsupported { stardust_id: u64 },
     /// `stardust!` 的原始 `Call(n, m)` 无法在 VM 上执行。
@@ -106,6 +108,7 @@ impl fmt::Display for VmError {
             VmError::IoError(msg) => {
                 write!(f, "I/O error: {msg}")
             }
+            VmError::FormatError(msg) => write!(f, "format error: {msg}"),
             VmError::FfiUnsupported { stardust_id } => write!(
                 f,
                 "Stardust FFI call (id {stardust_id}) cannot run on the VM; use \

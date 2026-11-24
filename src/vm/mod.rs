@@ -16,7 +16,7 @@ use config::RuntimeConfig;
 use error::VmError;
 use frame::CallFrame;
 use id::{ElementId, FnId, IdAllocator};
-use mir::{MirInst, TypeId};
+use mir::{FormatKind, MirInst, TypeId};
 use registry::GlobalRegistry;
 use value::Value;
 
@@ -1259,6 +1259,21 @@ impl Vm {
                 frame.advance_pc();
                 self.call_stack.push(frame);
             }
+            MirInst::Format { kinds } => {
+                let mut frame = self.pop_frame()?;
+                let mut args = Vec::with_capacity(kinds.len());
+                for _ in 0..kinds.len() {
+                    args.push(frame.data.pop().ok_or(VmError::StackUnderflow)?.1);
+                }
+                args.reverse();
+                let (_, template) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
+                let template = value_to_string(&template)?;
+                let rendered = format_template(&template, &args, kinds)?;
+                let new_id = self.id_alloc.alloc_element();
+                frame.data.push(new_id, string_to_value(&rendered));
+                frame.advance_pc();
+                self.call_stack.push(frame);
+            }
             MirInst::StrToInt { some_tag, none_tag } => {
                 let mut frame = self.pop_frame()?;
                 let (_, val) = frame.data.pop().ok_or(VmError::StackUnderflow)?;
@@ -1928,6 +1943,99 @@ fn value_to_string(value: &Value) -> Result<String, VmError> {
 /// 将 Rust 字符串转换为 VM 的字符元组表示。
 fn string_to_value(s: &str) -> Value {
     Value::Tuple(s.chars().map(|c| Value::Char(c as u32)).collect())
+}
+
+/// 按 `format` 模板渲染实参。
+///
+/// 占位符规则与文档一致：`{}` 依次消费实参，`{{`/`}}` 输出字面花括号。
+/// 占位符与实参数量不一致、或出现孤立花括号都是运行期错误。
+fn format_template(
+    template: &str,
+    args: &[Value],
+    kinds: &[FormatKind],
+) -> Result<String, VmError> {
+    let chars: Vec<char> = template.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let mut arg_idx = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '{' if chars.get(i + 1) == Some(&'{') => {
+                out.push('{');
+                i += 2;
+            }
+            '}' if chars.get(i + 1) == Some(&'}') => {
+                out.push('}');
+                i += 2;
+            }
+            '{' if chars.get(i + 1) == Some(&'}') => {
+                let Some(arg) = args.get(arg_idx) else {
+                    return Err(VmError::FormatError(format!(
+                        "template has more `{{}}` placeholders than arguments ({} given)",
+                        args.len()
+                    )));
+                };
+                let kind = *kinds.get(arg_idx).ok_or_else(|| {
+                    VmError::FormatError("missing format argument kind".to_string())
+                })?;
+                out.push_str(&format_arg(kind, arg)?);
+                arg_idx += 1;
+                i += 2;
+            }
+            '{' | '}' => {
+                return Err(VmError::FormatError(format!(
+                    "unmatched `{}` in format template; use `{{{{`/`}}}}` for a literal brace",
+                    chars[i]
+                )));
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    if arg_idx != args.len() {
+        return Err(VmError::FormatError(format!(
+            "template has {arg_idx} placeholder(s) but {} argument(s) were given",
+            args.len()
+        )));
+    }
+    Ok(out)
+}
+
+/// 按编译期种类格式化单个实参（与 Stardust 后端保持一致）。
+fn format_arg(kind: FormatKind, value: &Value) -> Result<String, VmError> {
+    match kind {
+        FormatKind::Int => {
+            value
+                .as_i64()
+                .map(|n| n.to_string())
+                .ok_or_else(|| VmError::TypeMismatch {
+                    expected: "integer".to_string(),
+                    found: value.type_name().to_string(),
+                })
+        }
+        FormatKind::Bool => {
+            let truthy = value.as_i64().ok_or_else(|| VmError::TypeMismatch {
+                expected: "bool".to_string(),
+                found: value.type_name().to_string(),
+            })? != 0;
+            Ok(if truthy { "true" } else { "false" }.to_string())
+        }
+        FormatKind::Char => {
+            let code = match value {
+                Value::Char(c) => *c,
+                other => other.as_i64().ok_or_else(|| VmError::TypeMismatch {
+                    expected: "char".to_string(),
+                    found: other.type_name().to_string(),
+                })? as u32,
+            };
+            char::from_u32(code)
+                .map(|c| c.to_string())
+                .ok_or_else(|| VmError::FormatError(format!("invalid char code: {code}")))
+        }
+        FormatKind::Str => value_to_string(value),
+    }
 }
 
 #[cfg(test)]

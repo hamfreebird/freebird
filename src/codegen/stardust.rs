@@ -23,7 +23,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::vm::id::FnId;
-use crate::vm::mir::{MirInst, TypeId};
+use crate::vm::mir::{FormatKind, MirInst, TypeId};
 use crate::vm::value::Value;
 
 /// 堆槽 0：`Roll`/`WriteVar`/`Ret` 的临时交换地址（沿用既有约定）。
@@ -942,6 +942,9 @@ impl StardustGen {
                 self.gen_int_to_str();
                 self.stack.pop();
                 self.stack.push(Slot::unknown());
+            }
+            MirInst::Format { kinds } => {
+                self.gen_format(kinds);
             }
             MirInst::StrToInt { some_tag, none_tag } => {
                 self.gen_str_to_int(*some_tag, *none_tag);
@@ -1968,6 +1971,336 @@ impl StardustGen {
         self.emit_push_int(1);
         self.emit_push_int(0);
         self.raw_inst(3, '*'); // Div
+    }
+
+    /// `Format`：`[template, args...]` → `[格式化字符串块]`。
+    ///
+    /// 先把每个实参转换成字符串块并写入临时数组块，再对模板做两遍扫描
+    /// （第一遍累计长度、第二遍写入字符）。模板中的 `{}` 依次消费实参，
+    /// `{{`/`}}` 输出字面花括号；占位符数量不匹配或孤立花括号触发陷阱。
+    ///
+    /// 临时块（模板/实参块/数组）不回收，与本后端的保守回收策略一致。
+    fn gen_format(&mut self, kinds: &[FormatKind]) {
+        let count = kinds.len();
+
+        // 实参字符串块数组：`[count, count, h0..h{count-1}]`。
+        self.emit_alloc_const(BLOCK_HEADER as usize + count);
+        self.emit_store_scratch(HEAP_NEW_HANDLE);
+        self.emit_write_header_const(HEAP_NEW_HANDLE, 0, count as i64);
+        self.emit_write_header_const(HEAP_NEW_HANDLE, 1, count as i64);
+
+        // 从栈顶（最后一个实参）开始转换并写回数组。
+        for (i, kind) in kinds.iter().enumerate().rev() {
+            match kind {
+                FormatKind::Int => self.gen_int_to_str(),
+                FormatKind::Bool => self.gen_bool_to_str_block(),
+                FormatKind::Char => self.gen_char_to_str_block(),
+                FormatKind::Str => {}
+            }
+            self.emit_load_scratch(HEAP_NEW_HANDLE);
+            self.emit_push_int(BLOCK_HEADER + i as i64);
+            self.emit_add();
+            self.raw_inst(0, '-'); // Store: [value, addr]
+            self.stack.pop();
+        }
+
+        // 模板句柄。
+        self.emit_store_scratch(HEAP_HANDLE);
+        self.stack.pop();
+
+        // 第一遍：总长度。
+        self.gen_format_scan(count, false);
+
+        // 分配输出块并写头部。
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_store_scratch(HEAP_PENDING); // total
+        self.emit_load_scratch(HEAP_PENDING);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_alloc_from_stack();
+        self.emit_store_scratch(HEAP_CAP);
+        self.emit_write_header_slot(HEAP_CAP, 0, HEAP_PENDING);
+        self.emit_write_header_slot(HEAP_CAP, 1, HEAP_PENDING);
+
+        // 第二遍：写入字符。
+        self.gen_format_scan(count, true);
+
+        // 占位符数量必须与实参一致。
+        let args_ok = self.fresh_helper_label();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(count as i64);
+        self.raw_inst(0, '=');
+        self.raw_inst(args_ok, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(args_ok, '`');
+
+        self.emit_load_scratch(HEAP_CAP);
+        self.stack.push(Slot::unknown());
+    }
+
+    /// `format` 的单遍扫描。
+    ///
+    /// `write == false` 只累计输出长度（`HEAP_SIZE`）；`write == true` 把字符
+    /// 写入 `HEAP_CAP` 指向的输出块，`HEAP_SIZE` 作为写入位置。
+    fn gen_format_scan(&mut self, count: usize, write: bool) {
+        let loop_start = self.fresh_helper_label();
+        let loop_end = self.fresh_helper_label();
+        let is_open = self.fresh_helper_label();
+        let is_close = self.fresh_helper_label();
+        let open_has_next = self.fresh_helper_label();
+        let open_escaped = self.fresh_helper_label();
+        let open_placeholder = self.fresh_helper_label();
+        let close_has_next = self.fresh_helper_label();
+        let close_escaped = self.fresh_helper_label();
+        let placeholder_ok = self.fresh_helper_label();
+
+        // i = 0, arg_idx = 0, out_pos/total = 0
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_INDEX);
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_SIZE);
+
+        self.raw_inst(loop_start, '`');
+        // while i < len(template)
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.raw_inst(1, '-');
+        self.emit_ge();
+        self.raw_inst(loop_end, '\'');
+
+        self.gen_format_load_char(HEAP_INDEX);
+        self.emit_store_scratch(HEAP_VALUE);
+
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_push_int(123); // '{'
+        self.raw_inst(0, '=');
+        self.raw_inst(is_open, '\'');
+
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_push_int(125); // '}'
+        self.raw_inst(0, '=');
+        self.raw_inst(is_close, '\'');
+
+        // 普通字符
+        self.gen_format_emit_char(write);
+        self.gen_format_advance(1);
+        self.raw_inst(loop_start, '~');
+
+        // '{'
+        self.raw_inst(is_open, '`');
+        self.gen_format_has_next(open_has_next);
+        self.gen_format_load_char_next();
+        self.emit_dup();
+        self.emit_push_int(123);
+        self.raw_inst(0, '=');
+        self.raw_inst(open_escaped, '\'');
+        self.emit_push_int(125);
+        self.raw_inst(0, '=');
+        self.raw_inst(open_placeholder, '\'');
+        self.emit_bounds_trap();
+
+        // '{{'
+        self.raw_inst(open_escaped, '`');
+        self.emit_pop(); // next
+        self.emit_push_int(123);
+        self.emit_store_scratch(HEAP_VALUE);
+        self.gen_format_emit_char(write);
+        self.gen_format_advance(2);
+        self.raw_inst(loop_start, '~');
+
+        // '{}'
+        self.raw_inst(open_placeholder, '`');
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(count as i64);
+        self.emit_lt();
+        self.raw_inst(placeholder_ok, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(placeholder_ok, '`');
+        // h = arr[2 + arg_idx]
+        self.emit_load_scratch(HEAP_NEW_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_store_scratch(HEAP_PENDING);
+        if write {
+            self.gen_format_copy_arg();
+        } else {
+            self.emit_load_scratch(HEAP_PENDING);
+            self.raw_inst(1, '-');
+            self.emit_load_scratch(HEAP_SIZE);
+            self.emit_add();
+            self.emit_store_scratch(HEAP_SIZE);
+        }
+        self.emit_load_scratch(HEAP_COUNTER);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_COUNTER);
+        self.gen_format_advance(2);
+        self.raw_inst(loop_start, '~');
+
+        // '}'
+        self.raw_inst(is_close, '`');
+        self.gen_format_has_next(close_has_next);
+        self.gen_format_load_char_next();
+        self.emit_push_int(125);
+        self.raw_inst(0, '=');
+        self.raw_inst(close_escaped, '\'');
+        self.emit_bounds_trap();
+
+        // '}}'
+        self.raw_inst(close_escaped, '`');
+        self.emit_push_int(125);
+        self.emit_store_scratch(HEAP_VALUE);
+        self.gen_format_emit_char(write);
+        self.gen_format_advance(2);
+        self.raw_inst(loop_start, '~');
+
+        self.raw_inst(loop_end, '`');
+    }
+
+    /// 若 `i + 1 < len(template)` 跳到 `has_next`，否则触发陷阱。
+    fn gen_format_has_next(&mut self, has_next: usize) {
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.raw_inst(1, '-');
+        self.emit_lt();
+        self.raw_inst(has_next, '\'');
+        self.emit_bounds_trap();
+        self.raw_inst(has_next, '`');
+    }
+
+    /// 压入 `template[i + 1]`。
+    fn gen_format_load_char_next(&mut self) {
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+        self.gen_format_load_char(HEAP_BYTE_COUNT);
+    }
+
+    /// 压入 `heap[template + BLOCK_HEADER + heap[slot]]`。
+    fn gen_format_load_char(&mut self, slot: usize) {
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(slot);
+        self.emit_add();
+        self.raw_inst(1, '-');
+    }
+
+    /// 把 `HEAP_VALUE` 写入输出块（`write`）或只累计长度，然后前移输出位置。
+    fn gen_format_emit_char(&mut self, write: bool) {
+        if write {
+            self.emit_load_scratch(HEAP_CAP);
+            self.emit_push_int(BLOCK_HEADER);
+            self.emit_add();
+            self.emit_load_scratch(HEAP_SIZE);
+            self.emit_add();
+            self.emit_load_scratch(HEAP_VALUE);
+            self.emit_swap();
+            self.raw_inst(0, '-');
+        }
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_SIZE);
+    }
+
+    /// 复制 `HEAP_PENDING` 指向的实参块到输出块。
+    fn gen_format_copy_arg(&mut self) {
+        let copy_loop = self.fresh_helper_label();
+        let copy_end = self.fresh_helper_label();
+        self.emit_push_int(0);
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+        self.raw_inst(copy_loop, '`');
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_load_scratch(HEAP_PENDING);
+        self.raw_inst(1, '-');
+        self.emit_ge();
+        self.raw_inst(copy_end, '\'');
+        // out[2 + out_pos] = arg[j]
+        self.emit_load_scratch(HEAP_CAP);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_PENDING);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_add();
+        self.raw_inst(1, '-');
+        self.emit_swap();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_SIZE);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_SIZE);
+        self.emit_load_scratch(HEAP_BYTE_COUNT);
+        self.emit_push_int(1);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_BYTE_COUNT);
+        self.raw_inst(copy_loop, '~');
+        self.raw_inst(copy_end, '`');
+    }
+
+    fn gen_format_advance(&mut self, n: i64) {
+        self.emit_load_scratch(HEAP_INDEX);
+        self.emit_push_int(n);
+        self.emit_add();
+        self.emit_store_scratch(HEAP_INDEX);
+    }
+
+    /// `[bool]` → `[字符串块]`（`true`/`false`）。
+    fn gen_bool_to_str_block(&mut self) {
+        let true_label = self.fresh_helper_label();
+        let end_label = self.fresh_helper_label();
+        self.raw_inst(true_label, '\'');
+        self.gen_push_str_block_const("false");
+        self.raw_inst(end_label, '~');
+        self.raw_inst(true_label, '`');
+        self.gen_push_str_block_const("true");
+        self.raw_inst(end_label, '`');
+    }
+
+    /// `[char]` → `[单字符字符串块]`。
+    fn gen_char_to_str_block(&mut self) {
+        self.emit_store_scratch(HEAP_VALUE);
+        self.emit_alloc_const(BLOCK_HEADER as usize + 1);
+        self.emit_store_scratch(HEAP_HANDLE);
+        self.emit_write_header_const(HEAP_HANDLE, 0, 1);
+        self.emit_write_header_const(HEAP_HANDLE, 1, 1);
+        self.emit_load_scratch(HEAP_HANDLE);
+        self.emit_push_int(BLOCK_HEADER);
+        self.emit_add();
+        self.emit_load_scratch(HEAP_VALUE);
+        self.emit_swap();
+        self.raw_inst(0, '-');
+        self.emit_load_scratch(HEAP_HANDLE);
+    }
+
+    /// 把常量字符串压成堆块句柄。
+    fn gen_push_str_block_const(&mut self, s: &str) {
+        let codes: Vec<i64> = s.chars().map(|c| c as i64).collect();
+        self.emit_alloc_const(BLOCK_HEADER as usize + codes.len());
+        self.emit_store_scratch(HEAP_HANDLE);
+        self.emit_write_header_const(HEAP_HANDLE, 0, codes.len() as i64);
+        self.emit_write_header_const(HEAP_HANDLE, 1, codes.len() as i64);
+        for (i, code) in codes.iter().enumerate() {
+            self.emit_load_scratch(HEAP_HANDLE);
+            self.emit_push_int(BLOCK_HEADER + i as i64);
+            self.emit_add();
+            self.emit_push_int(*code);
+            self.emit_swap();
+            self.raw_inst(0, '-');
+        }
+        self.emit_load_scratch(HEAP_HANDLE);
     }
 
     /// 保留枚举值并压入标签（块下标 0，位于头部之后）。

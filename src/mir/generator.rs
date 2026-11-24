@@ -1196,7 +1196,7 @@ impl MirGen {
                         }
                     }
                     // 生成内建指令
-                    self.gen_builtin_call(&fn_name);
+                    self.gen_builtin_call(&fn_name, *span);
                     return;
                 }
 
@@ -2353,7 +2353,7 @@ impl MirGen {
 
     /// 生成内建函数调用的 MIR 指令
     /// 调用前参数已在栈顶求值完毕
-    fn gen_builtin_call(&mut self, name: &str) {
+    fn gen_builtin_call(&mut self, name: &str, span: crate::frontend::token::Span) {
         match name {
             // print(value) / print_int(value) → NumOut 输出栈顶数值并换行
             "print" | "print_int" => {
@@ -2426,6 +2426,20 @@ impl MirGen {
                 let none_tag = self.type_table.variant_tag("Option", "None").unwrap_or(0) as i64;
                 self.mir.push(MirInst::StrToInt { some_tag, none_tag });
                 self.stack.pop();
+                self.stack.push_temp();
+            }
+            "format" => {
+                let kinds = self
+                    .method_variant_tags
+                    .get(&span)
+                    .and_then(|resolution| resolution.format_kinds.clone())
+                    .unwrap_or_default();
+                let argc = kinds.len();
+                self.mir.push(MirInst::Format { kinds });
+                for _ in 0..argc {
+                    self.stack.pop();
+                }
+                self.stack.pop(); // template
                 self.stack.push_temp();
             }
             "read_int" => {

@@ -457,9 +457,10 @@ impl Lowering {
                     None
                 };
 
-                // 验证参数个数
+                // 验证参数个数（`format` 是变参内建，由类型检查单独校验）。
                 if let Some(ref sig) = fn_sig
                     && !stack_pass
+                    && sig.name != "format"
                     && args.len() as u32 != sig.n
                 {
                     self.errors.push(ResolveError::ArgumentCountMismatch {

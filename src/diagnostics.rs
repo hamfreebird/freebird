@@ -131,6 +131,8 @@ fn type_code(error: &TypeCheckError) -> &'static str {
         TypeCheckError::RefutableLetPattern { .. } => "T021",
         TypeCheckError::OrPatternBindingMismatch { .. } => "T022",
         TypeCheckError::GenericArgMismatch { .. } => "T023",
+        TypeCheckError::UnsupportedFormatArgument { .. } => "T024",
+        TypeCheckError::FormatTemplateMismatch { .. } => "T025",
     }
 }
 
@@ -345,6 +347,13 @@ pub fn type_to_diagnostics(errors: &[TypeCheckError]) -> Vec<Diagnostic> {
                 TypeCheckError::GenericArgMismatch { .. } => {
                     Some("pass the number of type arguments declared by the function".to_string())
                 }
+                TypeCheckError::UnsupportedFormatArgument { .. } => Some(
+                    "`format` accepts integers, `bool`, `char` and `String` arguments".to_string(),
+                ),
+                TypeCheckError::FormatTemplateMismatch { .. } => Some(
+                    "make the number of `{}` placeholders match the arguments, and escape literal braces as `{{`/`}}`"
+                        .to_string(),
+                ),
             };
             Diagnostic {
                 level: DiagnosticLevel::Error,

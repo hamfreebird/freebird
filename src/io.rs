@@ -83,6 +83,13 @@ pub const BUILTINS: &[BuiltinDef] = &[
         params: &["String"],
         returns: &["Option<i64>"],
     },
+    // `format` 的实参是可变数量：这里的签名只描述最少参数，
+    // 实际校验与每个实参的格式化种类由类型检查特判（M6-5.2）。
+    BuiltinDef {
+        name: "format",
+        params: &["String"],
+        returns: &["String"],
+    },
     // unsafe 块的低级栈内建（ADR 0004）。
     BuiltinDef {
         name: "push",

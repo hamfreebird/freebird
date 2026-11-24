@@ -13,6 +13,7 @@ use crate::hir::types::{
     HirStmt, HirType,
 };
 use crate::typeck::TypeTable;
+use crate::vm::mir::FormatKind;
 
 /// 类型检查错误
 #[derive(Debug, Clone)]
@@ -132,6 +133,17 @@ pub enum TypeCheckError {
         found: usize,
         span: Span,
     },
+    /// `format` 的实参类型没有可用的格式化形式（M6-5.2）。
+    UnsupportedFormatArgument {
+        found: HirType,
+        index: usize,
+        span: Span,
+    },
+    /// 字面量 `format` 模板的占位符非法或数量不匹配。
+    FormatTemplateMismatch {
+        message: String,
+        span: Span,
+    },
 }
 
 impl TypeCheckError {
@@ -159,7 +171,9 @@ impl TypeCheckError {
             | TypeCheckError::InvalidAttribute { span, .. }
             | TypeCheckError::RefutableLetPattern { span }
             | TypeCheckError::OrPatternBindingMismatch { span, .. }
-            | TypeCheckError::GenericArgMismatch { span, .. } => *span,
+            | TypeCheckError::GenericArgMismatch { span, .. }
+            | TypeCheckError::UnsupportedFormatArgument { span, .. }
+            | TypeCheckError::FormatTemplateMismatch { span, .. } => *span,
         }
     }
 }
@@ -311,6 +325,14 @@ impl std::fmt::Display for TypeCheckError {
                 f,
                 "{span}: function `{function}` expects {expected} generic argument(s), found {found}"
             ),
+            TypeCheckError::UnsupportedFormatArgument { found, index, span } => write!(
+                f,
+                "{span}: argument {index} of `format` has type {}, which cannot be formatted",
+                found.name()
+            ),
+            TypeCheckError::FormatTemplateMismatch { message, span } => {
+                write!(f, "{span}: invalid format template: {message}")
+            }
         }
     }
 }
@@ -378,6 +400,8 @@ pub struct MethodResolution {
     pub return_arity: u32,
     /// 引用接收者：`Some(false)` = `&self`（调用点需取引用）。
     pub receiver_ref: Option<bool>,
+    /// `format` 调用点的实参格式化种类（M6-5.2）。
+    pub format_kinds: Option<Vec<FormatKind>>,
 }
 
 /// 方法调用 span → 解析结果。
@@ -1401,6 +1425,7 @@ impl<'a> TypeChecker<'a> {
                                 user_method: None,
                                 return_arity: rets.len() as u32,
                                 receiver_ref: None,
+                                format_kinds: None,
                             },
                         );
                         Some(FnSignature {
@@ -1465,6 +1490,61 @@ impl<'a> TypeChecker<'a> {
                 HirCallArg::Named(_, e, s) => (e, *s),
             };
             arg_types.push((self.check_expr(expr), arg_span));
+        }
+
+        // `format` 是变参内建：签名只约束模板，其余实参按可格式化类型检查，
+        // 并把每个实参的格式化种类记录给 MIR 生成器（M6-5.2）。
+        if sig.name == "format" && !stack_pass {
+            if args.is_empty() {
+                self.error(TypeCheckError::ArgumentCountMismatch {
+                    function: "format".to_string(),
+                    expected: 1,
+                    found: 0,
+                    span,
+                });
+            } else {
+                let string_ty = HirType::Path(vec!["String".to_string()]);
+                let (template_ty, template_span) = &arg_types[0];
+                if !is_assignable(&string_ty, template_ty) {
+                    self.error(TypeCheckError::TypeMismatch {
+                        expected: string_ty,
+                        found: template_ty.clone(),
+                        span: *template_span,
+                        context: "argument 1 of `format`".to_string(),
+                    });
+                }
+                let mut kinds = Vec::with_capacity(arg_types.len().saturating_sub(1));
+                for (i, (ty, arg_span)) in arg_types.iter().enumerate().skip(1) {
+                    match format_kind_of(ty) {
+                        Some(kind) => kinds.push(kind),
+                        None => self.error(TypeCheckError::UnsupportedFormatArgument {
+                            found: ty.clone(),
+                            index: i + 1,
+                            span: *arg_span,
+                        }),
+                    }
+                }
+                // 字面量模板在编译期校验占位符；变量模板退化为运行期诊断。
+                if let Some(HirCallArg::Pos(
+                    HirExpr::Lit(ast::Literal::String(template), lit_span),
+                    _,
+                )) = args.first()
+                    && let Err(message) = validate_format_template(template, kinds.len())
+                {
+                    self.error(TypeCheckError::FormatTemplateMismatch {
+                        message,
+                        span: *lit_span,
+                    });
+                }
+                self.method_variant_tags.insert(
+                    span,
+                    MethodResolution {
+                        format_kinds: Some(kinds),
+                        ..Default::default()
+                    },
+                );
+            }
+            return HirType::Path(vec!["String".to_string()]);
         }
 
         // 泛型函数：从实参推断类型参数并替换签名。
@@ -1682,6 +1762,7 @@ impl<'a> TypeChecker<'a> {
                 user_method: None,
                 return_arity: 1,
                 receiver_ref: None,
+                format_kinds: None,
             },
         );
 
@@ -1862,6 +1943,7 @@ impl<'a> TypeChecker<'a> {
                     user_method: Some(fn_name.clone()),
                     return_arity: sig.return_types.len() as u32,
                     receiver_ref,
+                    format_kinds: None,
                 },
             );
             // receiver 作为第 0 个实参。
@@ -2915,6 +2997,55 @@ fn builtin_type(name: &str) -> HirType {
         "_" => HirType::Wildcard,
         other => HirType::Path(other.split("::").map(str::to_string).collect()),
     }
+}
+
+/// `format` 实参的静态格式化种类。
+fn format_kind_of(ty: &HirType) -> Option<FormatKind> {
+    let HirType::Path(path) = ty else {
+        return None;
+    };
+    if path.len() != 1 {
+        return None;
+    }
+    match path[0].as_str() {
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize" => {
+            Some(FormatKind::Int)
+        }
+        "bool" => Some(FormatKind::Bool),
+        "char" => Some(FormatKind::Char),
+        "String" => Some(FormatKind::Str),
+        _ => None,
+    }
+}
+
+/// 校验字面量 `format` 模板：`{}` 数量必须与实参一致，花括号必须成对转义。
+fn validate_format_template(template: &str, arg_count: usize) -> Result<(), String> {
+    let chars: Vec<char> = template.chars().collect();
+    let mut placeholders = 0usize;
+    let mut i = 0usize;
+    while i < chars.len() {
+        match chars[i] {
+            '{' if chars.get(i + 1) == Some(&'{') => i += 2,
+            '}' if chars.get(i + 1) == Some(&'}') => i += 2,
+            '{' if chars.get(i + 1) == Some(&'}') => {
+                placeholders += 1;
+                i += 2;
+            }
+            '{' | '}' => {
+                return Err(format!(
+                    "unmatched `{}`; use `{{{{`/`}}}}` for a literal brace",
+                    chars[i]
+                ));
+            }
+            _ => i += 1,
+        }
+    }
+    if placeholders != arg_count {
+        return Err(format!(
+            "template has {placeholders} `{{}}` placeholder(s) but {arg_count} argument(s) were given"
+        ));
+    }
+    Ok(())
 }
 
 // ─── 类型工具 ───

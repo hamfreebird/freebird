@@ -61,6 +61,18 @@ impl TypeId {
     }
 }
 
+/// `format` 内建函数的实参种类。
+///
+/// 模板与实参在编译期已知，双后端按同一份种类表格式化，避免
+/// “VM 按运行期值、Stardust 按静态类型”产生的行为差异。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum FormatKind {
+    Int,
+    Bool,
+    Char,
+    Str,
+}
+
 /// MIR 指令 — 介于 HIR 和 Stardust 指令之间的中间表示
 #[derive(Debug, Clone, Serialize)]
 pub enum MirInst {
@@ -253,6 +265,12 @@ pub enum MirInst {
     Min,      // pop b, pop a, push min(a, b)
     Max,      // pop b, pop a, push max(a, b)
     IntToStr, // pop i64，push 十进制字符串
+    /// `format(template, args...)`：pop 模板与 `kinds.len()` 个实参，
+    /// push 格式化后的 String。模板中的 `{}` 按顺序对应实参，
+    /// `{{`/`}}` 为转义；占位符与实参数量不一致是运行期错误。
+    Format {
+        kinds: Vec<FormatKind>,
+    },
     StrToInt {
         some_tag: i64,
         none_tag: i64,
@@ -425,6 +443,18 @@ impl std::fmt::Display for MirInst {
             MirInst::Min => write!(f, "Min"),
             MirInst::Max => write!(f, "Max"),
             MirInst::IntToStr => write!(f, "IntToStr"),
+            MirInst::Format { kinds } => {
+                let kinds: Vec<&str> = kinds
+                    .iter()
+                    .map(|k| match k {
+                        crate::vm::mir::FormatKind::Int => "int",
+                        crate::vm::mir::FormatKind::Bool => "bool",
+                        crate::vm::mir::FormatKind::Char => "char",
+                        crate::vm::mir::FormatKind::Str => "str",
+                    })
+                    .collect();
+                write!(f, "Format({})", kinds.join(", "))
+            }
             MirInst::StrToInt { some_tag, none_tag } => {
                 write!(f, "StrToInt(some_tag={some_tag}, none_tag={none_tag})")
             }
