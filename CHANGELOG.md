@@ -32,6 +32,8 @@
 
 - 编译流水线新增 `CompileOptions` 与 `compile_*_with_options` 入口；
   `build` 的 Stardust/LLVM 生成默认开启优化。
+- `read_line` 在 EOF 时统一报 I/O 错误（此前 VM 返回空字符串），与 Stardust/LLVM 一致；
+  依赖空串判断输入结束的程序需要改为处理 I/O 错误。
 
 ### Fixed
 

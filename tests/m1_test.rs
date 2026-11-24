@@ -75,18 +75,17 @@ fn read_line_multiple_lines() {
 }
 
 #[test]
-fn read_line_eof_is_a_documented_backend_difference() {
-    // Stardust 解释器的 CharIn 在 EOF 直接报 I/O 错误，生成代码无法捕获；
-    // VM 则返回空字符串。该差异记录在 USAGE.md，测试在此固定其行为。
+fn read_line_eof_fails_on_all_backends() {
+    // M6-2.3：EOF 统一为 I/O 错误（VM/Stardust/LLVM），不再返回空字符串。
     let vm = run_vm(READ_LINE_PROGRAM, b"");
     assert!(
-        matches!(vm, Run::Ok(ref output) if output == b"0\n"),
-        "VM EOF should return an empty string, got {vm:?}"
+        matches!(vm, Run::Failed(_)),
+        "VM EOF should be an I/O error, got {vm:?}"
     );
     let sd = run_stardust(READ_LINE_PROGRAM, "readline_eof", b"");
     assert!(
         matches!(sd, Run::Failed(_)),
-        "Stardust EOF should fail in the bundled interpreter, got {sd:?}"
+        "Stardust EOF should fail, got {sd:?}"
     );
 }
 

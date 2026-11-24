@@ -30,7 +30,7 @@
 | `&` / `&mut`、解引用、写回 | §4 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
 | 借用/移动检查 | §4 | ✅ 编译期 | ✅ 编译期 | ✅ 编译期（同一前端） | 单元 + 集成 |
 | 标量 `as` 转换 | §5 | ✅ | ✅ | ✅ | 集成 |
-| `print_*` / `read_*` / `read_line` | §9 | ✅ | 🟡 UTF-8/CRLF/非法字节一致；EOF 报 I/O 错误 | ✅ 继承 Stardust；Unicode `CharOut` 已支持 | 集成 + `m1_test` + `m3_test` |
+| `print_*` / `read_*` / `read_line` | §9 | ✅ | ✅ UTF-8/CRLF/非法字节一致；EOF 与 VM 一致报 I/O 错误 | ✅ 继承 Stardust；Unicode `CharOut` 已支持 | 集成 + `m1_test` + `m3_test` |
 | `Option` / `Result` 内建枚举（泛型载荷 `Option<T>` / `Result<T, E>`） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
 | `Option` 方法（is_some/is_none/unwrap/unwrap_or） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
 | `Option` / `Result` 方法（`is_some`/`is_none`/`unwrap`/`unwrap_or`、`is_ok`/`is_err`/`unwrap`/`unwrap_or`、`ok`/`err`/`ok_or`/`map`） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
@@ -99,7 +99,7 @@
 - **已完成**：差分测试框架与 CI `differential` job；`read_line` 的 UTF-8/CRLF/非法字节解码与 VM 逐字节一致；远程栈收敛为“逻辑远程栈 + 全局堆块”（ADR 0001）；索引越界检查；I/O 与 VM 资源限制测试；Stardust 占位清理。
 - **M1-3 堆回收**：free list 复用；`VecPush` 原地追加/2 倍扩容并释放旧块，`VecPop` 原地缩减；`DropVar` 对未被返回/别名的 Vec/Box 绑定释放块。循环内创建/销毁 Vec 的 `HEAP_ALLOC_PTR` 稳定（ADR 0002）。
 - **保守边界**：数组/结构体等 Copy 类型的 COW 旧块、嵌套容器内层块、从未 push/pop 的 Vec/String 不回收（安全泄漏）；完整引用计数留待后续。
-- **已知后端差异**：`read_line` 在 EOF 时 Stardust 解释器的 `CharIn` 直接报 I/O 错误（VM 返回空字符串）；Stardust 越界用除零陷阱退出，错误消息与 VM 不同；`stardust!` 的自定义 `Ident` 指令只生成注释。
+- **已知后端差异**：Stardust 越界用除零陷阱退出，错误消息与 VM 不同（分类一致）。
 
 ## 6. M2 语言补全（已完成：M2-1～M2-9；M2-1 类型擦除、格式化 API 规范未定义）
 
@@ -122,7 +122,7 @@
   引用与 `&mut` 写回、`Vec`/`String`/`Box`、`Option`/`Result`、`impl` 方法、`stardust!` 指令、
   `read_int`/`read_char`/`read_line`。`m3_test` 有 16 个 VM/LLVM 输出对比测试。
 - **LLVM 限制**：文件 I/O（`file_read`/`file_write`）在编译期明确拒绝；Unicode `CharOut` 已支持
-  （bundled Stardust 更新）；`read_line` 的 EOF 行为继承 Stardust（报 I/O 错误）；
+  （bundled Stardust 更新）；`read_line` 在 EOF 报 I/O 错误（与 VM 一致）；
   Freebird 的运行时限制属性只影响 VM。
 - **Stardust FFI**：`extern "stardust"` + `#[stardust(id = N)]` 生成真实 `Call(id, argc)`；
   省略 `id` 时按函数名做 SipHash-2-4 并映射到 `1..=999`（ID 即 Stardust 前导空格数）。

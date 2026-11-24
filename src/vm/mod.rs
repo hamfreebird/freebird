@@ -115,6 +115,13 @@ impl Vm {
             self.input_pos += 1;
             return Ok(b);
         }
+        // 预置输入已耗尽：视为 EOF（不回退真实 stdin，避免测试/嵌入环境串输入）。
+        if !self.input.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected end of input",
+            ));
+        }
         let mut buf = [0u8; 1];
         io::stdin().read_exact(&mut buf)?;
         Ok(buf[0])
@@ -134,10 +141,23 @@ impl Vm {
                 .trim_end_matches('\r')
                 .to_string());
         }
+        // 预置输入已耗尽：视为 EOF（与 Stardust/LLVM 的 CharIn 一致）。
+        if !self.input.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected end of input",
+            ));
+        }
         // 按字节读取一行后再做 UTF-8 lossy 解码：与预置输入路径一致，
         // 非法字节替换为 U+FFFD，而不是让 String::read_line 直接报 I/O 错误。
         let mut bytes = Vec::new();
         io::stdin().lock().read_until(b'\n', &mut bytes)?;
+        if bytes.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected end of input",
+            ));
+        }
         Ok(String::from_utf8_lossy(&bytes)
             .trim_end_matches(['\n', '\r'])
             .to_string())
