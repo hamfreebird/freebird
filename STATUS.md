@@ -139,7 +139,7 @@
 - **M4-1 LSP**：`freebird lsp`（stdio JSON-RPC）：诊断、hover、跳转定义、文档符号、补全；VS Code 扩展通过 `vscode-languageclient` 接入，`freebird.serverPath` 可配置。
 - **M4-2 DAP**：`freebird dap`（stdio DAP）：launch、setBreakpoints、configurationDone、stackTrace/scopes/variables、continue/next/stepIn/stepOut、pause；基于 `MirInst::Line` 行标记。M6-3.2 起 stdin 由独立线程读取、执行按分片推进，运行中可 `pause`；`variables` 可展开数组/结构体/枚举Payload/Vec/Box，`stackTrace` 每帧带自己的行号。
 - **M4-3 REPL**：多行输入（括号/字符串/块注释未闭合继续）、`:history`/`:run n`、`:load`、`:type`（复用 `typeck::infer_expression_type`）、类型/借用检查后的错误恢复。M6-3.4 起 `let` 绑定跨输入保留（整段会话重放）、历史持久化到状态目录（`FREEBIRD_REPL_HISTORY`/`XDG_STATE_HOME`），不内置行编辑。
-- **M4-4 fmt/lint**：`freebird fmt [--check|--write|--stdin]`；全树 `cargo fmt` 清理；clippy 清零并纳入 CI（`-D warnings`）。
+- **M4-4 fmt/lint**：`freebird fmt [--check|--write|--stdin]`；M6-3.5 起除缩进/空行外还做 token 级行内空白整理与 `}`/`else` 合并（保留注释与字符串、幂等、`examples/` 全量可解析）；全树 `cargo fmt` 清理；clippy 清零并纳入 CI（`-D warnings`）。
 - **M4-5 包管理**：`freebird.toml`（`[package] name/entry`、`[dependencies]` 路径）；`run/check/build` 支持 `--manifest-path` 与当前目录自动发现；依赖以 `<dep>::` 前缀加载。M6-3.3 起依赖递归展开（传递依赖同样注册），`freebird lock` 生成 `freebird.lock`（相对路径 + 包内 `.fb` 内容哈希），构建时校验。仅路径依赖，无版本解析/registry。
 - **M4-6 诊断**：JSON `schema_version: 1`、稳定错误码（P/R/T/B/W）、`related` 位置与修复建议。
 - **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。
