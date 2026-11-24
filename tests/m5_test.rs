@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use freebird::{CompileOptions, build_stardust_with_options, compile_program_with_options};
+use freebird::{
+    CompileOptions, RuntimeConfig, build_stardust, build_stardust_with_options, check_source,
+    compile_program_with_options, run_source,
+};
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -88,4 +91,234 @@ fn optimization_reduces_instruction_count() {
         optimized_len < unoptimized_len,
         "expected optimization to reduce MIR: optimized={optimized_len}, unoptimized={unoptimized_len}"
     );
+}
+
+// ─── M5-3：固定 seed 属性测试与差分 fuzz ───
+
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+fn gen_expr(rng: &mut Lcg, depth: u32) -> String {
+    if depth == 0 {
+        return format!("{}", 1 + rng.below(9));
+    }
+    match rng.below(4) {
+        0 => format!(
+            "({} + {})",
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1)
+        ),
+        1 => format!(
+            "({} - {})",
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1)
+        ),
+        2 => format!(
+            "({} * {})",
+            gen_expr(rng, depth - 1),
+            gen_expr(rng, depth - 1)
+        ),
+        _ => format!("({})", gen_expr(rng, depth - 1)),
+    }
+}
+
+fn gen_program(rng: &mut Lcg) -> String {
+    let a = gen_expr(rng, 2);
+    let b = gen_expr(rng, 2);
+    if rng.below(2) == 0 {
+        format!(
+            "fn main() {{ let a = {a}; let b = {b}; if a > b {{ print(a - b); }} else {{ print(b - a); }} }}"
+        )
+    } else {
+        let limit = 1 + rng.below(8);
+        format!(
+            "fn main() {{ let mut i = 0; let mut acc = {a}; while i < {limit} {{ acc = acc + {b}; i = i + 1; }} print(acc); }}"
+        )
+    }
+}
+
+fn differential_mismatch(source: &str) -> bool {
+    let vm = run_source(source, RuntimeConfig::test());
+    let stardust = build_stardust(source).and_then(|text| run_stardust_source(&text));
+    match (vm, stardust) {
+        (Ok(vm_output), Ok(stardust_output)) => vm_output != stardust_output,
+        _ => true,
+    }
+}
+
+fn archive(kind: &str, source: &str, detail: &str) -> PathBuf {
+    let dir = PathBuf::from("target/fuzz-failures");
+    let _ = std::fs::create_dir_all(&dir);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("{kind}-{millis}.fb"));
+    let _ = std::fs::write(&path, source);
+    let _ = std::fs::write(
+        path.with_extension("txt"),
+        format!("kind: {kind}\n{detail}\n--- source ---\n{source}\n"),
+    );
+    path
+}
+
+/// 按行、再按字符块删除，收缩到仍满足 predicate 的最小输入。
+fn minimize<F: Fn(&str) -> bool>(source: &str, predicate: F) -> String {
+    let mut current = source.to_string();
+    for _ in 0..200 {
+        let mut changed = false;
+
+        let lines: Vec<&str> = current.lines().collect();
+        if lines.len() > 1 {
+            for index in 0..lines.len() {
+                let mut candidate_lines = lines.clone();
+                candidate_lines.remove(index);
+                let candidate = candidate_lines.join("\n");
+                if predicate(&candidate) {
+                    current = candidate;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if changed {
+            continue;
+        }
+
+        let chars: Vec<char> = current.chars().collect();
+        'chunks: for size in [16usize, 8, 4, 2, 1] {
+            if chars.len() < size {
+                continue;
+            }
+            let mut index = 0;
+            while index + size <= chars.len() {
+                let mut candidate: String = chars[..index].iter().collect();
+                candidate.extend(chars[index + size..].iter());
+                if predicate(&candidate) {
+                    current = candidate;
+                    changed = true;
+                    break 'chunks;
+                }
+                index += size;
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+    current
+}
+
+#[test]
+fn random_programs_match_across_backends() {
+    if !PathBuf::from("stardust/stardust-linux-x86_64").exists() {
+        eprintln!("skipping: stardust interpreter not available");
+        return;
+    }
+    let mut rng = Lcg(0x5EED_2026);
+    for index in 0..30 {
+        let source = gen_program(&mut rng);
+        if differential_mismatch(&source) {
+            let minimal = minimize(&source, differential_mismatch);
+            let path = archive("differential", &minimal, &format!("generated case {index}"));
+            panic!(
+                "VM/Stardust mismatch on generated case {index}; archived at {}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn malformed_inputs_do_not_panic() {
+    let tokens = [
+        "fn",
+        "main",
+        "(",
+        ")",
+        "{",
+        "}",
+        "let",
+        "x",
+        "=",
+        "1",
+        "+",
+        "-",
+        "*",
+        "/",
+        ";",
+        "\"",
+        "'",
+        "/*",
+        "*/",
+        "stardust!",
+        "match",
+        "if",
+        "else",
+        "while",
+        "for",
+        "in",
+        "use",
+        "mod",
+        "impl",
+        "struct",
+        "enum",
+        "[",
+        "]",
+        "<",
+        ">",
+        "::",
+        ",",
+        "#",
+        "@",
+        "\n",
+    ];
+    let mut rng = Lcg(0xBAD_2026);
+    for index in 0..60 {
+        let length = 1 + rng.below(18) as usize;
+        let mut source = String::new();
+        for _ in 0..length {
+            source.push_str(tokens[rng.below(tokens.len() as u64) as usize]);
+            source.push(' ');
+        }
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = check_source(&source);
+        }))
+        .is_err();
+        if panicked {
+            let minimal = minimize(&source, |candidate| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = check_source(candidate);
+                }))
+                .is_err()
+            });
+            let path = archive("panic", &minimal, &format!("generated case {index}"));
+            panic!(
+                "checker panicked on generated input {index}; archived at {}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn minimize_shrinks_input() {
+    let source = "line one\nline two\nline three needle line four\n";
+    let minimal = minimize(source, |candidate| candidate.contains("needle"));
+    assert!(minimal.contains("needle"), "minimal: {minimal:?}");
+    assert!(minimal.len() < source.len(), "minimal: {minimal:?}");
 }
