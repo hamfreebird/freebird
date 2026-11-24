@@ -759,7 +759,7 @@ fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<
     }
 
     // 1.5 构建类型表
-    let type_table = TypeTable::from_ast_decls(&ast.decls);
+    let mut type_table = TypeTable::from_ast_decls(&ast.decls);
 
     // 2. HIR 降级 + 名称解析
     let (hir, hir_errors) = lower(&ast);
@@ -768,11 +768,22 @@ fn run_ast(ast: crate::frontend::ast::Program, config: RuntimeConfig) -> Result<
         return Err(format!("Resolve errors:\n{}", msg.join("\n")));
     }
 
-    // 2.5 基础类型检查（同时取出内建枚举方法标签标注，供 MIR 生成使用）
-    let (type_errors, method_tags) = check_program_with_tags(&hir, &type_table);
+    // 2.5 基础类型检查（同时取出方法标签标注与泛型实例，供 MIR 生成使用）
+    let (type_errors, method_tags, instances) = check_program_with_tags(&hir, &type_table);
     if !type_errors.is_empty() {
         let msg: Vec<String> = type_errors.iter().map(|e| e.to_string()).collect();
         return Err(format!("Type errors:\n{}", msg.join("\n")));
+    }
+
+    // 2.5.1 按实例注册泛型布局（`Pair<i64>`/`Pair<String>` 互不干扰）。
+    for (base, combinations) in &instances {
+        for args in combinations {
+            if type_table.lookup_struct(base).is_some() {
+                type_table.instantiate_struct(base, args);
+            } else if type_table.lookup_enum(base).is_some() {
+                type_table.instantiate_enum(base, args);
+            }
+        }
     }
 
     // 2.6 借用/移动检查
@@ -997,7 +1008,7 @@ pub fn compile_ast_with_options(
     ast: crate::frontend::ast::Program,
     options: CompileOptions,
 ) -> Result<CompiledProgram, String> {
-    let type_table = TypeTable::from_ast_decls(&ast.decls);
+    let mut type_table = TypeTable::from_ast_decls(&ast.decls);
 
     let (hir, hir_errors) = lower(&ast);
     if !hir_errors.is_empty() {
@@ -1005,10 +1016,21 @@ pub fn compile_ast_with_options(
         return Err(format!("Resolve errors:\n{}", msg.join("\n")));
     }
 
-    let (type_errors, method_tags) = check_program_with_tags(&hir, &type_table);
+    let (type_errors, method_tags, instances) = check_program_with_tags(&hir, &type_table);
     if !type_errors.is_empty() {
         let msg: Vec<String> = type_errors.iter().map(|e| e.to_string()).collect();
         return Err(format!("Type errors:\n{}", msg.join("\n")));
+    }
+
+    // 按实例注册泛型布局（`Pair<i64>`/`Pair<String>` 互不干扰）。
+    for (base, combinations) in &instances {
+        for args in combinations {
+            if type_table.lookup_struct(base).is_some() {
+                type_table.instantiate_struct(base, args);
+            } else if type_table.lookup_enum(base).is_some() {
+                type_table.instantiate_enum(base, args);
+            }
+        }
     }
 
     let borrow_errors = check_borrow(&hir);

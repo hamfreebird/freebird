@@ -1784,11 +1784,18 @@ impl MirGen {
                 self.stack.pop(); // array
                 self.stack.push_temp();
             }
-            HirExpr::StructLit { name, fields, .. } => {
-                // 按结构体字段声明顺序压入字段值
+            HirExpr::StructLit { name, fields, span } => {
+                // 按实例查询布局（`Pair<i64>`）；没有实例注解时回落到基名。
+                let type_name = name.join("::");
+                let lookup = self
+                    .method_variant_tags
+                    .get(span)
+                    .and_then(|resolution| resolution.instance.clone())
+                    .unwrap_or_else(|| type_name.clone());
                 let field_order = self
                     .type_table
-                    .lookup_struct(&name.join("::"))
+                    .lookup_struct(&lookup)
+                    .or_else(|| self.type_table.lookup_struct(&type_name))
                     .map(|s| s.fields.iter().map(|f| f.name.clone()).collect::<Vec<_>>())
                     .unwrap_or_else(|| fields.iter().map(|(n, _)| n.clone()).collect());
 
@@ -1813,11 +1820,19 @@ impl MirGen {
                 name,
                 variant,
                 data,
-                ..
+                span,
             } => {
+                // 按实例查询变体标签（`Maybe<i64>`）；没有实例注解时回落到基名。
+                let enum_name = name.join("::");
+                let lookup = self
+                    .method_variant_tags
+                    .get(span)
+                    .and_then(|resolution| resolution.instance.clone())
+                    .unwrap_or_else(|| enum_name.clone());
                 let tag = self
                     .type_table
-                    .variant_tag(&name.join("::"), variant)
+                    .variant_tag(&lookup, variant)
+                    .or_else(|| self.type_table.variant_tag(&enum_name, variant))
                     .unwrap_or(0);
                 // 压入标签值 + 可选数据
                 self.mir.push(MirInst::Push {

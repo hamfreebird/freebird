@@ -5,6 +5,8 @@ use std::collections::HashMap;
 pub struct TypeTable {
     /// 类型名 → 类型定义
     types: HashMap<String, TypeDef>,
+    /// 泛型基名 → 类型参数名（`Pair` → `["T"]`），用于按实例注册布局。
+    generic_params: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +59,7 @@ impl TypeTable {
     pub fn new() -> Self {
         let mut table = Self {
             types: HashMap::new(),
+            generic_params: HashMap::new(),
         };
         // 标准库枚举（泛型载荷：`Option<T>`、`Result<T, E>`）。用户声明同名枚举会覆盖。
         table.register_enum(
@@ -183,6 +186,59 @@ impl TypeTable {
         self.types.contains_key(name)
     }
 
+    /// 泛型基名的类型参数名（`Pair` → `["T"]`）。
+    pub fn generic_params(&self, name: &str) -> Option<&[String]> {
+        self.generic_params.get(name).map(Vec::as_slice)
+    }
+
+    /// 按实例注册泛型结构体布局（`Pair<i64>`），返回实例名。
+    ///
+    /// 布局仍按字段顺序（每个字段 1 槽），但字段类型名替换为具体类型，
+    /// 因此不同实例的查询结果互不干扰。基名不是泛型结构体时返回 `None`。
+    pub fn instantiate_struct(&mut self, base: &str, args: &[String]) -> Option<String> {
+        let params = self.generic_params.get(base)?.clone();
+        if params.len() != args.len() {
+            return None;
+        }
+        let def = self.lookup_struct(base)?.clone();
+        let map: HashMap<String, String> =
+            params.iter().cloned().zip(args.iter().cloned()).collect();
+        let fields: Vec<(String, String)> = def
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), substitute_type_params(&f.type_name, &map)))
+            .collect();
+        let instance = instance_name(base, args);
+        self.register_struct(&instance, fields);
+        Some(instance)
+    }
+
+    /// 按实例注册泛型枚举布局（`Maybe<i64>`），返回实例名。
+    pub fn instantiate_enum(&mut self, base: &str, args: &[String]) -> Option<String> {
+        let params = self.generic_params.get(base)?.clone();
+        if params.len() != args.len() {
+            return None;
+        }
+        let def = self.lookup_enum(base)?.clone();
+        let map: HashMap<String, String> =
+            params.iter().cloned().zip(args.iter().cloned()).collect();
+        let variants: Vec<(String, Option<String>)> = def
+            .variants
+            .iter()
+            .map(|v| {
+                (
+                    v.name.clone(),
+                    v.data_type
+                        .as_ref()
+                        .map(|t| substitute_type_params(t, &map)),
+                )
+            })
+            .collect();
+        let instance = instance_name(base, args);
+        self.register_enum(&instance, variants);
+        Some(instance)
+    }
+
     /// 从 AST 声明构建 TypeTable
     pub fn from_ast_decls(decls: &[crate::frontend::ast::Decl]) -> Self {
         let mut table = Self::new();
@@ -198,6 +254,11 @@ impl TypeTable {
                         })
                         .collect();
                     table.register_struct(&s.name, fields);
+                    if !s.generics.is_empty() {
+                        table
+                            .generic_params
+                            .insert(s.name.clone(), s.generics.clone());
+                    }
                 }
                 crate::frontend::ast::Decl::Enum(e) => {
                     let variants: Vec<(String, Option<String>)> = e
@@ -209,6 +270,11 @@ impl TypeTable {
                         })
                         .collect();
                     table.register_enum(&e.name, variants);
+                    if !e.generics.is_empty() {
+                        table
+                            .generic_params
+                            .insert(e.name.clone(), e.generics.clone());
+                    }
                 }
                 _ => {}
             }
@@ -221,6 +287,38 @@ impl Default for TypeTable {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 实例名的规范形式，与 `type_to_string` 对 `Type::Generic` 的输出一致。
+pub fn instance_name(base: &str, args: &[String]) -> String {
+    format!("{base}<{}>", args.join(", "))
+}
+
+/// 在类型名字符串中按标识符边界替换类型参数。
+fn substitute_type_params(name: &str, map: &HashMap<String, String>) -> String {
+    fn flush(ident: &mut String, out: &mut String, map: &HashMap<String, String>) {
+        if ident.is_empty() {
+            return;
+        }
+        match map.get(ident.as_str()) {
+            Some(replacement) => out.push_str(replacement),
+            None => out.push_str(ident),
+        }
+        ident.clear();
+    }
+
+    let mut out = String::with_capacity(name.len());
+    let mut ident = String::new();
+    for ch in name.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            ident.push(ch);
+        } else {
+            flush(&mut ident, &mut out, map);
+            out.push(ch);
+        }
+    }
+    flush(&mut ident, &mut out, map);
+    out
 }
 
 /// 将 AST 类型转为字符串表示（用于类型注册）
@@ -276,6 +374,53 @@ mod tests {
         assert_eq!(e.variants.len(), 2);
         assert_eq!(table.variant_tag("Option", "None"), Some(0));
         assert_eq!(table.variant_tag("Option", "Some"), Some(1));
+    }
+
+    #[test]
+    fn test_instantiate_generic_layouts_per_instance() {
+        use crate::frontend::parse;
+        let src = "
+            struct Pair<T> { first: T, second: T }
+            enum Maybe<T> { None, Some(T) }
+        ";
+        let (ast, errors) = parse(src);
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let mut table = TypeTable::from_ast_decls(&ast.decls);
+
+        assert_eq!(
+            table.instantiate_struct("Pair", &["i64".into()]).as_deref(),
+            Some("Pair<i64>")
+        );
+        assert_eq!(
+            table
+                .instantiate_struct("Pair", &["String".into()])
+                .as_deref(),
+            Some("Pair<String>")
+        );
+        // 实例布局互不干扰，基名布局保持泛型参数。
+        assert_eq!(
+            table.lookup_struct("Pair<i64>").unwrap().fields[0].type_name,
+            "i64"
+        );
+        assert_eq!(
+            table.lookup_struct("Pair<String>").unwrap().fields[0].type_name,
+            "String"
+        );
+        assert_eq!(
+            table.lookup_struct("Pair").unwrap().fields[0].type_name,
+            "T"
+        );
+
+        assert_eq!(
+            table.instantiate_enum("Maybe", &["char".into()]).as_deref(),
+            Some("Maybe<char>")
+        );
+        assert_eq!(
+            table.lookup_enum("Maybe<char>").unwrap().variants[1]
+                .data_type
+                .as_deref(),
+            Some("char")
+        );
     }
 
     #[test]

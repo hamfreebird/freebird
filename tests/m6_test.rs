@@ -164,6 +164,22 @@ fn stardust_call_arity_declares_return_values() {
 }
 
 #[test]
+fn generic_instances_are_independent_on_both_backends() {
+    let source = r#"
+struct Pair<T> { first: T, second: T }
+fn first<T>(p: Pair<T>) -> T { p.first }
+fn main() {
+    let a: Pair<i64> = Pair { first: 1, second: 2 };
+    let b: Pair<String> = Pair { first: "x", second: "y" };
+    print(first(a));
+    print_str(first(b));
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "generic_instances", b"");
+}
+
+#[test]
 fn format_renders_supported_kinds_on_both_backends() {
     let source = r#"
 fn main() {

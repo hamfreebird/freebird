@@ -4,7 +4,7 @@
 //! 条件表达式、二元运算、结构体/枚举构造与字段访问。
 //! 未确定的类型（`Unknown`）不会报错，避免对尚未完整实现的特性产生误报。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::frontend::ast::{self, IntSuffix};
 use crate::frontend::token::Span;
@@ -376,9 +376,14 @@ pub struct TypeChecker<'a> {
     unsafe_depth: usize,
     /// `Option`/`Result` 方法调用解析出的成功/失败变体标签（按调用点 span）。
     method_variant_tags: MethodTagMap,
+    /// 泛型声明 → 实例化类型实参集合（`Pair` → {["i64"], ["String"]}）。
+    instances: InstanceSet,
     errors: Vec<TypeCheckError>,
     warnings: Vec<TypeCheckWarning>,
 }
+
+/// 泛型实例集合：基名 → 类型实参组合（规范类型名）。
+pub type InstanceSet = HashMap<String, BTreeSet<Vec<String>>>;
 
 /// `Option`/`Result` 方法调用所需的内建变体标签。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,6 +407,8 @@ pub struct MethodResolution {
     pub receiver_ref: Option<bool>,
     /// `format` 调用点的实参格式化种类（M6-5.2）。
     pub format_kinds: Option<Vec<FormatKind>>,
+    /// 泛型实例的规范名（`Pair<i64>`），供 MIR 查按实例布局（M6-5.1）。
+    pub instance: Option<String>,
 }
 
 /// 方法调用 span → 解析结果。
@@ -459,6 +466,7 @@ impl<'a> TypeChecker<'a> {
             generic_fns,
             unsafe_depth: 0,
             method_variant_tags: HashMap::new(),
+            instances: HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
         }
@@ -483,7 +491,7 @@ impl<'a> TypeChecker<'a> {
         self,
         program: &HirProgram,
     ) -> (Vec<TypeCheckError>, Vec<TypeCheckWarning>) {
-        let (errors, warnings, _tags) = self.check_program_detailed(program);
+        let (errors, warnings, _tags, _instances) = self.check_program_detailed(program);
         (errors, warnings)
     }
 
@@ -491,7 +499,12 @@ impl<'a> TypeChecker<'a> {
     pub fn check_program_detailed(
         mut self,
         program: &HirProgram,
-    ) -> (Vec<TypeCheckError>, Vec<TypeCheckWarning>, MethodTagMap) {
+    ) -> (
+        Vec<TypeCheckError>,
+        Vec<TypeCheckWarning>,
+        MethodTagMap,
+        InstanceSet,
+    ) {
         for decl in &program.decls {
             match decl {
                 HirDecl::Fn(f) => {
@@ -521,7 +534,24 @@ impl<'a> TypeChecker<'a> {
                 HirDecl::Use(_, _) => {}
             }
         }
-        (self.errors, self.warnings, self.method_variant_tags)
+        (
+            self.errors,
+            self.warnings,
+            self.method_variant_tags,
+            self.instances,
+        )
+    }
+
+    /// 记录泛型实例（跳过含未知类型的组合）。
+    fn record_instance(&mut self, base: &str, args: &[HirType]) {
+        if args.is_empty() || args.iter().any(is_unknown) {
+            return;
+        }
+        let names: Vec<String> = args.iter().map(HirType::name).collect();
+        self.instances
+            .entry(base.to_string())
+            .or_default()
+            .insert(names);
     }
 
     /// 校验属性的语法与已知名称；未识别属性必须报错，不能静默丢弃。
@@ -1426,6 +1456,7 @@ impl<'a> TypeChecker<'a> {
                                 return_arity: rets.len() as u32,
                                 receiver_ref: None,
                                 format_kinds: None,
+                                instance: None,
                             },
                         );
                         Some(FnSignature {
@@ -1578,6 +1609,11 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             sig = self.substitute_signature(&sig, &generic_map);
+            let instance_args: Vec<HirType> = params
+                .iter()
+                .map(|param| generic_map.get(param).cloned().unwrap_or(HirType::Unknown))
+                .collect();
+            self.record_instance(&sig.name, &instance_args);
         } else if let Some(explicit) = explicit_type_args {
             self.error(TypeCheckError::GenericArgMismatch {
                 function: sig.name.clone(),
@@ -1763,6 +1799,7 @@ impl<'a> TypeChecker<'a> {
                 return_arity: 1,
                 receiver_ref: None,
                 format_kinds: None,
+                instance: None,
             },
         );
 
@@ -1944,6 +1981,7 @@ impl<'a> TypeChecker<'a> {
                     return_arity: sig.return_types.len() as u32,
                     receiver_ref,
                     format_kinds: None,
+                    instance: None,
                 },
             );
             // receiver 作为第 0 个实参。
@@ -2435,10 +2473,20 @@ impl<'a> TypeChecker<'a> {
                     }
                 }
                 if let Some(params) = generic_params {
-                    let args = params
+                    let args: Vec<HirType> = params
                         .iter()
                         .map(|param| generic_map.get(param).cloned().unwrap_or(HirType::Unknown))
                         .collect();
+                    self.record_instance(&type_name, &args);
+                    if let Some(instance) = instance_name_for(&type_name, &args) {
+                        self.method_variant_tags.insert(
+                            span,
+                            MethodResolution {
+                                instance: Some(instance),
+                                ..Default::default()
+                            },
+                        );
+                    }
                     HirType::Generic(Box::new(HirType::Path(name.to_vec())), args)
                 } else {
                     HirType::Path(name.to_vec())
@@ -2536,10 +2584,20 @@ impl<'a> TypeChecker<'a> {
         }
 
         if let Some(params) = generic_params {
-            let args = params
+            let args: Vec<HirType> = params
                 .iter()
                 .map(|param| generic_map.get(param).cloned().unwrap_or(HirType::Unknown))
                 .collect();
+            self.record_instance(&enum_name, &args);
+            if let Some(instance) = instance_name_for(&enum_name, &args) {
+                self.method_variant_tags.insert(
+                    span,
+                    MethodResolution {
+                        instance: Some(instance),
+                        ..Default::default()
+                    },
+                );
+            }
             HirType::Generic(Box::new(base_ty), args)
         } else {
             base_ty
@@ -2999,6 +3057,15 @@ fn builtin_type(name: &str) -> HirType {
     }
 }
 
+/// 泛型实例的规范名（含未知类型时返回 `None`）。
+fn instance_name_for(base: &str, args: &[HirType]) -> Option<String> {
+    if args.is_empty() || args.iter().any(is_unknown) {
+        return None;
+    }
+    let names: Vec<String> = args.iter().map(HirType::name).collect();
+    Some(crate::typeck::type_table::instance_name(base, &names))
+}
+
 /// `format` 实参的静态格式化种类。
 fn format_kind_of(ty: &HirType) -> Option<FormatKind> {
     let HirType::Path(path) = ty else {
@@ -3310,14 +3377,14 @@ pub fn check_program_with_warnings(
     TypeChecker::new(program, type_table).check_program_with_warnings(program)
 }
 
-/// 便捷入口：检查整个 HIR 程序，返回错误与内建枚举方法标签标注。
+/// 便捷入口：检查整个 HIR 程序，返回错误、内建枚举方法标签标注与泛型实例集合。
 pub fn check_program_with_tags(
     program: &HirProgram,
     type_table: &TypeTable,
-) -> (Vec<TypeCheckError>, MethodTagMap) {
-    let (errors, _warnings, tags) =
+) -> (Vec<TypeCheckError>, MethodTagMap, InstanceSet) {
+    let (errors, _warnings, tags, instances) =
         TypeChecker::new(program, type_table).check_program_detailed(program);
-    (errors, tags)
+    (errors, tags, instances)
 }
 
 #[cfg(test)]
