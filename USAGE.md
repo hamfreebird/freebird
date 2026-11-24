@@ -101,6 +101,7 @@ freebird build --target llvm hello.fb --emit exe -o hello --opt-level 2
 | `--emit ir\|exe` | 仅 LLVM：生成 IR 文本（默认）或可执行文件 |
 | `--opt-level 0-3` | 传给 clang 的优化级别（默认 0） |
 | `--stardust-bin <path>` | 显式指定 Stardust 可执行文件 |
+| `--no-opt` | 关闭 MIR 优化（仅影响 build 生成/LLVM，不影响 `run`） |
 
 LLVM 后端复用 Stardust 的 LLVM 编译器。Stardust 可执行文件按
 `--stardust-bin` → `STARDUST_BIN` → `PATH` 中的 `stardust` → 仓库自带

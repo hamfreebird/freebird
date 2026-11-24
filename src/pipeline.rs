@@ -896,6 +896,18 @@ pub fn check_source(source: &str) -> Result<(), Vec<String>> {
 ///
 /// `compile_program` 是 `build --target stardust` 与 `build --target llvm` 的
 /// 共同入口：LLVM 后端复用同一份 Stardust 文本，从而保证两个后端语义一致。
+/// 编译选项（目前只控制 MIR 优化）。
+#[derive(Debug, Clone, Copy)]
+pub struct CompileOptions {
+    pub optimize: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self { optimize: true }
+    }
+}
+
 pub struct CompiledProgram {
     pub functions: Vec<(FnId, Vec<MirInst>)>,
     pub fn_info: HashMap<FnId, FnInfo>,
@@ -941,16 +953,32 @@ fn collect_extern_functions(
 
 /// 解析、检查并生成 MIR / Stardust 源码（不执行）。
 pub fn compile_program(source: &str) -> Result<CompiledProgram, String> {
+    compile_program_with_options(source, CompileOptions::default())
+}
+
+/// 编译源码并显式指定优化选项。
+pub fn compile_program_with_options(
+    source: &str,
+    options: CompileOptions,
+) -> Result<CompiledProgram, String> {
     let (ast, ast_errors) = parse(source);
     if !ast_errors.is_empty() {
         let msg: Vec<String> = ast_errors.iter().map(|e| e.to_string()).collect();
         return Err(format!("Parse errors:\n{}", msg.join("\n")));
     }
-    compile_ast(ast)
+    compile_ast_with_options(ast, options)
 }
 
 /// 对已解析的 AST 执行名称解析、类型/借用检查与 MIR/Stardust 生成。
 pub fn compile_ast(ast: crate::frontend::ast::Program) -> Result<CompiledProgram, String> {
+    compile_ast_with_options(ast, CompileOptions::default())
+}
+
+/// 对已解析的 AST 编译，并显式指定优化选项。
+pub fn compile_ast_with_options(
+    ast: crate::frontend::ast::Program,
+    options: CompileOptions,
+) -> Result<CompiledProgram, String> {
     let type_table = TypeTable::from_ast_decls(&ast.decls);
 
     let (hir, hir_errors) = lower(&ast);
@@ -1000,7 +1028,9 @@ pub fn compile_ast(ast: crate::frontend::ast::Program) -> Result<CompiledProgram
     let mut optimized_functions = Vec::with_capacity(functions.len());
     for (fn_id, mir) in &functions {
         let mut optimized = mir.clone();
-        optimize_mir(&mut optimized);
+        if options.optimize {
+            optimize_mir(&mut optimized);
+        }
         optimized_functions.push((*fn_id, optimized));
     }
 
@@ -1024,6 +1054,14 @@ pub fn build_stardust(source: &str) -> Result<String, String> {
     Ok(compile_program(source)?.stardust)
 }
 
+/// 编译到 Stardust 源码，并显式指定优化选项。
+pub fn build_stardust_with_options(
+    source: &str,
+    options: CompileOptions,
+) -> Result<String, String> {
+    Ok(compile_program_with_options(source, options)?.stardust)
+}
+
 /// 检查 `freebird.toml` 项目，返回诊断与入口源码。
 pub fn check_project(
     manifest_path: &Path,
@@ -1041,12 +1079,28 @@ pub fn check_project(
 
 /// 编译 `freebird.toml` 项目到 MIR/Stardust。
 pub fn compile_project(manifest_path: &Path) -> Result<CompiledProgram, String> {
-    compile_ast(load_project(manifest_path)?)
+    compile_project_with_options(manifest_path, CompileOptions::default())
+}
+
+/// 编译 `freebird.toml` 项目到 MIR/Stardust，并显式指定优化选项。
+pub fn compile_project_with_options(
+    manifest_path: &Path,
+    options: CompileOptions,
+) -> Result<CompiledProgram, String> {
+    compile_ast_with_options(load_project(manifest_path)?, options)
 }
 
 /// 编译 `freebird.toml` 项目到 Stardust 源码。
 pub fn build_project(manifest_path: &Path) -> Result<String, String> {
     Ok(compile_project(manifest_path)?.stardust)
+}
+
+/// 编译 `freebird.toml` 项目到 Stardust 源码，并显式指定优化选项。
+pub fn build_project_with_options(
+    manifest_path: &Path,
+    options: CompileOptions,
+) -> Result<String, String> {
+    Ok(compile_project_with_options(manifest_path, options)?.stardust)
 }
 
 #[cfg(test)]

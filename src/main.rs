@@ -5,16 +5,15 @@ use std::path::PathBuf;
 use std::process;
 
 use freebird::borrowck::check_borrow;
-use freebird::codegen::llvm::{
-    LlvmArtifact, LlvmEmit, LlvmOptions, compile_llvm, compile_llvm_compiled,
-};
+use freebird::codegen::llvm::{LlvmArtifact, LlvmEmit, LlvmOptions, compile_llvm_compiled};
 use freebird::diagnostics;
 use freebird::frontend::parse;
 use freebird::hir::lower;
 use freebird::repl::Repl;
 use freebird::typeck::{TypeTable, check_program_with_warnings};
 use freebird::{
-    RuntimeConfig, build_project, build_stardust, check_project, compile_project, run_file,
+    CompileOptions, RuntimeConfig, build_project_with_options, build_stardust_with_options,
+    check_project, compile_program_with_options, compile_project_with_options, run_file,
     run_project,
 };
 
@@ -93,6 +92,9 @@ enum Command {
         /// Stardust 可执行文件路径（也可用 STARDUST_BIN 环境变量）
         #[arg(long)]
         stardust_bin: Option<PathBuf>,
+        /// 关闭 MIR 优化（仅影响 build 生成/LLVM，不影响 run）
+        #[arg(long)]
+        no_opt: bool,
     },
 }
 
@@ -317,7 +319,9 @@ fn main() {
             emit,
             opt_level,
             stardust_bin,
+            no_opt,
         }) => {
+            let compile_options = CompileOptions { optimize: !no_opt };
             let target_name = target.unwrap_or(Target::Stardust);
             let source_target = match resolve_target(file, manifest_path) {
                 Ok(target) => target,
@@ -341,9 +345,11 @@ fn main() {
                                 eprintln!("Error reading {}: {e}", path.display());
                                 process::exit(1);
                             });
-                            build_stardust(&source)
+                            build_stardust_with_options(&source, compile_options)
                         }
-                        SourceTarget::Project(path) => build_project(path),
+                        SourceTarget::Project(path) => {
+                            build_project_with_options(path, compile_options)
+                        }
                     };
                     let code = match code {
                         Ok(code) => code,
@@ -387,18 +393,21 @@ fn main() {
                         stardust_bin,
                         opt_level: opt_level as u8,
                     };
-                    let artifact = match &source_target {
+                    let compiled = match &source_target {
                         SourceTarget::File(path) => {
                             let source = fs::read_to_string(path).unwrap_or_else(|e| {
                                 eprintln!("Error reading {}: {e}", path.display());
                                 process::exit(1);
                             });
-                            compile_llvm(&source, &options)
+                            compile_program_with_options(&source, compile_options)
                         }
-                        SourceTarget::Project(path) => match compile_project(path) {
-                            Ok(compiled) => compile_llvm_compiled(&compiled, &options),
-                            Err(e) => Err(e),
-                        },
+                        SourceTarget::Project(path) => {
+                            compile_project_with_options(path, compile_options)
+                        }
+                    };
+                    let artifact = match compiled {
+                        Ok(compiled) => compile_llvm_compiled(&compiled, &options),
+                        Err(e) => Err(e),
                     };
                     match artifact {
                         Ok(LlvmArtifact::Ir(ir)) => match output {

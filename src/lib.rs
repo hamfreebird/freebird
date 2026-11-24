@@ -25,9 +25,10 @@ pub use frontend::parse;
 pub use hir::lower;
 pub use io::{IoLib, std_library};
 pub use pipeline::{
-    CompiledProgram, build_project, build_stardust, check_project, check_source,
-    check_source_with_warnings, compile_ast, compile_program, compile_project, load_project,
-    run_file, run_project, run_source,
+    CompileOptions, CompiledProgram, build_project, build_project_with_options, build_stardust,
+    build_stardust_with_options, check_project, check_source, check_source_with_warnings,
+    compile_ast, compile_ast_with_options, compile_program, compile_program_with_options,
+    compile_project, compile_project_with_options, load_project, run_file, run_project, run_source,
 };
 pub use vm::Vm;
 pub use vm::config::RuntimeConfig;
