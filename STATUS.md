@@ -19,7 +19,7 @@
 | 函数指针 `fn(A) -> B`、函数值、间接调用 | §5、§6 | ✅ 零/单/多返回值 | ✅ FnId dispatch | ✅ | `m2_test` + `m3_test` |
 | 用户泛型 `struct/enum/fn<T>`（类型擦除 MVP） | §5 | ✅ 字段/实参推断 | ✅ 单份代码生成 | ✅ | `m2_test` |
 | 显式类型实参（turbofish） | §5 | ✅ | ✅ | ✅ | `m2_test` |
-| 泛型约束、按实例单态化 | §5 | ❌ 待办 | ❌ 待办 | ❌ 待办 | — |
+| 泛型约束、按实例单态化 | §5 | ❌ 待办（ADR 0006 已设计） | ❌ 待办 | ❌ 待办 | — |
 | 函数、递归、多值返回、`return` | §6 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
 | `ret n`（整数立即数、元数匹配） | §6 | ✅ | ✅ | ✅ | 集成 + `m0_test` |
 | 数组、`Vec`、`String`、`Box` | §8、§9 | ✅ | ✅ | ✅ | 集成 + 差分 + `m3_test`（全局堆块，ADR 0001） |
@@ -110,7 +110,7 @@
 - **M2-2 Option/Result（泛型枚举）**：内建 `Option<T>`/`Result<T, E>`，载荷类型从构造表达式推断并做替换检查；`Option` 支持 `is_some`/`is_none`/`unwrap`/`unwrap_or`，`Result` 支持 `is_ok`/`is_err`/`unwrap`/`unwrap_or`。类型检查把每个方法调用的成功/失败变体标签标注在 `Span → MethodVariantTags` 上交给 MIR 生成器，因此 `Option`（`Some`=1/`None`=0）与 `Result`（`Ok`=0/`Err`=1）共用同一套指令。`map`/`ok`/`err` 等组合子由 M2-7 补齐。
 - **M2-7 标准库**：`abs`/`min`/`max`、`Vec`/`String` 的 `is_empty`/`clear`、转换组合子 `Result::ok`/`Result::err`/`Option::ok_or`（新增 `EnumPayloadToOption`/`OptionToResult` 指令）、`int_to_str`（双后端，堆块逐位写入）、`str_to_int`（双后端，堆块逐字符解析）与 `Option::map`/`Result::map`（MIR 用现有指令组合实现分支，双后端一致）。
 - **M2-9 impl/方法（方案 C 分期）**：`impl Type { fn f(self) }` 与关联函数 `Rect::square(3)` 已可用；名字扁平化为 `Type::f`，方法调用由类型检查解析（用户方法优先、内建方法兜底）并记录 `Span` 标注供 MIR 生成。`&self` 只读方法与 `&mut self` 写方法均已支持：调用点对具名变量取引用，方法体 `self.field` 自动解引用，`self.field = v` 走 `FieldStoreRef` 写回引用目标（VM 用 `find_ref_target` 跨帧定位，Stardust 按 cell 语义写回）。
-- **待实现 / 里程碑**：readme 未定义字符串格式化 API（当前用 `print`/`int_to_str` 组合）；泛型约束与按实例单态化属于后续里程碑（`ROADMAP.md` M4）。M2-8 的 unsafe 值栈已按 `docs/adr/0004-unsafe-raw-stack.md` 落地：`push`/`pop`/`swap`/`dup`/`roll(n)` 双后端一致，Stardust 侧按需翻倍扩容，`roll(n)` 支持正/零/负三向语义。
+- **待实现 / 里程碑**：字符串格式化 API 尚未定义（当前用 `print`/`int_to_str` 组合），泛型约束与按实例单态化、闭包/`const`/trait 属于后续里程碑；三者的语法、实现方案、兼容策略与分阶段验收见 `docs/adr/0006-language-evolution.md`。M2-8 的 unsafe 值栈已按 `docs/adr/0004-unsafe-raw-stack.md` 落地：`push`/`pop`/`swap`/`dup`/`roll(n)` 双后端一致，Stardust 侧按需翻倍扩容，`roll(n)` 支持正/零/负三向语义。
 
 ## 7. M3 后端与 FFI（已完成，2026-11-24）
 
