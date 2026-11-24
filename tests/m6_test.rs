@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use freebird::codegen::llvm::{locate_clang, locate_stardust};
 use freebird::{RuntimeConfig, build_stardust, compile_program, run_source};
 
 #[test]
@@ -132,4 +133,124 @@ fn stardust_call_arity_declares_return_values() {
 
     let error = run_source(source, RuntimeConfig::test()).unwrap_err();
     assert!(error.contains("Call"), "unexpected error: {error}");
+}
+
+fn freebird() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_freebird"))
+}
+
+#[test]
+fn extern_functions_cannot_be_used_as_values() {
+    let source = r#"extern "stardust" {
+        #[stardust(id = 1)]
+        fn ext(x: i64) -> i64;
+    }
+    fn main() { let f = ext; }"#;
+    let errors = freebird::check_source(source).expect_err("extern value must be rejected");
+    assert!(
+        errors.join("\n").contains("extern function"),
+        "unexpected diagnostics: {errors:?}"
+    );
+}
+
+#[test]
+fn link_stardust_appends_external_definitions() {
+    if !Path::new("stardust/stardust-linux-x86_64").exists() {
+        eprintln!("skipping: stardust interpreter not available");
+        return;
+    }
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join(format!("m6-link-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let program = base.join("program.fb");
+    let external = base.join("external.sd");
+    let output = base.join("linked.sd");
+    std::fs::write(
+        &program,
+        r#"fn main() {
+            stardust! {
+                Push(3)
+                Push(5)
+                Call(7, 2, 1)
+                NumOut
+            }
+        }"#,
+    )
+    .unwrap();
+    let pad = " ".repeat(7);
+    std::fs::write(&external, format!("{pad}:\n*\n{pad}:\n")).unwrap();
+
+    let build = freebird()
+        .args(["build", "--link-stardust"])
+        .arg(&external)
+        .arg(&program)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let stardust = std::fs::read_to_string(&output).unwrap();
+    let result = run_stardust_text(&stardust).expect("run linked Stardust");
+    assert_eq!(result, b"8\n");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn link_stardust_works_for_llvm_executable() {
+    if locate_stardust(None).is_err() || locate_clang().is_err() {
+        eprintln!("skipping: LLVM toolchain not available");
+        return;
+    }
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join(format!("m6-link-llvm-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let program = base.join("program.fb");
+    let external = base.join("external.sd");
+    let exe = base.join("linked_exe");
+    std::fs::write(
+        &program,
+        r#"fn main() {
+            stardust! {
+                Push(3)
+                Push(5)
+                Call(7, 2, 1)
+                NumOut
+            }
+        }"#,
+    )
+    .unwrap();
+    let pad = " ".repeat(7);
+    std::fs::write(&external, format!("{pad}:\n*\n{pad}:\n")).unwrap();
+
+    let build = freebird()
+        .args([
+            "build",
+            "--target",
+            "llvm",
+            "--emit",
+            "exe",
+            "--link-stardust",
+        ])
+        .arg(&external)
+        .arg(&program)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&exe).output().unwrap();
+    assert!(run.status.success());
+    assert_eq!(run.stdout, b"8\n");
+    let _ = std::fs::remove_dir_all(base);
 }

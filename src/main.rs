@@ -95,6 +95,9 @@ enum Command {
         /// 关闭 MIR 优化（仅影响 build 生成/LLVM，不影响 run）
         #[arg(long)]
         no_opt: bool,
+        /// 追加外部 Stardust 定义文件（FFI 链接；适用于 stardust/llvm 目标）
+        #[arg(long)]
+        link_stardust: Option<PathBuf>,
     },
 }
 
@@ -134,6 +137,17 @@ fn resolve_target(
             "no input file: pass <file.fb>, or run in a directory containing freebird.toml"
                 .to_string(),
         )
+    }
+}
+
+fn append_linked_stardust(code: &mut String, linked: &Option<String>) {
+    let Some(linked) = linked else { return };
+    if !code.ends_with('\n') {
+        code.push('\n');
+    }
+    code.push_str(linked);
+    if !code.ends_with('\n') {
+        code.push('\n');
     }
 }
 
@@ -320,8 +334,15 @@ fn main() {
             opt_level,
             stardust_bin,
             no_opt,
+            link_stardust,
         }) => {
             let compile_options = CompileOptions { optimize: !no_opt };
+            let linked = link_stardust.as_ref().map(|path| {
+                fs::read_to_string(path).unwrap_or_else(|error| {
+                    eprintln!("Error reading {}: {error}", path.display());
+                    process::exit(1);
+                })
+            });
             let target_name = target.unwrap_or(Target::Stardust);
             let source_target = match resolve_target(file, manifest_path) {
                 Ok(target) => target,
@@ -351,13 +372,14 @@ fn main() {
                             build_project_with_options(path, compile_options)
                         }
                     };
-                    let code = match code {
+                    let mut code = match code {
                         Ok(code) => code,
                         Err(e) => {
                             eprintln!("Build error: {e}");
                             process::exit(1);
                         }
                     };
+                    append_linked_stardust(&mut code, &linked);
                     match output {
                         Some(path) => {
                             if let Err(e) = fs::write(&path, code) {
@@ -406,7 +428,10 @@ fn main() {
                         }
                     };
                     let artifact = match compiled {
-                        Ok(compiled) => compile_llvm_compiled(&compiled, &options),
+                        Ok(mut compiled) => {
+                            append_linked_stardust(&mut compiled.stardust, &linked);
+                            compile_llvm_compiled(&compiled, &options)
+                        }
                         Err(e) => Err(e),
                     };
                     match artifact {

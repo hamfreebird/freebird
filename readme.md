@@ -769,7 +769,7 @@ extern "stardust" {
 - 参数和返回值类型必须显式标注。
 - 调用 Stardust 函数时，Freebird 编译器生成标准的 `Call(N, M)` 指令；内部 Freebird 函数名会自动避开这些 ID。
 - Stardust 函数天然支持多值返回；返回 `()` 等价于 `m=0`。
-- 所有调用必须在 `unsafe` 块内。VM 无法执行 Stardust 函数，`freebird run` 会在运行时报明确错误；`--target llvm` 需要外部 Stardust 函数定义参与链接。
+- 所有调用必须在 `unsafe` 块内。VM 无法执行 Stardust 函数，`freebird run` 会在运行时报明确错误；`build --link-stardust <file>` 可把外部 Stardust 定义追加到生成代码（stardust/llvm 目标）。extern 函数不能作为函数值使用。
 
 调用示例：
 

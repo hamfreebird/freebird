@@ -766,6 +766,16 @@ impl<'a> TypeChecker<'a> {
             HirExpr::Lit(lit, _) => literal_type(lit),
             HirExpr::Var(var) => {
                 if var.scope_depth == usize::MAX {
+                    // extern 函数没有 Freebird 函数体，不能作为函数值/间接调用。
+                    if self.extern_functions.contains_key(&var.name) {
+                        self.error(TypeCheckError::UnsupportedFeature {
+                            feature: format!("extern function `{}` as a value", var.name),
+                            reference:
+                                "call it directly inside `unsafe`, or provide a Freebird wrapper"
+                                    .to_string(),
+                            span: var.span,
+                        });
+                    }
                     // 函数名作为值：暴露为函数指针类型；类型名仍是 Unknown。
                     if let Some(sig) = self.functions.get(&var.name) {
                         HirType::FnPtr(
@@ -1353,8 +1363,17 @@ impl<'a> TypeChecker<'a> {
             });
         }
 
-        // 求值调用目标；函数名占位不产生类型错误
-        let func_ty = self.check_expr(func);
+        // 求值调用目标；函数名占位不产生类型错误。
+        // extern 函数直接调用是允许的，跳过“函数值”诊断。
+        let extern_callee = matches!(
+            func,
+            HirExpr::Var(var) if self.extern_functions.contains_key(&var.name)
+        );
+        let func_ty = if extern_callee {
+            HirType::Unknown
+        } else {
+            self.check_expr(func)
+        };
 
         let sig = match fn_sig {
             Some(sig) => Some(sig.clone()),

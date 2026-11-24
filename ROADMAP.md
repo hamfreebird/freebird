@@ -289,7 +289,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | LLVM 不支持文件 I/O | M6-2.1 |
 | LLVM `CharOut` 仅 ASCII | M6-2.2（已解决） |
 | `read_line` EOF 行为 VM/Stardust 不一致 | M6-2.3（已解决） |
-| FFI 需要外部定义链接；extern 不能作函数值；默认 ID 可能碰撞 | M6-2.4 |
+| FFI 需要外部定义链接；extern 不能作函数值；默认 ID 可能碰撞 | M6-2.4（已解决） |
 | Stardust 堆对数组/嵌套容器保守不回收 | M6-2.5 |
 | LSP 无 references/rename，列号非 UTF-16 | M6-3.1 |
 | DAP 单线程无 pause、变量不可展开 | M6-3.2 |
@@ -320,7 +320,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | M6-2.1 | LLVM 文件 I/O：Stardust LLVM 后端实现 `FileRead`/`FileWrite`，Freebird 移除编译期拒绝 | `--target llvm` 可运行 `file_read`/`file_write` 程序；VM/LLVM 差分测试；文档移除该限制 |
 | M6-2.2 | LLVM Unicode 输出：Stardust LLVM 支持 `char_mode=unicode` 或等价 UTF-8 输出 | 非 ASCII 字符串/字符程序在 LLVM 与 VM 输出一致；`m3_test` 增加用例（已完成） |
 | M6-2.3 | `read_line` EOF 对齐：规范选择“空串”或“明确 I/O 错误”，VM/Stardust/LLVM 一致 | `tests/m1_test.rs` 的 EOF 用例两端一致；文档更新（已完成：统一为 I/O 错误） |
-| M6-2.4 | FFI 闭环：提供外部 Stardust 定义的链接方式；extern 作为函数值明确支持或拒绝；默认 ID 分配避免碰撞 | `build --target llvm --link-stardust <file>`（或等价）可用；ID 冲突有明确诊断；新增测试 |
+| M6-2.4 | FFI 闭环：提供外部 Stardust 定义的链接方式；extern 作为函数值明确支持或拒绝；默认 ID 分配避免碰撞 | `build --target llvm --link-stardust <file>`（或等价）可用；ID 冲突有明确诊断；新增测试（已完成：`--link-stardust` + extern 值拒绝） |
 | M6-2.5 | Stardust 堆回收收紧：数组/结构体 COW 旧块与嵌套容器块按可达性回收，或明确维持保守策略并测量上限 | ADR 0002 更新；堆压力测试显示稳定；无 use-after-free |
 
 > M6-2.1/2.2/2.3 需要修改 `~/freebird/WIND/esolang_stardust`（LLVM 代码生成/解释器），单独提交、测试、发布新二进制，并更新 Freebird 的 `stardust/` bundled 二进制；Freebird 侧随后移除限制。

@@ -27,6 +27,7 @@
 - 多文件项目 `check` 的诊断携带 `file`（相对清单根）与文件内行号。
 - `stardust!` 的 `Call(n, m[, r])` 支持显式返回 arity（ADR 0005）；默认为 0。
 - LLVM 后端支持 `#[char_mode=unicode]`，`CharOut` 按 UTF-8 输出（bundled Stardust 同步更新）。
+- `build --link-stardust <file>` 可追加外部 Stardust 定义（FFI）；extern 函数作为值在编译期拒绝。
 
 ### Changed
 

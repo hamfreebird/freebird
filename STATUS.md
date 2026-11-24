@@ -44,7 +44,7 @@
 | `file_read` / `file_write` | §9 | ✅ | ✅ | ❌ 编译期拒绝 | 集成 |
 | `unsafe` + `stardust!` 宏 | §11 | ✅ 全部宏指令（Call 仅 Stardust/LLVM） | ✅ 全部宏指令 | ✅ 全部宏指令 | 集成 + `m1_test` + `m3_test` |
 | `stardust!` 的 `Mark`/`Jump`/`UncondJump`/`DropN`/`Pick`/`NumOut`/`NumIn`/`CharOut`/`CharIn`/`DumpStack`/`DumpState`/`Breakpoint`/`Nop`/`ShiftL`/`ShiftR`/`Rotate`/`Depth`/`Reverse`/`Call` | §10.3 | ✅ 语义与 Stardust 一致 | ✅ | ✅ | `m3_test` |
-| `extern "stardust"` FFI（`#[stardust(id = N)]`） | §10.4 | ❌ 明确报错（仅 Stardust/LLVM 可执行） | ✅ 生成 `Call(id, argc)` | 🟡 需外部 Stardust 定义参与链接 | `m3_test` |
+| `extern "stardust"` FFI（`#[stardust(id = N)]`） | §10.4 | ❌ 明确报错（仅 Stardust/LLVM 可执行） | ✅ 生成 `Call(id, argc)` | ✅ `--link-stardust` 追加外部定义 | `m3_test` + `m6_test` |
 
 ## 2. 模式匹配与绑定
 

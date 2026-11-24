@@ -102,6 +102,7 @@ freebird build --target llvm hello.fb --emit exe -o hello --opt-level 2
 | `--opt-level 0-3` | 传给 clang 的优化级别（默认 0） |
 | `--stardust-bin <path>` | 显式指定 Stardust 可执行文件 |
 | `--no-opt` | 关闭 MIR 优化（仅影响 build 生成/LLVM，不影响 `run`） |
+| `--link-stardust <path>` | 追加外部 Stardust 定义文件（FFI 链接；stardust/llvm 目标） |
 
 LLVM 后端复用 Stardust 的 LLVM 编译器。Stardust 可执行文件按
 `--stardust-bin` → `STARDUST_BIN` → `PATH` 中的 `stardust` → 仓库自带
@@ -347,8 +348,14 @@ fn main() {
 ```
 
 Stardust 侧需要提供 ID 为 7 的函数定义（例如 `       :` / `*` / `       :`）。
-VM 无法执行 Stardust 函数，`freebird run` 会报明确错误；请使用
-`freebird build --target stardust` 或 `--target llvm`。
+可直接把它写入一个 `.sd` 文件并用 `--link-stardust` 追加：
+
+```bash
+freebird build --link-stardust external.sd app.fb -o app.sd
+freebird build --target llvm --emit exe --link-stardust external.sd app.fb -o app
+```
+
+VM 无法执行 Stardust 函数，`freebird run` 会报明确错误；extern 函数也不能作为函数值使用（编译期拒绝）。
 
 ## 标准库
 
