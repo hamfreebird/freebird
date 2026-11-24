@@ -1,0 +1,40 @@
+{
+  "results": [
+    {
+      "name": "vm_fib_20_ms",
+      "unit": "ms",
+      "value": 50.886065
+    },
+    {
+      "name": "vm_loop_20k_ms",
+      "unit": "ms",
+      "value": 37.86609
+    },
+    {
+      "name": "vm_vec_5k_ms",
+      "unit": "ms",
+      "value": 8.508367
+    },
+    {
+      "name": "stardust_fib_bytes",
+      "unit": "bytes",
+      "value": 1270.0
+    },
+    {
+      "name": "stardust_fib_gen_ms",
+      "unit": "ms",
+      "value": 0.044389
+    },
+    {
+      "name": "llvm_loop_ir_bytes",
+      "unit": "bytes",
+      "value": 32281.0
+    },
+    {
+      "name": "llvm_loop_compile_ms",
+      "unit": "ms",
+      "value": 1.8793659999999999
+    }
+  ],
+  "schema_version": 1
+}

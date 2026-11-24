@@ -46,3 +46,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang
       - name: LLVM backend tests (bundled Stardust toolchain)
         run: cargo test --test m3_test
+
+  bench:
+    runs-on: ubuntu-latest
+    # 基准受机器噪声影响：只作为告警，不阻塞合并。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Benchmark check (warning only)
+        run: cargo run --release --bin freebird-bench -- --check --tolerance 2.5
