@@ -28,7 +28,7 @@ Freebird is a single-crate Rust implementation of a stack-based language. `readm
 ## Tooling
 
 - `freebird fmt` normalises indentation/blank lines (idempotent, comment-preserving).
-- `freebird lsp` serves stdio JSON-RPC (Content-Length framing): diagnostics via `diagnostics::collect_diagnostics`, hover/definition/documentSymbol/completion are text-based MVP implementations in `src/lsp.rs`.
+- `freebird lsp` serves stdio JSON-RPC (Content-Length framing): diagnostics via `diagnostics::collect_diagnostics`; hover/definition/references/rename/documentSymbol/completion are text-based MVP implementations in `src/lsp.rs`. Positions use LSP UTF-16 code units.
 - `freebird dap` serves DAP over stdio (`src/dap.rs`): `launch` compiles via `compile_program`, breakpoints use `MirInst::Line` markers, and the VM exposes `prepare_mir`/`run_debug`/`continue_debug`/`step_debug`/`step_out_debug`. `next`/`stepIn` are instruction-level; the adapter is single-threaded and does not support `pause` while running.
 - `freebird.toml` projects: `src/manifest.rs` parses `[package] name/entry` and `[dependencies]` path entries; `pipeline::load_project` loads dependencies first with `<dep>::` prefixes, then the root entry. `run`/`check`/`build` accept `--manifest-path` or auto-detect `./freebird.toml`.
 - `freebird-bench` (`src/bin/freebird-bench.rs`) records VM/Stardust/LLVM measurements in `bench/baseline.json`; `--check` compares with a tolerance and the CI `bench` job is advisory. `tests/m5_test.rs` runs fixed-seed differential fuzz plus malformed-input no-panic checks and minimizes failures into `target/fuzz-failures/`.

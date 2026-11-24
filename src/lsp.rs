@@ -63,6 +63,8 @@ impl LspServer {
                         "textDocumentSync": 1,
                         "hoverProvider": true,
                         "definitionProvider": true,
+                        "referencesProvider": true,
+                        "renameProvider": true,
                         "documentSymbolProvider": true,
                         "completionProvider": { "triggerCharacters": [":", "."] }
                     },
@@ -131,6 +133,8 @@ impl LspServer {
             }
             "textDocument/hover" => vec![response(id, self.hover(message))],
             "textDocument/definition" => vec![response(id, self.definition(message))],
+            "textDocument/references" => vec![response(id, self.references(message))],
+            "textDocument/rename" => vec![response(id, self.rename(message))],
             "textDocument/documentSymbol" => vec![response(id, self.document_symbols(message))],
             "textDocument/completion" => vec![response(id, self.completion(message))],
             _ => {
@@ -238,6 +242,68 @@ impl LspServer {
         json!({ "isIncomplete": false, "items": items })
     }
 
+    fn references(&self, message: &Value) -> Value {
+        let Some((text, line, character)) = self.position(message) else {
+            return Value::Null;
+        };
+        let Some((word, _)) = word_at(&text, line, character) else {
+            return Value::Null;
+        };
+        let uri = message
+            .pointer("/params/textDocument/uri")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        Value::Array(
+            word_occurrences(&text, &word)
+                .into_iter()
+                .map(|(line, start, end)| {
+                    json!({
+                        "uri": uri,
+                        "range": {
+                            "start": { "line": line, "character": start },
+                            "end": { "line": line, "character": end }
+                        }
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn rename(&self, message: &Value) -> Value {
+        let new_name = message
+            .pointer("/params/newName")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !is_identifier(new_name) {
+            return Value::Null;
+        }
+        let Some((text, line, character)) = self.position(message) else {
+            return Value::Null;
+        };
+        let Some((word, _)) = word_at(&text, line, character) else {
+            return Value::Null;
+        };
+        let uri = message
+            .pointer("/params/textDocument/uri")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let edits: Vec<Value> = word_occurrences(&text, &word)
+            .into_iter()
+            .map(|(line, start, end)| {
+                json!({
+                    "range": {
+                        "start": { "line": line, "character": start },
+                        "end": { "line": line, "character": end }
+                    },
+                    "newText": new_name
+                })
+            })
+            .collect();
+        let mut changes = serde_json::Map::new();
+        changes.insert(uri.to_string(), Value::Array(edits));
+        json!({ "changes": Value::Object(changes) })
+    }
+
     fn text_of(&self, message: &Value) -> Option<String> {
         let uri = message
             .pointer("/params/textDocument/uri")
@@ -342,28 +408,89 @@ fn word_at(text: &str, line: usize, character: usize) -> Option<(String, Value)>
     if chars.is_empty() {
         return None;
     }
-    let cursor = character.min(chars.len().saturating_sub(1));
-    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    // LSP 的 character 是 UTF-16 code unit；先转换为字符索引。
+    let cursor = utf16_to_char_index(line_text, character).min(chars.len().saturating_sub(1));
 
-    if !is_word(chars[cursor]) {
+    if !is_word_char(chars[cursor]) {
         return None;
     }
     let mut start = cursor;
-    while start > 0 && is_word(chars[start - 1]) {
+    while start > 0 && is_word_char(chars[start - 1]) {
         start -= 1;
     }
     let mut end = cursor + 1;
-    while end < chars.len() && is_word(chars[end]) {
+    while end < chars.len() && is_word_char(chars[end]) {
         end += 1;
     }
     let word: String = chars[start..end].iter().collect();
     Some((
         word,
         json!({
-            "start": { "line": line, "character": start },
-            "end": { "line": line, "character": end }
+            "start": { "line": line, "character": char_to_utf16(line_text, start) },
+            "end": { "line": line, "character": char_to_utf16(line_text, end) }
         }),
     ))
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn utf16_to_char_index(line: &str, utf16: usize) -> usize {
+    let mut units = 0;
+    for (index, ch) in line.chars().enumerate() {
+        if units >= utf16 {
+            return index;
+        }
+        units += ch.len_utf16();
+    }
+    line.chars().count()
+}
+
+fn char_to_utf16(line: &str, char_index: usize) -> usize {
+    line.chars().take(char_index).map(char::len_utf16).sum()
+}
+
+fn byte_to_utf16(line: &str, byte_index: usize) -> usize {
+    line[..byte_index].encode_utf16().count()
+}
+
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    chars.all(is_word_char)
+}
+
+/// 查找完整标识符出现位置；返回（0-based 行，UTF-16 起止列）。
+fn word_occurrences(text: &str, word: &str) -> Vec<(usize, usize, usize)> {
+    let mut occurrences = Vec::new();
+    if word.is_empty() {
+        return occurrences;
+    }
+    for (line_index, line) in text.lines().enumerate() {
+        let mut search = 0;
+        while let Some(relative) = line[search..].find(word) {
+            let start = search + relative;
+            let end = start + word.len();
+            let before_ok = line[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_word_char(c));
+            let after_ok = line[end..].chars().next().is_none_or(|c| !is_word_char(c));
+            if before_ok && after_ok {
+                occurrences.push((
+                    line_index,
+                    byte_to_utf16(line, start),
+                    byte_to_utf16(line, end),
+                ));
+            }
+            search = end.max(start + 1);
+        }
+    }
+    occurrences
 }
 
 fn hover_info(text: &str, word: &str) -> Option<String> {
@@ -422,8 +549,8 @@ fn find_definition(text: &str, word: &str) -> Option<Value> {
             {
                 let start = line.find(word).unwrap_or(0);
                 return Some(json!({
-                    "start": { "line": line_index, "character": start },
-                    "end": { "line": line_index, "character": start + word.chars().count() }
+                    "start": { "line": line_index, "character": byte_to_utf16(line, start) },
+                    "end": { "line": line_index, "character": byte_to_utf16(line, start + word.len()) }
                 }));
             }
         }
@@ -627,5 +754,56 @@ mod tests {
         let mut reader = std::io::Cursor::new(buffer);
         let parsed = read_message(&mut reader).unwrap().unwrap();
         assert_eq!(parsed, message);
+    }
+
+    #[test]
+    fn references_and_rename_work() {
+        let mut server = LspServer::new();
+        let text = "fn add(a: i64, b: i64) -> i64 { a + b }\nfn main() { print(add(1, 2)); print(add(3, 4)); }\n";
+        server.handle(&did_open(text));
+        let references = server.handle(&json!({
+            "jsonrpc": "2.0", "id": 10, "method": "textDocument/references",
+            "params": {
+                "textDocument": { "uri": "file:///test.fb" },
+                "position": { "line": 1, "character": 19 },
+                "context": { "includeDeclaration": true }
+            }
+        }));
+        let locations = references[0]["result"].as_array().unwrap();
+        assert_eq!(locations.len(), 3, "expected definition + 2 calls");
+        assert_eq!(locations[0]["range"]["start"]["line"], 0);
+
+        let rename = server.handle(&json!({
+            "jsonrpc": "2.0", "id": 11, "method": "textDocument/rename",
+            "params": {
+                "textDocument": { "uri": "file:///test.fb" },
+                "position": { "line": 1, "character": 19 },
+                "newName": "sum"
+            }
+        }));
+        let edits = rename[0]["result"]["changes"]["file:///test.fb"]
+            .as_array()
+            .unwrap();
+        assert_eq!(edits.len(), 3);
+        assert!(edits.iter().all(|edit| edit["newText"] == "sum"));
+    }
+
+    #[test]
+    fn utf16_positions_handle_non_bmp_characters() {
+        let mut server = LspServer::new();
+        let line = "    let s: String = \"😀\"; print(s);";
+        let text = format!("fn main() {{\n{line}\n}}\n");
+        server.handle(&did_open(&text));
+        let byte = line.rfind('s').unwrap();
+        let character = line[..byte].encode_utf16().count();
+        let hover = server.handle(&json!({
+            "jsonrpc": "2.0", "id": 12, "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": "file:///test.fb" },
+                "position": { "line": 1, "character": character }
+            }
+        }));
+        let value = hover[0]["result"]["contents"]["value"].as_str().unwrap();
+        assert!(value.contains("let s:"), "unexpected hover: {value}");
     }
 }

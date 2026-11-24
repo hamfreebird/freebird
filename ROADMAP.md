@@ -291,7 +291,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | `read_line` EOF 行为 VM/Stardust 不一致 | M6-2.3（已解决） |
 | FFI 需要外部定义链接；extern 不能作函数值；默认 ID 可能碰撞 | M6-2.4（已解决） |
 | Stardust 堆对数组/嵌套容器保守不回收 | M6-2.5 |
-| LSP 无 references/rename，列号非 UTF-16 | M6-3.1 |
+| LSP 无 references/rename，列号非 UTF-16 | M6-3.1（已解决） |
 | DAP 单线程无 pause、变量不可展开 | M6-3.2 |
 | 包管理仅单层路径依赖、无锁定文件 | M6-3.3 |
 | REPL 变量不跨输入保留、无持久历史 | M6-3.4 |

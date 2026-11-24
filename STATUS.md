@@ -81,7 +81,7 @@
 | `freebird build --target stardust` | — | ✅ | — | 集成 |
 | `freebird build --target llvm` | — | — | ✅ IR / 可执行文件 | `m3_test`；支持 `--output`、`--emit ir\|exe`、`--opt-level` |
 | `freebird fmt` | — | — | — | `m4_test`；缩进/空白规范化，`--check/--write/--stdin` |
-| `freebird lsp`（诊断/hover/跳转/符号/补全） | ✅ | ✅ | ✅ | `m4_test` + LSP 单元测试 |
+| `freebird lsp`（诊断/hover/跳转/引用/重命名/符号/补全，UTF-16 位置） | ✅ | ✅ | ✅ | `m4_test` + LSP 单元测试 |
 | `freebird dap`（断点/单步/栈/变量） | ✅ | — | — | `m4_test` + DAP 单元测试 |
 | `freebird.toml` 项目（entry + 路径依赖） | ✅ | ✅ | ✅ | `m4_test` + `m6_test`；`--manifest-path` / 自动发现；跨文件诊断带 `file` |
 | CI/发布（fmt/clippy/examples/文档链接/release） | ✅ | ✅ | ✅ | `.github/workflows/{ci,release}.yml` |

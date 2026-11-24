@@ -28,6 +28,7 @@
 - `stardust!` 的 `Call(n, m[, r])` 支持显式返回 arity（ADR 0005）；默认为 0。
 - LLVM 后端支持 `#[char_mode=unicode]`，`CharOut` 按 UTF-8 输出（bundled Stardust 同步更新）。
 - `build --link-stardust <file>` 可追加外部 Stardust 定义（FFI）；extern 函数作为值在编译期拒绝。
+- LSP 新增 references/rename，位置按 UTF-16 处理；非 BMP 字符位置正确。
 
 ### Changed
 

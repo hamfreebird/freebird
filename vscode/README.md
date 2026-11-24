@@ -39,6 +39,7 @@ The extension starts `freebird lsp` over stdio and provides:
 - diagnostics (parse / resolve / type / borrow) with stable error codes
 - hover (function signatures, builtins, `let` type annotations)
 - go-to-definition for functions, structs, enums, impls and `let` bindings
+- find references and rename (text-based)
 - document symbols
 - completion (keywords, builtins, document symbols)
 
