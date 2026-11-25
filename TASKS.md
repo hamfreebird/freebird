@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 254 unit + 235 integration 全绿（2026-11-25；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 58 + `tests/m3_test.rs` 38 + `tests/m4_test.rs` 17 + `tests/m5_test.rs` 7 + `tests/m6_test.rs` 30 + `tests/snapshot_test.rs` 1 + `tests/differential_test.rs` 2）。
+> 当前：`cargo test` = 258 unit + 241 integration 全绿（2026-11-25；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 58 + `tests/m3_test.rs` 38 + `tests/m4_test.rs` 17 + `tests/m5_test.rs` 7 + `tests/m6_test.rs` 36 + `tests/snapshot_test.rs` 1 + `tests/differential_test.rs` 2）。
 > 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)，能力矩阵见 [`STATUS.md`](STATUS.md)；本表保留已完成项的历史记录。
 > 下一阶段（M6）按优先级拆分见 [`ROADMAP.md`](ROADMAP.md) 的 M6 章节。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。
@@ -51,6 +51,16 @@
 | M2-8 | unsafe / `#id` | `#id` 与 `current_stack_id` 已从规范移除（§4.3 改为「元素 ID 访问（不支持）」、§10.1 栈 ID 行改为编译期拒绝）；unsafe 块内的 `push`/`pop`/`swap`/`dup`/`roll(n)` 已落地（ADR 0004），仅在 `unsafe` 块内可调用，Stardust 值栈按需翻倍扩容 |
 | M2-3 | 模块与 `use` | `mod name;` 递归加载同目录 `<name>.fb`，模块顶层函数注册为 `name::f`；`use name::f;` 在名称解析层做别名映射；循环依赖与未解析路径有明确诊断；模块内结构体/枚举同样加 `name::` 前缀，声明默认私有、需 `pub` |
 
+## v0.1.1 — 已知限制收敛（2026-11-25）
+
+| ID | 项目 | 结果 |
+|---|---|---|
+| V-1 | trait 实现完整性 | `impl Trait for Type` 必须实现 trait 声明的全部方法，缺失报 R010；新增负向/正向双后端测试 |
+| V-2 | const 求值增强 | 支持 `if`/块表达式、局部 `let` 与 `const fn`（含递归，深度上限 64）；新增 4 个测试；循环求值仍不在子集内 |
+| V-3 | LSP hover 语义化 | 基于 AST 提供函数/方法签名、struct/enum/trait/const 声明与 let 变量类型（显式或推断）；注释/字符串不误报 |
+| V-4 | LSP completion 语义化 | 基于 AST 提供签名/类型 detail（含局部变量）并按 label 去重；解析失败回退文本扫描 |
+| V-5 | 文档与版本 | `docs/LANGUAGE.md` §11/§13/§20、`STATUS.md`、`ROADMAP.md`、`USAGE.md`、`AGENTS.md` 同步；实现版本升至 0.1.1 |
+
 ## P0 — 基础正确性与可验证性
 
 | ID | 模块 | 未完成项 | 现状/影响 | 状态 |
@@ -97,9 +107,9 @@
 | TEST-1 | 测试 | 管线/集成测试多为 `is_ok()`，缺少值断言 | 回归可能漏检 | 已完成（Stardust 集成测试与 VM 输出逐字节对比；fib/while/结构体/枚举/stardust! 等管线测试改为输出断言；仅剩 `check_source` 的合法程序断言） |
 | TEST-2 | 测试 | 缺枚举匹配、Vec、借用检查、Stardust 快照测试 | 关键功能无保护 | 已完成（新增结构体/枚举/Vec/Box/字符串/输入/COW 端到端测试与堆序列单元测试） |
 | CI-1 | 工程 | 无 CI 工作流 | 无自动回归门禁 | 已完成（`.github/workflows/ci.yml` 执行 release 构建与 `cargo test`） |
-| FMT-1 | 工程 | `cargo fmt --check` 失败；`cargo clippy` 有既有错误 | 不能直接作为门禁 | 待办（需单独的全树格式化/修复提交） |
+| FMT-1 | 工程 | `cargo fmt --check` 失败；`cargo clippy` 有既有错误 | 不能直接作为门禁 | 已完成（全树格式化 + clippy 清零，已纳入 CI `quality` job） |
 | DOC-1 | 文档 | `readme.md` / `USAGE.md` 描述的 LLVM、标准库、类型检查等多未实现 | 使用者会误判能力 | 已完成（`readme.md` 顶部注明目标规范与实现状态；`AGENTS.md` / `USAGE.md` 已同步当前能力与限制） |
-| TOOL-1 | 工具链 | 无包管理器、LSP、调试器 | 仅 CLI + REPL | 暂缓 |
+| TOOL-1 | 工具链 | 无包管理器、LSP、调试器 | 仅 CLI + REPL | 已完成（`freebird.toml` 路径依赖 + `freebird.lock`、`freebird lsp`、`freebird dap`） |
 
 ## 执行顺序
 

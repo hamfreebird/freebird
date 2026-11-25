@@ -2,7 +2,7 @@
   "name": "freebird-language",
   "displayName": "Freebird Language Support",
   "description": "Syntax highlighting and language support for the Freebird programming language",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "freebird",
   "license": "MIT",
   "engines": {

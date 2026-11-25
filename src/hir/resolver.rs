@@ -48,6 +48,13 @@ pub enum ResolveError {
         name: String,
         span: Span,
     },
+    /// `impl Trait for Type` 缺少 trait 声明要求的方法。
+    MissingTraitMethod {
+        trait_name: String,
+        method: String,
+        ty: String,
+        span: Span,
+    },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -105,6 +112,15 @@ impl std::fmt::Display for ResolveError {
             ResolveError::ClosureCaptureUnsupported { name, span } => write!(
                 f,
                 "{span}: closure captures `{name}`; captured environments are not supported yet"
+            ),
+            ResolveError::MissingTraitMethod {
+                trait_name,
+                method,
+                ty,
+                span,
+            } => write!(
+                f,
+                "{span}: `impl {trait_name} for {ty}` is missing required method `{method}`"
             ),
         }
     }

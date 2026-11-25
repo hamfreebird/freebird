@@ -191,6 +191,7 @@ fn check_cross_module_refs(
     use crate::frontend::ast::Decl;
     match decl {
         Decl::Fn(f) => check_fn_refs(f, pub_names),
+        Decl::ConstFn(f) => check_fn_refs(f, pub_names),
         Decl::Struct(s) => {
             for field in &s.fields {
                 check_type_refs(&field.ty, pub_names)?;

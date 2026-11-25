@@ -636,3 +636,99 @@ fn link_stardust_works_for_llvm_executable() {
     assert_eq!(run.stdout, b"8\n");
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn missing_trait_method_is_rejected() {
+    let source = r#"
+trait Greet { fn greet(&self) -> i64; fn loud(&self) -> i64; }
+struct P { x: i64 }
+impl Greet for P { fn greet(&self) -> i64 { self.x } }
+fn main() { print(P { x: 1 }.greet()); }
+"#;
+    let errors = freebird::check_source(source).expect_err("missing method must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("missing required method `loud`"),
+        "unexpected diagnostics: {joined}"
+    );
+    let diagnostics = freebird::diagnostics::collect_diagnostics(source);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|d| d.message.contains("missing required method"))
+        .expect("R010 diagnostic");
+    assert_eq!(diagnostic.code, "R010");
+}
+
+#[test]
+fn complete_trait_impl_is_accepted() {
+    let source = r#"
+trait Greet { fn greet(&self) -> i64; fn loud(&self) -> i64; }
+struct P { x: i64 }
+impl Greet for P {
+    fn greet(&self) -> i64 { self.x }
+    fn loud(&self) -> i64 { self.x + 1 }
+}
+fn main() {
+    print(P { x: 6 }.loud());
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "trait_complete", b"");
+}
+
+#[test]
+fn const_fn_calls_work_on_both_backends() {
+    let source = r#"
+const fn double(n: i64) -> i64 { n * 2 }
+const fn fact(n: i64) -> i64 { if n <= 1 { 1 } else { n * fact(n - 1) } }
+const X: i64 = double(21);
+const Y: i64 = fact(5);
+fn main() {
+    print(X + Y);
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "const_fn", b"");
+}
+
+#[test]
+fn const_blocks_and_locals_are_evaluated() {
+    let source = r#"
+const fn calc(n: i64) -> i64 { let a = n + 1; let b = a * 2; b }
+const K: i64 = { let x = 3; x * 7 };
+fn main() {
+    print(calc(4) + K);
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "const_block", b"");
+}
+
+#[test]
+fn const_function_calls_require_const_fn() {
+    let source = r#"
+fn plain(n: i64) -> i64 { n * 2 }
+const X: i64 = plain(21);
+fn main() { print(X); }
+"#;
+    let errors = freebird::check_source(source).expect_err("non-const call must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("is not a `const fn`"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
+fn const_assignment_is_rejected() {
+    let source = r#"
+const X: i64 = { let mut v = 1; v = 2; v };
+fn main() { print(X); }
+"#;
+    let errors = freebird::check_source(source).expect_err("assignment in const must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("assignment is not supported"),
+        "unexpected diagnostics: {joined}"
+    );
+}

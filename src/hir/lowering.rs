@@ -52,10 +52,20 @@ impl Lowering {
         // 第一遍：收集所有函数签名
         self.collect_fn_signatures(ast_program);
 
+        // 收集 `const fn` 声明，供 const 表达式调用（与声明顺序无关）。
+        let const_fns: HashMap<String, &ast::FnDecl> = ast_program
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                ast::Decl::ConstFn(f) => Some((f.name.clone(), f)),
+                _ => None,
+            })
+            .collect();
+
         // 收集并求值 `const` 声明（按声明顺序，可引用此前的 const）。
         for decl in &ast_program.decls {
             if let ast::Decl::Const(c) = decl {
-                match eval_const_expr(&c.value, &self.consts) {
+                match eval_const_expr(&c.value, &self.consts, &const_fns) {
                     Ok(lit) => {
                         self.consts.insert(c.name.clone(), lit);
                     }
@@ -94,19 +104,38 @@ impl Lowering {
         }
 
         let mut traits = Vec::new();
+        let mut trait_methods: HashMap<String, Vec<String>> = HashMap::new();
+        for decl in &ast_program.decls {
+            if let ast::Decl::Trait(t) = decl {
+                traits.push(t.name.clone());
+                trait_methods.insert(
+                    t.name.clone(),
+                    t.methods.iter().map(|m| m.name.clone()).collect(),
+                );
+            }
+        }
         let mut trait_impls: HashMap<String, Vec<String>> = HashMap::new();
         for decl in &ast_program.decls {
-            match decl {
-                ast::Decl::Trait(t) => traits.push(t.name.clone()),
-                ast::Decl::Impl(i) => {
-                    if let Some(trait_name) = &i.trait_name {
-                        trait_impls
-                            .entry(trait_name.clone())
-                            .or_default()
-                            .push(i.type_name.clone());
+            if let ast::Decl::Impl(i) = decl
+                && let Some(trait_name) = &i.trait_name
+            {
+                trait_impls
+                    .entry(trait_name.clone())
+                    .or_default()
+                    .push(i.type_name.clone());
+                // trait 声明的方法必须在 impl 中全部实现（无默认方法）。
+                if let Some(required) = trait_methods.get(trait_name) {
+                    for method in required {
+                        if !i.fns.iter().any(|f| &f.name == method) {
+                            self.errors.push(ResolveError::MissingTraitMethod {
+                                trait_name: trait_name.clone(),
+                                method: method.clone(),
+                                ty: i.type_name.clone(),
+                                span: i.span,
+                            });
+                        }
                     }
                 }
-                _ => {}
             }
         }
 
@@ -124,6 +153,10 @@ impl Lowering {
         for decl in &program.decls {
             match decl {
                 ast::Decl::Fn(f) => {
+                    let sig = self.fn_decl_to_signature(f);
+                    self.resolver.register_fn(sig);
+                }
+                ast::Decl::ConstFn(f) => {
                     let sig = self.fn_decl_to_signature(f);
                     self.resolver.register_fn(sig);
                 }
@@ -176,6 +209,7 @@ impl Lowering {
     fn lower_decl(&mut self, decl: &ast::Decl) -> Option<HirDecl> {
         match decl {
             ast::Decl::Fn(f) => self.lower_fn(f).map(HirDecl::Fn),
+            ast::Decl::ConstFn(f) => self.lower_fn(f).map(HirDecl::Fn),
             ast::Decl::Struct(s) => Some(HirDecl::Struct(s.clone())),
             ast::Decl::Enum(e) => Some(HirDecl::Enum(e.clone())),
             ast::Decl::Extern(ext) => {
@@ -922,19 +956,39 @@ fn is_builtin_fn(name: &str) -> bool {
     crate::io::is_builtin(name)
 }
 
-/// 编译期求值 `const` 表达式：字面量、此前的 const、一元/二元运算。
+/// 编译期求值 `const` 表达式：字面量、此前的 const、一元/二元运算、
+/// `if`/块表达式，以及 `const fn` 调用（含递归）。
 fn eval_const_expr(
     expr: &ast::Expr,
     consts: &HashMap<String, ast::Literal>,
+    const_fns: &HashMap<String, &ast::FnDecl>,
 ) -> Result<ast::Literal, String> {
+    let mut locals = HashMap::new();
+    eval_const_expr_with_env(expr, consts, const_fns, &mut locals, 0)
+}
+
+/// 递归求值深度上限，防止 `const fn` 无限递归拖垮编译器。
+const CONST_EVAL_MAX_DEPTH: usize = 64;
+
+fn eval_const_expr_with_env(
+    expr: &ast::Expr,
+    consts: &HashMap<String, ast::Literal>,
+    const_fns: &HashMap<String, &ast::FnDecl>,
+    locals: &mut HashMap<String, ast::Literal>,
+    depth: usize,
+) -> Result<ast::Literal, String> {
+    if depth > CONST_EVAL_MAX_DEPTH {
+        return Err("const evaluation recursion limit exceeded".to_string());
+    }
     match expr {
         ast::Expr::Lit(lit, _) => Ok(lit.clone()),
-        ast::Expr::Var(name, _) => consts
+        ast::Expr::Var(name, _) => locals
             .get(name)
+            .or_else(|| consts.get(name))
             .cloned()
-            .ok_or_else(|| format!("`{name}` is not a previously defined const")),
+            .ok_or_else(|| format!("`{name}` is not a previously defined const or local")),
         ast::Expr::Unary(op, inner, _) => {
-            let value = eval_const_expr(inner, consts)?;
+            let value = eval_const_expr_with_env(inner, consts, const_fns, locals, depth)?;
             match (op, value) {
                 (ast::UnOp::Neg, ast::Literal::Int(n, suffix)) => n
                     .checked_neg()
@@ -945,14 +999,119 @@ fn eval_const_expr(
             }
         }
         ast::Expr::Binary(left, op, right, _) => {
-            let a = eval_const_expr(left, consts)?;
-            let b = eval_const_expr(right, consts)?;
+            let a = eval_const_expr_with_env(left, consts, const_fns, locals, depth)?;
+            let b = eval_const_expr_with_env(right, consts, const_fns, locals, depth)?;
             eval_const_binary(*op, a, b)
         }
+        ast::Expr::If(cond, then_block, else_block, _) => {
+            let value = eval_const_expr_with_env(cond, consts, const_fns, locals, depth)?;
+            match value {
+                ast::Literal::Bool(true) => {
+                    eval_const_block(then_block, consts, const_fns, depth + 1)
+                }
+                ast::Literal::Bool(false) => match else_block {
+                    Some(block) => eval_const_block(block, consts, const_fns, depth + 1),
+                    None => Ok(ast::Literal::Unit),
+                },
+                _ => Err("const `if` condition must be a bool".to_string()),
+            }
+        }
+        ast::Expr::Block(block, _) => eval_const_block(block, consts, const_fns, depth + 1),
+        ast::Expr::Call {
+            func, args, span, ..
+        } => {
+            let ast::Expr::Var(name, _) = func.as_ref() else {
+                return Err("const calls must name a `const fn`".to_string());
+            };
+            let Some(function) = const_fns.get(name) else {
+                return Err(format!(
+                    "`{name}` is not a `const fn`; only const functions can be called in const expressions"
+                ));
+            };
+            if args.len() != function.params.len() {
+                return Err(format!(
+                    "`{name}` expects {} arguments, got {}",
+                    function.params.len(),
+                    args.len()
+                ));
+            }
+            let mut values = Vec::with_capacity(args.len());
+            for arg in args {
+                let value = match arg {
+                    ast::CallArg::Pos(expr, _) => {
+                        eval_const_expr_with_env(expr, consts, const_fns, locals, depth)?
+                    }
+                    ast::CallArg::Named(_, _, _) => {
+                        return Err("named arguments are not supported in const calls".to_string());
+                    }
+                };
+                values.push(value);
+            }
+            let Some(body) = &function.body else {
+                return Err(format!("`{name}` has no body"));
+            };
+            let mut callee_locals: HashMap<String, ast::Literal> = function
+                .params
+                .iter()
+                .zip(values)
+                .map(|(param, value)| (param.name.clone(), value))
+                .collect();
+            eval_const_block_with_locals(body, consts, const_fns, &mut callee_locals, depth + 1)
+                .map_err(|reason| format!("in call to `{name}` at {span}: {reason}"))
+        }
         _ => Err(
-            "unsupported expression in const (use literals, const references, unary/binary operators)"
+            "unsupported expression in const (use literals, const references, const fn calls, if/blocks, and unary/binary operators)"
                 .to_string(),
         ),
+    }
+}
+
+fn eval_const_block(
+    block: &ast::Block,
+    consts: &HashMap<String, ast::Literal>,
+    const_fns: &HashMap<String, &ast::FnDecl>,
+    depth: usize,
+) -> Result<ast::Literal, String> {
+    let mut locals = HashMap::new();
+    eval_const_block_with_locals(block, consts, const_fns, &mut locals, depth)
+}
+
+fn eval_const_block_with_locals(
+    block: &ast::Block,
+    consts: &HashMap<String, ast::Literal>,
+    const_fns: &HashMap<String, &ast::FnDecl>,
+    locals: &mut HashMap<String, ast::Literal>,
+    depth: usize,
+) -> Result<ast::Literal, String> {
+    for stmt in &block.stmts {
+        match stmt {
+            ast::Stmt::Let {
+                pattern: ast::Pattern::Var(name, _),
+                init: Some(init),
+                ..
+            } => {
+                let value = eval_const_expr_with_env(init, consts, const_fns, locals, depth)?;
+                locals.insert(name.clone(), value);
+            }
+            ast::Stmt::Let { init: None, .. } => {
+                return Err("const `let` requires an initializer".to_string());
+            }
+            ast::Stmt::Let { .. } => {
+                return Err(
+                    "only simple `let name = ...` bindings are supported in const".to_string(),
+                );
+            }
+            ast::Stmt::Expr(expr, _) => {
+                eval_const_expr_with_env(expr, consts, const_fns, locals, depth)?;
+            }
+            ast::Stmt::Assign { .. } => {
+                return Err("assignment is not supported in const expressions".to_string());
+            }
+        }
+    }
+    match &block.tail {
+        Some(expr) => eval_const_expr_with_env(expr, consts, const_fns, locals, depth),
+        None => Ok(ast::Literal::Unit),
     }
 }
 

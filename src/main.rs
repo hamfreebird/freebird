@@ -474,7 +474,10 @@ fn main() {
             }
         }
         None => {
-            println!("Freebird v0.1.0 — type 'freebird --help' for usage.");
+            println!(
+                "Freebird v{} — type 'freebird --help' for usage.",
+                env!("CARGO_PKG_VERSION")
+            );
             println!("Phases 0-10 complete: parser, HIR, MIR, VM, codegen, REPL, IO library.");
         }
     }

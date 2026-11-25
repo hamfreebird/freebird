@@ -90,6 +90,7 @@ impl Parser {
                 Decl::Struct(s) => s.public = true,
                 Decl::Enum(e) => e.public = true,
                 Decl::Trait(t) => t.public = true,
+                Decl::ConstFn(f) => f.public = true,
                 _ => {}
             }
         }
@@ -98,9 +99,14 @@ impl Parser {
 
     // ─── 函数声明 ───
 
-    /// 解析 `const NAME: Type = expr;`（类型标注可选）。
+    /// 解析 `const NAME: Type = expr;`（类型标注可选）或 `const fn name(...) { ... }`。
     fn parse_const(&mut self) -> Result<Decl, FrontendError> {
         let span = self.expect(TokenKind::Const)?.span;
+        if self.check(TokenKind::Fn) {
+            let mut f = self.parse_fn(Vec::new())?;
+            f.span = span;
+            return Ok(Decl::ConstFn(f));
+        }
         let name = self.expect_ident("const name")?;
         let ty = if self.eat(TokenKind::Colon) {
             Some(self.parse_type()?)

@@ -13,7 +13,10 @@ use std::io::{self, BufRead, Write};
 use serde_json::{Value, json};
 
 use crate::diagnostics::{Diagnostic as FbDiagnostic, DiagnosticLevel, collect_diagnostics};
-use crate::frontend::ast::{Block, CallArg, Decl, Expr, ExternItem, FnDecl, Pattern, Stmt};
+use crate::frontend::ast::{
+    Block, CallArg, Decl, EnumDecl, Expr, ExternItem, FnDecl, Literal, Pattern, Stmt, StructDecl,
+    TraitDecl, Type as AstType, UnOp,
+};
 use crate::frontend::token::Span;
 use crate::io::BUILTINS;
 
@@ -70,7 +73,7 @@ impl LspServer {
                         "documentSymbolProvider": true,
                         "completionProvider": { "triggerCharacters": [":", "."] }
                     },
-                    "serverInfo": { "name": "freebird", "version": "0.1.0" }
+                    "serverInfo": { "name": "freebird", "version": env!("CARGO_PKG_VERSION") }
                 }),
             )],
             "initialized" | "$/cancelRequest" | "workspace/didChangeConfiguration" => Vec::new(),
@@ -173,7 +176,13 @@ impl LspServer {
         let Some((word, range)) = word_at(&text, line, character) else {
             return Value::Null;
         };
-        let Some(info) = hover_info(&text, &word) else {
+        // 语义优先：解析成功时只根据 AST 声明/绑定给出信息，注释与字符串不误报；
+        // 解析失败时回退到文本扫描。
+        let info = match semantic_hover(&text, line, character) {
+            Some(info) => info,
+            None => hover_info(&text, &word),
+        };
+        let Some(info) = info else {
             return Value::Null;
         };
         json!({
@@ -239,12 +248,35 @@ impl LspServer {
                 "detail": builtin_signature(builtin)
             }));
         }
-        let symbols = semantic_document_symbols(&text).unwrap_or_else(|| document_symbols(&text));
-        for (name, kind, _) in symbols {
+        // 语义优先：解析成功时用 AST 提供带签名/类型的符号（含局部变量）；
+        // 解析失败时回退到文档符号的文本扫描。
+        let symbols: Vec<(String, u64, String)> = match semantic_completion_symbols(&text) {
+            Some(symbols) => symbols,
+            None => semantic_document_symbols(&text)
+                .unwrap_or_else(|| document_symbols(&text))
+                .into_iter()
+                .map(|(name, kind, _)| {
+                    let kind = match kind {
+                        12 => 3,
+                        23 => 22,
+                        10 => 13,
+                        11 => 8,
+                        13 => 6,
+                        _ => 6,
+                    };
+                    (name, kind, "document symbol".to_string())
+                })
+                .collect(),
+        };
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (name, kind, detail) in symbols {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
             items.push(json!({
                 "label": name,
-                "kind": match kind { 12 => 3, 23 => 22, 10 => 13, 2 => 9, _ => 6 },
-                "detail": "document symbol"
+                "kind": kind,
+                "detail": detail
             }));
         }
         json!({ "isIncomplete": false, "items": items })
@@ -713,6 +745,424 @@ fn word_occurrences(text: &str, word: &str) -> Vec<(usize, usize, usize)> {
         }
     }
     occurrences
+}
+
+/// 语义 hover：返回外层 `None` 表示解析失败（调用方可回退文本扫描）；
+/// `Some(None)` 表示解析成功但光标处没有可显示的符号。
+///
+/// 解析成功时只依据 AST 声明与 `let` 绑定给出信息，因此注释/字符串中的同名文本
+/// 不会被误认为声明；无显式类型标注的局部变量会按字面量/构造表达式做轻量推断。
+fn semantic_hover(text: &str, line: usize, character: usize) -> Option<Option<String>> {
+    let (program, errors) = crate::frontend::parse(text);
+    if !errors.is_empty() {
+        return None;
+    }
+    let Some((word, _)) = word_at(text, line, character) else {
+        return Some(None);
+    };
+    if position_in_comment_or_string(text, line, character) {
+        return Some(None);
+    }
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) if f.name == word => {
+                return Some(Some(code_block(&format_fn_signature("", f))));
+            }
+            Decl::ConstFn(f) if f.name == word => {
+                return Some(Some(code_block(&format_fn_signature("const ", f))));
+            }
+            Decl::Struct(s) if s.name == word => {
+                return Some(Some(code_block(&format_struct_signature(s))));
+            }
+            Decl::Enum(e) if e.name == word => {
+                return Some(Some(code_block(&format_enum_signature(e))));
+            }
+            Decl::Trait(t) if t.name == word => {
+                return Some(Some(code_block(&format_trait_signature(t))));
+            }
+            Decl::Const(c) if c.name == word => {
+                let ty =
+                    c.ty.as_ref()
+                        .map(format_ast_type)
+                        .unwrap_or_else(|| "inferred".to_string());
+                return Some(Some(code_block(&format!("const {}: {ty}", c.name))));
+            }
+            Decl::Impl(i) => {
+                if let Some(f) = i.fns.iter().find(|f| f.name == word) {
+                    let prefix = format!("{}::", i.type_name);
+                    return Some(Some(code_block(&format_fn_signature(&prefix, f))));
+                }
+            }
+            _ => {}
+        }
+    }
+    for decl in &program.decls {
+        let body = match decl {
+            Decl::Fn(f) | Decl::ConstFn(f) => f.body.as_ref(),
+            Decl::Impl(i) => {
+                if let Some(found) = i
+                    .fns
+                    .iter()
+                    .filter_map(|f| f.body.as_ref())
+                    .find_map(|body| find_let_hover(body, &word))
+                {
+                    return Some(Some(found));
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(found) = body.and_then(|body| find_let_hover(body, &word)) {
+            return Some(Some(found));
+        }
+    }
+    Some(None)
+}
+
+fn code_block(text: &str) -> String {
+    format!("```freebird\n{text}\n```")
+}
+
+/// 语义补全符号：（名字、CompletionItemKind、detail）。
+/// 解析失败时返回 `None`，调用方回退到文本扫描。
+fn semantic_completion_symbols(text: &str) -> Option<Vec<(String, u64, String)>> {
+    let (program, errors) = crate::frontend::parse(text);
+    if !errors.is_empty() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => out.push((f.name.clone(), 3, format_fn_signature("", f))),
+            Decl::ConstFn(f) => out.push((f.name.clone(), 3, format_fn_signature("const ", f))),
+            Decl::Struct(s) => out.push((s.name.clone(), 22, format_struct_signature(s))),
+            Decl::Enum(e) => out.push((e.name.clone(), 13, format_enum_signature(e))),
+            Decl::Trait(t) => out.push((t.name.clone(), 8, format_trait_signature(t))),
+            Decl::Const(c) => {
+                let ty =
+                    c.ty.as_ref()
+                        .map(format_ast_type)
+                        .unwrap_or_else(|| "inferred".to_string());
+                out.push((c.name.clone(), 21, format!("const {}: {ty}", c.name)));
+            }
+            Decl::Impl(i) => {
+                for f in &i.fns {
+                    let prefix = format!("{}::", i.type_name);
+                    out.push((f.name.clone(), 2, format_fn_signature(&prefix, f)));
+                }
+            }
+            _ => {}
+        }
+        match decl {
+            Decl::Fn(f) | Decl::ConstFn(f) => {
+                if let Some(body) = &f.body {
+                    collect_let_completion(body, &mut out);
+                }
+            }
+            Decl::Impl(i) => {
+                for f in &i.fns {
+                    if let Some(body) = &f.body {
+                        collect_let_completion(body, &mut out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(out)
+}
+
+fn collect_let_completion(block: &Block, out: &mut Vec<(String, u64, String)>) {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let {
+                pattern, ty, init, ..
+            } => {
+                let ty_text = ty
+                    .as_ref()
+                    .map(format_ast_type)
+                    .or_else(|| init.as_ref().and_then(infer_expr_type))
+                    .unwrap_or_else(|| "inferred".to_string());
+                collect_pattern_completion(pattern, &ty_text, out);
+                if let Some(init) = init {
+                    collect_let_completion_expr(init, out);
+                }
+            }
+            Stmt::Expr(expr, _) => collect_let_completion_expr(expr, out),
+            Stmt::Assign { .. } => {}
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_let_completion_expr(tail, out);
+    }
+}
+
+fn collect_pattern_completion(pattern: &Pattern, ty: &str, out: &mut Vec<(String, u64, String)>) {
+    match pattern {
+        Pattern::Var(name, _) => out.push((name.clone(), 6, format!("let {name}: {ty}"))),
+        Pattern::Tuple(patterns, _, _) => {
+            for pattern in patterns {
+                collect_pattern_completion(pattern, "?", out);
+            }
+        }
+        Pattern::Struct { fields, .. } => {
+            for pattern in fields.iter().filter_map(|(_, pattern)| pattern.as_ref()) {
+                collect_pattern_completion(pattern, "?", out);
+            }
+        }
+        Pattern::Enum {
+            inner: Some(inner), ..
+        } => collect_pattern_completion(inner, ty, out),
+        Pattern::Ref(inner, _, _) => collect_pattern_completion(inner, ty, out),
+        Pattern::Or(patterns, _) => {
+            if let Some(first) = patterns.first() {
+                collect_pattern_completion(first, ty, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_let_completion_expr(expr: &Expr, out: &mut Vec<(String, u64, String)>) {
+    match expr {
+        Expr::Block(block, _) | Expr::Loop(block, _) | Expr::Unsafe(block, _) => {
+            collect_let_completion(block, out)
+        }
+        Expr::If(_, then, else_, _) => {
+            collect_let_completion(then, out);
+            if let Some(else_) = else_ {
+                collect_let_completion(else_, out);
+            }
+        }
+        Expr::While(_, body, _) | Expr::For { body, .. } => collect_let_completion(body, out),
+        Expr::Match(scrutinee, arms, _) => {
+            collect_let_completion_expr(scrutinee, out);
+            for arm in arms {
+                collect_let_completion_expr(&arm.body, out);
+            }
+        }
+        Expr::Labelled(_, inner, _) => collect_let_completion_expr(inner, out),
+        _ => {}
+    }
+}
+
+fn format_ast_type(ty: &AstType) -> String {
+    match ty {
+        AstType::Path(path, _) => path.join("::"),
+        AstType::Generic(base, args, _) => {
+            let args: Vec<String> = args.iter().map(format_ast_type).collect();
+            format!("{}<{}>", format_ast_type(base), args.join(", "))
+        }
+        AstType::Ref(inner, mutable, _) => {
+            let prefix = if *mutable { "&mut " } else { "&" };
+            format!("{prefix}{}", format_ast_type(inner))
+        }
+        AstType::Tuple(types, _) => {
+            if types.is_empty() {
+                "()".to_string()
+            } else {
+                let inner: Vec<String> = types.iter().map(format_ast_type).collect();
+                format!("({})", inner.join(", "))
+            }
+        }
+        AstType::Array(inner, _, _) => format!("[{}; _]", format_ast_type(inner)),
+        AstType::FnPtr(params, ret, _) => {
+            let params: Vec<String> = params.iter().map(format_ast_type).collect();
+            let mut out = format!("fn({})", params.join(", "));
+            if let Some(ret) = ret {
+                out.push_str(" -> ");
+                out.push_str(&format_ast_type(ret));
+            }
+            out
+        }
+        AstType::Never(_) => "!".to_string(),
+        AstType::Wildcard(_) => "_".to_string(),
+    }
+}
+
+fn format_generics(generics: &[crate::frontend::ast::GenericParam]) -> String {
+    if generics.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = generics
+        .iter()
+        .map(|param| {
+            if param.bounds.is_empty() {
+                param.name.clone()
+            } else {
+                format!("{}: {}", param.name, param.bounds.join(" + "))
+            }
+        })
+        .collect();
+    format!("<{}>", parts.join(", "))
+}
+
+fn format_fn_signature(prefix: &str, f: &FnDecl) -> String {
+    let visibility = if f.public { "pub " } else { "" };
+    let generics = format_generics(&f.generics);
+    let params: Vec<String> = f
+        .params
+        .iter()
+        .map(|p| format!("{}: {}", p.name, format_ast_type(&p.ty)))
+        .collect();
+    let mut out = format!(
+        "{visibility}{prefix}fn {}{generics}({})",
+        f.name,
+        params.join(", ")
+    );
+    if let Some(ret) = &f.return_type {
+        let rendered = format_ast_type(ret);
+        if rendered != "()" {
+            out.push_str(" -> ");
+            out.push_str(&rendered);
+        }
+    }
+    out
+}
+
+fn format_struct_signature(s: &StructDecl) -> String {
+    let generics = format_generics(&s.generics);
+    let fields: Vec<String> = s
+        .fields
+        .iter()
+        .map(|f| format!("{}: {}", f.name, format_ast_type(&f.ty)))
+        .collect();
+    format!("struct {}{generics} {{ {} }}", s.name, fields.join(", "))
+}
+
+fn format_enum_signature(e: &EnumDecl) -> String {
+    let generics = format_generics(&e.generics);
+    let variants: Vec<String> = e
+        .variants
+        .iter()
+        .map(|v| match &v.data {
+            Some(data) => format!("{}({})", v.name, format_ast_type(data)),
+            None => v.name.clone(),
+        })
+        .collect();
+    format!("enum {}{generics} {{ {} }}", e.name, variants.join(", "))
+}
+
+fn format_trait_signature(t: &TraitDecl) -> String {
+    let methods: Vec<String> = t
+        .methods
+        .iter()
+        .map(|m| format_fn_signature("", m))
+        .collect();
+    format!("trait {} {{ {} }}", t.name, methods.join("; "))
+}
+
+/// 在块中查找 `word` 对应的 `let` 绑定并返回 hover 文本。
+fn find_let_hover(block: &Block, word: &str) -> Option<String> {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Let {
+                pattern, ty, init, ..
+            } => {
+                if pattern_has_var(pattern, word) {
+                    let ty_text = ty
+                        .as_ref()
+                        .map(format_ast_type)
+                        .or_else(|| init.as_ref().and_then(infer_expr_type))
+                        .unwrap_or_else(|| "inferred".to_string());
+                    return Some(code_block(&format!("let {word}: {ty_text}")));
+                }
+                if let Some(init) = init
+                    && let Some(found) = find_let_hover_expr(init, word)
+                {
+                    return Some(found);
+                }
+            }
+            Stmt::Expr(expr, _) => {
+                if let Some(found) = find_let_hover_expr(expr, word) {
+                    return Some(found);
+                }
+            }
+            Stmt::Assign { .. } => {}
+        }
+    }
+    block
+        .tail
+        .as_deref()
+        .and_then(|tail| find_let_hover_expr(tail, word))
+}
+
+fn find_let_hover_expr(expr: &Expr, word: &str) -> Option<String> {
+    match expr {
+        Expr::Block(block, _) | Expr::Loop(block, _) | Expr::Unsafe(block, _) => {
+            find_let_hover(block, word)
+        }
+        Expr::If(_, then, else_, _) => find_let_hover(then, word)
+            .or_else(|| else_.as_ref().and_then(|block| find_let_hover(block, word))),
+        Expr::While(_, body, _) | Expr::For { body, .. } => find_let_hover(body, word),
+        Expr::Match(scrutinee, arms, _) => find_let_hover_expr(scrutinee, word).or_else(|| {
+            arms.iter()
+                .find_map(|arm| find_let_hover_expr(&arm.body, word))
+        }),
+        Expr::Labelled(_, inner, _) => find_let_hover_expr(inner, word),
+        _ => None,
+    }
+}
+
+fn pattern_has_var(pattern: &Pattern, word: &str) -> bool {
+    pattern_var_span(pattern, word).is_some()
+}
+
+fn infer_expr_type(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Lit(Literal::Int(_, _), _) => Some("i64".to_string()),
+        Expr::Lit(Literal::Float(_), _) => Some("f64".to_string()),
+        Expr::Lit(Literal::Bool(_), _) => Some("bool".to_string()),
+        Expr::Lit(Literal::Char(_), _) => Some("char".to_string()),
+        Expr::Lit(Literal::String(_), _) => Some("String".to_string()),
+        Expr::Lit(Literal::Unit, _) => Some("()".to_string()),
+        Expr::Unary(UnOp::Neg, inner, _) => infer_expr_type(inner),
+        Expr::StructLit { name, .. } => Some(name.join("::")),
+        Expr::EnumLit { name, variant, .. } => Some(format!("{}::{variant}", name.join("::"))),
+        Expr::Array(items, _) => items
+            .first()
+            .and_then(infer_expr_type)
+            .map(|item| format!("[{item}; _]")),
+        Expr::Tuple(items, _) => {
+            let types: Vec<String> = items
+                .iter()
+                .map(|item| infer_expr_type(item).unwrap_or_else(|| "?".to_string()))
+                .collect();
+            Some(format!("({})", types.join(", ")))
+        }
+        _ => None,
+    }
+}
+
+/// 判断光标是否位于行注释或字符串字面量中（单行范围内）。
+fn position_in_comment_or_string(text: &str, line: usize, character: usize) -> bool {
+    let Some(line_text) = text.lines().nth(line) else {
+        return false;
+    };
+    let cursor = utf16_to_char_index(line_text, character);
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, ch) in line_text.chars().enumerate() {
+        if index >= cursor {
+            break;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+        } else if ch == '/' && line_text.chars().nth(index + 1) == Some('/') {
+            return true;
+        }
+    }
+    in_string
 }
 
 fn hover_info(text: &str, word: &str) -> Option<String> {
@@ -1300,5 +1750,118 @@ mod tests {
         }));
         let value = hover[0]["result"]["contents"]["value"].as_str().unwrap();
         assert!(value.contains("let s:"), "unexpected hover: {value}");
+    }
+
+    #[test]
+    fn hover_is_semantic_and_infers_local_types() {
+        let mut server = LspServer::new();
+        let text = "fn main() {\n    let count = 42;\n    let label: String = \"count\";\n    print_int(count);\n    print_str(label);\n}\n";
+        server.handle(&did_open(text));
+
+        let mut hover_at = |line: usize, character: usize| {
+            let response = server.handle(&json!({
+                "jsonrpc": "2.0", "id": 20, "method": "textDocument/hover",
+                "params": {
+                    "textDocument": { "uri": "file:///test.fb" },
+                    "position": { "line": line, "character": character }
+                }
+            }));
+            response[0]["result"].clone()
+        };
+
+        let count = hover_at(1, 8);
+        assert!(
+            count["contents"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("let count: i64"),
+            "unexpected hover: {count}"
+        );
+        let label = hover_at(2, 8);
+        assert!(
+            label["contents"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("let label: String"),
+            "unexpected hover: {label}"
+        );
+        // 字符串里的同名文本不是声明，不应产生 hover。
+        assert_eq!(hover_at(2, 25), Value::Null);
+    }
+
+    #[test]
+    fn hover_ignores_comment_declarations() {
+        let mut server = LspServer::new();
+        let text = "// fn ghost(a: i64) -> i64 { a }\nfn main() { }\n";
+        server.handle(&did_open(text));
+        let hover = server.handle(&json!({
+            "jsonrpc": "2.0", "id": 21, "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": "file:///test.fb" },
+                "position": { "line": 0, "character": 6 }
+            }
+        }));
+        assert_eq!(hover[0]["result"], Value::Null);
+    }
+
+    #[test]
+    fn hover_reports_struct_enum_and_const_signatures() {
+        let mut server = LspServer::new();
+        let text = "struct P { x: i64, y: bool }\nenum E { A(i64), B }\nconst K: i64 = 7;\nfn main() { }\n";
+        server.handle(&did_open(text));
+        let mut hover_at = |line: usize, character: usize| {
+            let response = server.handle(&json!({
+                "jsonrpc": "2.0", "id": 22, "method": "textDocument/hover",
+                "params": {
+                    "textDocument": { "uri": "file:///test.fb" },
+                    "position": { "line": line, "character": character }
+                }
+            }));
+            response[0]["result"]["contents"]["value"]
+                .as_str()
+                .map(str::to_string)
+        };
+        assert!(
+            hover_at(0, 7)
+                .unwrap()
+                .contains("struct P { x: i64, y: bool }"),
+            "struct hover"
+        );
+        assert!(
+            hover_at(1, 5).unwrap().contains("enum E { A(i64), B }"),
+            "enum hover"
+        );
+        assert!(
+            hover_at(2, 6).unwrap().contains("const K: i64"),
+            "const hover"
+        );
+    }
+
+    #[test]
+    fn completion_reports_semantic_details() {
+        let mut server = LspServer::new();
+        let text = "fn add(a: i64, b: i64) -> i64 { a + b }\nfn main() {\n    let count = 42;\n    print(add(count, 1));\n}\n";
+        server.handle(&did_open(text));
+        let response = server.handle(&json!({
+            "jsonrpc": "2.0", "id": 30, "method": "textDocument/completion",
+            "params": { "textDocument": { "uri": "file:///test.fb" }, "position": { "line": 3, "character": 10 } }
+        }));
+        let items = response[0]["result"]["items"].as_array().unwrap();
+        let detail_of = |label: &str| -> Option<String> {
+            items
+                .iter()
+                .find(|item| item["label"] == label)
+                .and_then(|item| item["detail"].as_str())
+                .map(str::to_string)
+        };
+        assert_eq!(
+            detail_of("add").as_deref(),
+            Some("fn add(a: i64, b: i64) -> i64")
+        );
+        assert_eq!(detail_of("count").as_deref(), Some("let count: i64"));
+        assert_eq!(detail_of("print").as_deref(), Some("print(i64)"));
+        // 关键字与同名符号去重后只保留一个条目。
+        let fn_items: Vec<&Value> = items.iter().filter(|item| item["label"] == "fn").collect();
+        assert_eq!(fn_items.len(), 1);
     }
 }

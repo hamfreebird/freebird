@@ -12,6 +12,7 @@
 > **M4 完成后基线**（2026-11-24）：`cargo test` = **227 unit + 190 integration** 全绿（新增 `tests/m4_test.rs` 13 项）；fmt/clippy、文档链接与 examples 巡检纳入 CI。
 > **M5 完成后基线**（2026-11-24，历史）：`cargo test` = **232 unit + 196 integration** 全绿（新增 `tests/m5_test.rs` 5 项、`tests/snapshot_test.rs` 1 项）；fmt/clippy/bench/文档/快照检查纳入 CI。当前基线见 `STATUS.md`。
 > **M6 完成后基线**（2026-11-25）：`cargo test` = **254 unit + 235 integration** 全绿（`tests/m6_test.rs` 30 项，覆盖 format/泛型与用户 trait 约束/单态化/const/闭包与捕获/限制注解/LLVM 拒绝）；Miri 已转阻塞，ASan/UBSan 接入 CI 过渡期。
+> **v0.1.1 后基线**（2026-11-25）：`cargo test` = **258 unit + 241 integration** 全绿（新增 `const fn`/`if`/块求值、trait 方法完整性 R010、LSP 语义化 hover/completion；`tests/m6_test.rs` 36 项）。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 
@@ -220,7 +221,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 | ID | 工作项 | 验收标准 | 状态 |
 |---|---|---|---|
-| M4-1 | LSP：诊断、hover、补全、跳转定义、引用、文档符号 | VS Code 扩展接入 LSP；打开坏文件能显示行内诊断 | ✅ 诊断/hover/定义/符号/补全 + VS Code 接入；references 未实现 |
+| M4-1 | LSP：诊断、hover、补全、跳转定义、引用、文档符号 | VS Code 扩展接入 LSP；打开坏文件能显示行内诊断 | ✅ 诊断/语义化 hover/定义/引用/重命名/符号/补全 + VS Code 接入 |
 | M4-2 | 调试器：DAP 断点、单步、调用栈、变量查看；先覆盖 VM | `freebird run --debug` 或独立 `freebird dap` 可用；有端到端调试测试 | ✅ `freebird dap`（断点/单步/栈/变量）；运行中 `pause` 与变量展开在 M6-3.2 补齐 |
 | M4-3 | REPL 增强：多行输入、历史、`:load`、`:type`、错误恢复 | 交互测试/脚本测试；REPL 与文件执行语义一致 | ✅ |
 | M4-4 | 格式化器与 lint 门禁：`freebird fmt`；清理既有 fmt/clippy 问题后加入 CI | `cargo fmt --check`、`cargo clippy --all-targets` 通过并成为 CI 门禁 | ✅ |
@@ -236,7 +237,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 **M4 已知限制**
 
-- LSP 为文本级 MVP：hover/定义/符号基于文本扫描，列号按 Unicode 标量而非 UTF-16；未实现 references/rename/语义补全。
+- LSP 已语义化（解析失败回退文本）：hover/completion/definition/references/rename/documentSymbol 基于 AST；位置按 UTF-16。
 - DAP：M6-3.2 起支持运行中 `pause`（协作式分片）与变量展开；`next`/`stepIn` 仍为指令级单步。
 - 包管理仅支持单层路径依赖，无 registry、版本解析或锁定文件。
 - `freebird fmt` 仅规范化缩进/空白，不重排表达式。
@@ -304,7 +305,7 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 | 仅 Linux x86_64 验证/发布 | M6-4.5（已解决：明确仅 Linux 发布 + 跨平台编译探测 job） |
 | 泛型无约束/单态化 | M6-5.1（ADR 0006 已设计，实施待排期） |
 | 无字符串格式化 API | M6-5.2（ADR 0006 已设计，实施待排期） |
-| 闭包/`const`/trait | M6-5.3（`const` 已完成；闭包与用户 trait 待排期，ADR 0006 已设计） |
+| 闭包/`const`/trait | M6-5.3（`const`/`const fn`/无捕获闭包/用户 trait 已完成；捕获闭包待排期，ADR 0006 已设计） |
 
 #### M6-1 正确性与防静默降级（P0，1.3 为 P1）
 
@@ -350,9 +351,9 @@ VM/LLVM 输出对比测试。FFI 生成真实 `Call(id, argc)`，默认 ID 由 S
 
 | ID | 工作项 | 验收标准 |
 |---|---|---|
-| M6-5.1 | 泛型约束与按实例单态化 | 先 ADR；分阶段实现；双后端测试；不破坏现有类型擦除程序（P2，基础设施 + 内建 trait 约束已完成：实例收集、`Pair<i64>`/`Pair<String>` 独立布局、T026；按实例函数体单态化待排期） |
+| M6-5.1 | 泛型约束与按实例单态化 | 先 ADR；分阶段实现；双后端测试；不破坏现有类型擦除程序（P2，已完成：实例收集、`Pair<i64>`/`Pair<String>` 独立布局、T026、按实例函数体单态化） |
 | M6-5.2 | 字符串格式化 API | 规范提案（格式化/插值）；实现与测试；文档同步（P2，已完成：`format(template, args...)` + `MirInst::Format`，VM/Stardust/LLVM 一致） |
-| M6-5.3 | 闭包、`const`、trait/关联类型 | 先 ADR/规范；不作为 M6 硬承诺（P3，`const` 已完成；闭包语法显式拒绝（T018）；trait 声明 + `impl Trait for Type` 静态分发已完成；捕获语义、trait 约束/`dyn`/关联类型待排期） |
+| M6-5.3 | 闭包、`const`、trait/关联类型 | 先 ADR/规范；不作为 M6 硬承诺（P3，`const`/`const fn`/无捕获闭包/用户 trait 约束与静态分发已完成；捕获环境、`dyn`/关联类型/默认方法待排期） |
 
 **M6 执行顺序**
 

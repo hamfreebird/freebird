@@ -331,6 +331,8 @@ pub enum Decl {
     Mod { name: String, span: Span },
     /// 常量声明: `const NAME: Type = expr;`（编译期求值子集）
     Const(ConstDecl),
+    /// 编译期函数声明: `const fn name(...) { ... }`（可在 const 表达式中调用）
+    ConstFn(FnDecl),
 }
 
 /// `const NAME: Type = expr;`；`ty` 省略时按求值结果推断。

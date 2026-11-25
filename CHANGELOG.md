@@ -1,14 +1,28 @@
 # Changelog
 
 本文件记录 Freebird 实现（Cargo 包版本）的显著变更。语言规范版本见 `readme.md` 顶部；
-两者独立演进（当前规范 v0.5.0、实现 0.1.0）。
+两者独立演进（当前规范 v0.5.0、实现 0.1.1）。
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本遵循语义化版本。
 0.x 阶段 minor 版本允许包含破坏性变更，但必须在对应条目中写明迁移方式（见 `docs/release.md`）。
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-25
+
 ### Added
+
+- **trait 实现完整性校验**：`impl Trait for Type` 必须实现 trait 声明的全部方法，
+  缺失时报 R010（含缺失方法名与 impl 位置）；新增正/负向测试。
+- **const 求值增强**：编译期求值支持 `if`/块表达式、局部 `let` 与 `const fn` 调用
+  （支持递归，深度上限 64）；`const fn` 作为普通函数参与类型检查与 MIR。循环求值
+  与 const 上下文捕获外部局部变量仍不支持，调用非 `const fn` 报 R008。
+- **LSP 语义化 hover**：解析成功时基于 AST 提供函数/方法签名、struct/enum/trait/const
+  声明与局部变量类型（显式标注或字面量/构造推断），注释与字符串中的同名文本不误报；
+  解析失败回退文本扫描。
+- **LSP 语义化 completion**：基于 AST 提供函数/方法签名、结构体/枚举/trait/const 与
+  局部变量 detail，并按 label 去重；解析失败回退文本扫描。
+
 
 - **完整 CI 流水线**：阻塞门禁 `quality`（fmt/clippy/release build/全量测试/examples）、
   `docs`（链接/fixture/文档/版本/占位符）、`differential`、`llvm`、`miri`、`package`
@@ -79,7 +93,7 @@
   trait 约束检查、`dyn Trait`/vtable 或关联类型。`m6_test` 覆盖双后端输出。
 - **LSP definition/documentSymbol 语义化**：definition 与 documentSymbol 改为基于 AST
   声明（函数/结构体/枚举/trait/const/let），注释中的假声明不再产生结果；
-  hover/completion 仍为文本级。
+  hover/completion 随后在 0.1.1 中改为基于 AST 的语义化实现。
 - **泛型函数按实例单态化**：MIR 为每个实例预分配 FnId 并复制泛型函数体
   （`id<i64>`/`id<String>` 独立），调用点按类型检查注解解析到实例；`fn_info` 由 MIR
   生成器统一提供。泛型体仍只允许类型无关操作。

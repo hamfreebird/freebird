@@ -74,7 +74,7 @@ impl Repl {
 
     /// 启动 REPL 主循环
     pub fn run(&mut self) -> io::Result<()> {
-        println!("Freebird REPL v0.1.0");
+        println!("Freebird REPL v{}", env!("CARGO_PKG_VERSION"));
         println!("Type :help for commands, :q to quit.\n");
 
         let stdin = io::stdin();

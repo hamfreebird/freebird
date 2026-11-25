@@ -104,6 +104,7 @@ fn resolve_code(error: &ResolveError) -> &'static str {
         ResolveError::InvalidAssignmentTarget { .. } => "R007",
         ResolveError::InvalidConst { .. } => "R008",
         ResolveError::ClosureCaptureUnsupported { .. } => "R009",
+        ResolveError::MissingTraitMethod { .. } => "R010",
     }
 }
 
@@ -259,6 +260,10 @@ pub fn resolve_to_diagnostics(errors: &[ResolveError]) -> Vec<Diagnostic> {
                         "pass the captured value as an explicit parameter; captured environments are future work"
                             .to_string(),
                     ),
+                ),
+                ResolveError::MissingTraitMethod { span, .. } => (
+                    *span,
+                    Some("add the missing method to the `impl Trait for Type` block".to_string()),
                 ),
             };
             let related = match e {

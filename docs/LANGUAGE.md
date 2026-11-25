@@ -1,6 +1,6 @@
 # Freebird 语言文档
 
-> 适用版本：实现 0.1.0 / 规范 v0.5.0
+> 适用版本：实现 0.1.1 / 规范 v0.5.0
 > 最后更新：2026-11-25
 
 本文面向 Freebird 使用者，覆盖已实现的语法、类型、运行时与工具链。目标规范以
@@ -274,7 +274,8 @@ impl P {
 - 接收者支持 `self`、`&self`、`&mut self`；`self.field = v` 会写回调用方变量。
 - 关联函数用 `Type::f(...)` 调用；`impl<T>` 支持类型参数（类型擦除 MVP）。
 - 用户 trait 可作为泛型约束（见第 10 节）。
-- 限制：不校验 trait 方法是否全部实现；无 `dyn Trait`/vtable、关联类型、默认方法。
+- `impl Trait for Type` 必须实现 trait 声明的**全部**方法，缺失时报 R010。
+- 限制：无 `dyn Trait`/vtable、关联类型、默认方法。
 
 ## 12. 闭包
 
@@ -299,16 +300,25 @@ print(f(3));
 const LIMIT: i64 = 40 + 2;
 const ENABLED: bool = LIMIT > 10;
 
+const fn double(n: i64) -> i64 { n * 2 }
+const fn fact(n: i64) -> i64 { if n <= 1 { 1 } else { n * fact(n - 1) } }
+const RESULT: i64 = double(fact(3));
+
 fn main() {
     print(LIMIT);
+    print(RESULT);
 }
 ```
 
-- 语法：`const NAME: Type = expr;`，类型标注可省略。
-- 求值子集：字面量、此前声明的 const、一元/二元算术、比较与逻辑。
+- 语法：`const NAME: Type = expr;`，类型标注可省略；`const fn name(params) { body }`
+  声明可在 const 表达式中调用的函数。
+- 求值子集：字面量、此前声明的 const、一元/二元算术、比较与逻辑、`if`/块表达式、
+  局部 `let`，以及 `const fn` 调用（支持递归，求值深度上限 64）。
 - 求值在 HIR 降级期完成，使用点替换为字面量，三后端一致。
-- 非法常量报 R008：除零、前向引用、整数溢出、不支持的表达式（函数调用、循环、堆分配等）。
-- 限制：`const fn`、分支/循环求值尚未实现。
+- 非法常量报 R008：除零、前向引用、整数溢出、赋值、调用非 `const fn`、不支持的表达式
+  （循环、堆分配等）。
+- 限制：`const fn` 内不支持循环求值（`while`/`for`/`loop`）；不支持从 const 上下文捕获
+  外部局部变量。
 
 ## 14. 模块、项目与依赖
 
@@ -476,7 +486,7 @@ let escaped: String = format("{{literal}} {}", "v");
 | `freebird build --target stardust` | 生成 Stardust 源码（`-o` 指定输出） |
 | `freebird build --target llvm` | 生成 LLVM IR 或可执行文件（`--emit ir\|exe`） |
 | `freebird fmt` | 规范化缩进/空白（`--check`/`--write`/`--stdin`） |
-| `freebird lsp` | stdio JSON-RPC：诊断、hover、定义、引用、重命名、符号、补全 |
+| `freebird lsp` | stdio JSON-RPC：诊断、语义化 hover/定义/引用/重命名/符号/补全 |
 | `freebird dap` | stdio DAP：断点、单步、栈、变量、pause |
 | `freebird repl` | 交互式会话；`let` 绑定跨输入保留 |
 | `freebird lock` | 生成/更新 `freebird.lock` |
@@ -530,6 +540,7 @@ let escaped: String = format("{{literal}} {}", "v");
 | R007 | 非法赋值目标 |
 | R008 | 非法 `const`（求值失败/溢出/前向引用等） |
 | R009 | 闭包捕获外部变量（暂不支持） |
+| R010 | `impl Trait for Type` 缺少 trait 要求的方法 |
 
 ### 类型检查（T）
 
@@ -584,15 +595,16 @@ let escaped: String = format("{{literal}} {}", "v");
 以下限制与 `STATUS.md`/`ROADMAP.md` 同步维护：
 
 1. **闭包捕获**：仅支持无捕获闭包；环境结构体与 `fn(env, args)` 调用约定未实现（R009）。
-2. **trait 高级能力**：无 `dyn Trait`/vtable、关联类型、默认方法；不校验 trait 方法是否
-   全部实现。
+2. **trait 高级能力**：无 `dyn Trait`/vtable、关联类型、默认方法；`impl Trait for Type`
+   已校验必须实现 trait 声明的全部方法（R010）。
 3. **泛型**：泛型体只能使用与具体类型无关的操作；无完整约束求解。
-4. **const**：无 `const fn`、分支/循环求值。
+4. **const**：支持 `const fn`、`if`/块与局部 `let`；不支持循环求值，也不支持 const 上下文
+   捕获外部局部变量。
 5. **包管理**：仅路径依赖；无版本解析、registry 或传递版本约束。
 6. **堆回收**：Stardust 对数组/结构体 COW 旧块与嵌套容器块保守不回收（ADR 0002）；
    VM 随值释放。
-7. **LSP**：hover/completion 仍为文本级；definition/references/rename/documentSymbol
-   基于 AST。
+7. **LSP**：definition/references/rename/documentSymbol/hover/completion 均基于 AST
+   （解析失败时回退文本匹配）；hover 提供签名与变量类型，completion 提供签名/类型 detail。
 8. **LLVM**：不执行运行时限制属性（编译期拒绝）；继承 Stardust 的越界陷阱等行为。
 9. **平台**：只发布 Linux x86_64；macOS/Windows 仅做编译探测。
 10. **质量门禁**：ASan/UBSan 仍为过渡期告警；Miri 在 CI 阻塞运行，但本地工具链目录只读时
