@@ -347,8 +347,10 @@ impl Greet for Point { fn greet(&self) -> i64 { self.x } }
 
 - `trait` 声明方法签名（允许无函数体）；`impl Trait for Type` 的方法按 `Type::name` 扁平化，
   调用点 `x.greet()` 复用现有用户方法解析，属于静态分发。
-- 当前不检查 `Type` 是否真的实现了 trait，也不支持 `dyn Trait`、关联类型或把用户 trait
-  用作泛型约束；这些留待后续轮次（`docs/adr/0006-language-evolution.md`）。
+- 泛型参数可以使用用户 trait 作为约束（`fn need<T: Greet>(x: T)`）：在结构体/枚举字面量与
+  泛型函数调用点检查实参类型是否有对应的 `impl Greet for Type`，缺失报 T026。
+- 仍不支持 `dyn Trait`/vtable、关联类型与 trait 默认方法；这些留待后续轮次
+  （`docs/adr/0006-language-evolution.md`）。
 
 ### 5.8 闭包（无捕获）
 

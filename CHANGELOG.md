@@ -62,6 +62,9 @@
 - **M6-5.3 trait 静态分发**：新增 `trait Name { fn ...; }` 声明与 `impl Trait for Type { ... }`。
   impl 方法沿用 `Type::name` 扁平化，调用点复用现有用户方法解析（静态分发）；暂不做
   trait 约束检查、`dyn Trait`/vtable 或关联类型。`m6_test` 覆盖双后端输出。
+- **用户 trait 约束**：泛型参数可使用用户 trait 作为约束（`<T: Greet>`）；类型检查在
+  结构体/枚举字面量与泛型函数调用点检查实参类型是否有对应 `impl Trait for Type`，缺失报
+  T026。仍不支持 `dyn Trait`/vtable、关联类型与默认方法。
 - **LLVM 运行时限制明确拒绝**：Stardust 的 LLVM 编译路径只转发 `char_mode`，不会执行
   `#[max_steps]` 等限制；Freebird 的 `--target llvm` 现在在编译期返回明确错误，避免
   用户误以为限制生效。VM 与 `--target stardust` 仍正常执行这些属性。

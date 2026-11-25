@@ -248,6 +248,10 @@ pub struct HirProgram {
     pub decls: Vec<HirDecl>,
     /// 所有声明的函数签名（用于前向引用）
     pub fn_signatures: Vec<FnSignature>,
+    /// 已声明的 trait 名（M6-5.3 用户 trait 约束）。
+    pub traits: Vec<String>,
+    /// trait → 实现它的类型名。
+    pub trait_impls: std::collections::HashMap<String, Vec<String>>,
 }
 
 // ─── AST 类型到 HIR 类型的转换 ───

@@ -11,7 +11,7 @@
 > **M3 完成后基线**（2026-11-24）：`cargo test` = **206 unit + 177 integration** 全绿（新增 `tests/m3_test.rs` 35 项）；`cargo build --release` 通过；LLVM 后端经仓库自带 Stardust 工具链验证。
 > **M4 完成后基线**（2026-11-24）：`cargo test` = **227 unit + 190 integration** 全绿（新增 `tests/m4_test.rs` 13 项）；fmt/clippy、文档链接与 examples 巡检纳入 CI。
 > **M5 完成后基线**（2026-11-24，历史）：`cargo test` = **232 unit + 196 integration** 全绿（新增 `tests/m5_test.rs` 5 项、`tests/snapshot_test.rs` 1 项）；fmt/clippy/bench/文档/快照检查纳入 CI。当前基线见 `STATUS.md`。
-> **M6 完成后基线**（2026-11-25）：`cargo test` = **252 unit + 232 integration** 全绿（`tests/m6_test.rs` 27 项，覆盖 format/泛型约束/const/闭包与捕获/trait/限制注解/LLVM 拒绝）；Miri 已转阻塞，ASan/UBSan 接入 CI 过渡期。
+> **M6 完成后基线**（2026-11-25）：`cargo test` = **252 unit + 234 integration** 全绿（`tests/m6_test.rs` 29 项，覆盖 format/泛型与用户 trait 约束/const/闭包与捕获/trait/限制注解/LLVM 拒绝）；Miri 已转阻塞，ASan/UBSan 接入 CI 过渡期。
 > **文档定位**：`readme.md` 是目标规范，`USAGE.md` 描述当前可用能力，`TASKS.md` 记录已完成/待办事项，`STATUS.md` 是规范 × 后端 × 测试矩阵，`IMPROVEMENTS.md` 是历史审计快照。
 > **本路线图的范围**：只列出已经通过源码检查或最小程序实测确认的差距；没有验证过的猜测不进入里程碑。行为冲突时以 `src/` 和测试为准。
 

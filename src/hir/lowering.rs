@@ -93,9 +93,28 @@ impl Lowering {
             decls.push(HirDecl::Fn(f));
         }
 
+        let mut traits = Vec::new();
+        let mut trait_impls: HashMap<String, Vec<String>> = HashMap::new();
+        for decl in &ast_program.decls {
+            match decl {
+                ast::Decl::Trait(t) => traits.push(t.name.clone()),
+                ast::Decl::Impl(i) => {
+                    if let Some(trait_name) = &i.trait_name {
+                        trait_impls
+                            .entry(trait_name.clone())
+                            .or_default()
+                            .push(i.type_name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
         HirProgram {
             decls,
             fn_signatures: self.resolver.fn_signatures.clone(),
+            traits,
+            trait_impls,
         }
     }
 

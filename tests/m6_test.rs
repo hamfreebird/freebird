@@ -180,6 +180,37 @@ fn main() {
 }
 
 #[test]
+fn user_trait_bounds_run_on_both_backends() {
+    let source = r#"
+trait Greet { fn greet(&self) -> i64; }
+struct P { x: i64 }
+impl Greet for P { fn greet(&self) -> i64 { self.x } }
+fn need<T: Greet>(x: T) -> i64 { 1 }
+fn main() {
+    print(need(P { x: 7 }));
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "user_trait_bound", b"");
+}
+
+#[test]
+fn missing_trait_impl_is_rejected() {
+    let source = r#"
+trait Greet { fn greet(&self) -> i64; }
+struct Q { x: i64 }
+fn need<T: Greet>(x: T) -> i64 { 1 }
+fn main() { print(need(Q { x: 1 })); }
+"#;
+    let errors = freebird::check_source(source).expect_err("missing impl must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("does not satisfy"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
 fn llvm_rejects_runtime_limit_attributes() {
     let source = "#[max_steps=1000]\nfn main() { }";
     let program = freebird::compile_program(source).expect("compile");

@@ -398,6 +398,8 @@ pub struct TypeChecker<'a> {
     instances: InstanceSet,
     /// 泛型声明 → 带约束的类型参数（仅记录至少一个约束的声明）。
     generic_bounds: HashMap<String, Vec<ast::GenericParam>>,
+    /// trait → 实现它的类型名（用户 trait 约束）。
+    trait_impls: HashMap<String, Vec<String>>,
     errors: Vec<TypeCheckError>,
     warnings: Vec<TypeCheckWarning>,
 }
@@ -504,6 +506,7 @@ impl<'a> TypeChecker<'a> {
             generic_enums,
             generic_fns,
             generic_bounds,
+            trait_impls: program.trait_impls.clone(),
             unsafe_depth: 0,
             method_variant_tags: HashMap::new(),
             instances: HashMap::new(),
@@ -604,7 +607,17 @@ impl<'a> TypeChecker<'a> {
                 continue;
             }
             for bound in &param.bounds {
-                if !satisfies_bound(arg, bound) {
+                let builtin = matches!(bound.as_str(), "Ord" | "Eq" | "Display");
+                let satisfied = if builtin {
+                    satisfies_bound(arg, bound)
+                } else {
+                    let ty_name = arg.name();
+                    let base = ty_name.split('<').next().unwrap_or(ty_name.as_str());
+                    self.trait_impls
+                        .get(bound)
+                        .is_some_and(|impls| impls.iter().any(|implemented| implemented == base))
+                };
+                if !satisfied {
                     self.error(TypeCheckError::TraitBoundNotSatisfied {
                         ty: arg.clone(),
                         bound: bound.clone(),

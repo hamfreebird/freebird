@@ -142,7 +142,13 @@
   当前共用一份 MIR）；用户自定义 trait 依赖 M6-5.3。
 - 测试：`TypeTable` 实例布局单元测试；`tests/m6_test.rs` 覆盖约束通过/违反与双后端一致性。
 
-### M6-5.3 无捕获闭包（2026-11-25）
+### M6-5.3 用户 trait 约束（2026-11-25）
+
+- `trait Name { fn ...; }` + `impl Trait for Type` 的方法仍按 `Type::name` 扁平化。
+- 泛型参数可使用用户 trait 作为约束：HIR 记录 trait 声明与 impl 关系，类型检查在实例化点
+  校验实参类型是否有对应 impl，缺失报 T026。
+- 未完成：`dyn Trait`/vtable、关联类型、trait 默认方法。
+- 测试：`tests/m6_test.rs` 覆盖约束通过与缺失 impl 的拒绝。
 
 - 语法：`|params| body` / `|| body`，参数必须带类型标注。
 - 实现：HIR 降级期把闭包提升为顶层函数 `__closure_N`，表达式位置替换为函数指针；
