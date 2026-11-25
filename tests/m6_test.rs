@@ -180,6 +180,33 @@ fn main() {
 }
 
 #[test]
+fn closures_without_capture_run_on_both_backends() {
+    let source = r#"
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+fn main() {
+    let inc = |x: i64| x + 1;
+    print(inc(2));
+    print(apply(|x: i64| x * 3, 4));
+    let seven = || 7;
+    print(seven());
+    print_str("\n");
+}
+"#;
+    assert_same_output(source, "closure_no_capture", b"");
+}
+
+#[test]
+fn closure_capture_is_rejected() {
+    let errors = freebird::check_source("fn main() { let y = 1; let f = |x: i64| x + y; }")
+        .expect_err("capture must be rejected");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("captures"),
+        "unexpected diagnostics: {joined}"
+    );
+}
+
+#[test]
 fn stardust_runtime_limits_are_emitted_and_enforced() {
     let source = "#[max_steps=1000]\nfn main() { loop { } }";
     let sd = freebird::build_stardust(source).expect("build stardust");
@@ -237,11 +264,11 @@ fn main() {
 
 #[test]
 fn closures_are_rejected_clearly() {
-    let errors = freebird::check_source("fn main() { let f = |x: i64| x + 1; }")
-        .expect_err("closures must be rejected");
+    let errors = freebird::check_source("fn main() { let y = 0; let f = |x: i64| x + y; }")
+        .expect_err("captured closures must be rejected");
     let joined = errors.join("\n");
     assert!(
-        joined.contains("closures"),
+        joined.contains("captures"),
         "unexpected diagnostics: {joined}"
     );
 }

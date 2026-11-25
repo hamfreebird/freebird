@@ -103,6 +103,7 @@ fn resolve_code(error: &ResolveError) -> &'static str {
         ResolveError::CannotAssignToImmutable { .. } => "R006",
         ResolveError::InvalidAssignmentTarget { .. } => "R007",
         ResolveError::InvalidConst { .. } => "R008",
+        ResolveError::ClosureCaptureUnsupported { .. } => "R009",
     }
 }
 
@@ -249,6 +250,13 @@ pub fn resolve_to_diagnostics(errors: &[ResolveError]) -> Vec<Diagnostic> {
                     *span,
                     Some(
                         "const values must be literals, earlier consts, or unary/binary operators"
+                            .to_string(),
+                    ),
+                ),
+                ResolveError::ClosureCaptureUnsupported { span, .. } => (
+                    *span,
+                    Some(
+                        "pass the captured value as an explicit parameter; captured environments are future work"
                             .to_string(),
                     ),
                 ),

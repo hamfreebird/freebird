@@ -62,9 +62,9 @@
 - **M6-5.3 trait 静态分发**：新增 `trait Name { fn ...; }` 声明与 `impl Trait for Type { ... }`。
   impl 方法沿用 `Type::name` 扁平化，调用点复用现有用户方法解析（静态分发）；暂不做
   trait 约束检查、`dyn Trait`/vtable 或关联类型。`m6_test` 覆盖双后端输出。
-- **M6-5.3 闭包语法边界**：`|params| body` / `|| body` 现在可被解析，但类型检查统一报
-  `UnsupportedFeature`（T018），避免把闭包误当作普通表达式静默生成错误代码。捕获分析、
-  环境结构体与 `fn(env, args)` 间接调用留待后续轮次。
+- **M6-5.3 无捕获闭包**：`|params| body` / `|| body` 现在会在 HIR 降级期提升为顶层函数，
+  表达式位置得到函数指针，可传参、返回与间接调用（VM/Stardust/LLVM 一致）；捕获外部变量的
+  闭包报 R009，环境捕获与 `fn(env, args)` 调用约定留待后续轮次。
 - **M6-5.3 `const` 编译期求值**：新增顶层 `const NAME: Type = expr;`（类型标注可省略）。
   求值子集覆盖字面量、此前的 const、一元/二元算术/比较/逻辑；除零、前向引用、溢出与
   不支持的表达式报 R008。求值在 HIR 降级期完成，使用点直接替换为字面量，VM/Stardust/LLVM

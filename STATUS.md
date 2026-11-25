@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-24。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **252 unit + 229 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 24，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **252 unit + 231 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 26，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
 > 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 已在 LLVM 目标上支持（M6-2.1）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。
 
 ## 1. 语言与运行时
@@ -32,7 +32,7 @@
 | 借用/移动检查 | §4 | ✅ 编译期 | ✅ 编译期 | ✅ 编译期（同一前端） | 单元 + 集成 |
 | 标量 `as` 转换 | §5 | ✅ | ✅ | ✅ | 集成 |
 | 编译期 `const`（字面量/算术/比较/引用） | §11.1 | ✅ | ✅ | ✅ | `m6_test`（R008：除零/前向引用/溢出） |
-| 闭包（`\|params\| body`） | — | ❌ 语法解析后显式拒绝（T018） | ❌ 同左 | ❌ 同左 | `m6_test`；捕获/调用语义待后续轮次 |
+| 闭包（无捕获） | §5.8 | ✅ 提升为函数指针 | ✅ | ✅ | `m6_test`；捕获外部变量报 R009 |
 | `print_*` / `read_*` / `read_line` | §9 | ✅ | ✅ UTF-8/CRLF/非法字节一致；EOF 与 VM 一致报 I/O 错误 | ✅ 继承 Stardust；Unicode `CharOut` 已支持 | 集成 + `m1_test` + `m3_test` |
 | `Option` / `Result` 内建枚举（泛型载荷 `Option<T>` / `Result<T, E>`） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
 | `Option` 方法（is_some/is_none/unwrap/unwrap_or） | §9 | ✅ | ✅ | ✅ | `m2_test` + `m3_test` |
@@ -159,5 +159,5 @@
 - **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri 已在 CI 的阻塞 `miri` job 运行（本地工具链目录只读，无法安装组件）；ASan/UBSan 已接入 CI 的 `asan`/`ubsan` 过渡期告警 job。
 - **测试基础设施**：`scripts/check-fixtures.py`、`tests/snapshot_test.rs` + `UPDATE_SNAPSHOTS`。
 - **发布**：`CHANGELOG.md`、`docs/release.md`、`scripts/check-docs.py`；release workflow 校验 tag/版本。
-- **测试基线**：252 unit + 229 integration。
+- **测试基线**：252 unit + 231 integration。
 - **已知限制**：Miri 已在 CI 阻塞运行（本地只读工具链无法安装组件）；ASan/UBSan 已接入 CI 但为过渡期告警；fuzz 主门禁为默认规模（定时 job 扩展）；bench 仅告警。

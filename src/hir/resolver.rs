@@ -43,6 +43,11 @@ pub enum ResolveError {
         reason: String,
         span: Span,
     },
+    /// 闭包引用了环境变量；捕获环境尚未支持（M6-5.3）。
+    ClosureCaptureUnsupported {
+        name: String,
+        span: Span,
+    },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -97,6 +102,10 @@ impl std::fmt::Display for ResolveError {
             ResolveError::InvalidConst { name, reason, span } => {
                 write!(f, "{span}: invalid const `{name}`: {reason}")
             }
+            ResolveError::ClosureCaptureUnsupported { name, span } => write!(
+                f,
+                "{span}: closure captures `{name}`; captured environments are not supported yet"
+            ),
         }
     }
 }

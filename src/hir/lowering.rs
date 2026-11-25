@@ -13,6 +13,12 @@ pub struct Lowering {
     aliases: HashMap<String, String>,
     /// 编译期求值后的 `const` 值。
     consts: HashMap<String, ast::Literal>,
+    /// 闭包提升产生的顶层函数。
+    hoisted_fns: Vec<HirFnDecl>,
+    /// 下一个闭包函数编号。
+    next_closure_id: usize,
+    /// 当前闭包的基作用域深度（用于判断是否捕获外部变量）。
+    closure_bases: Vec<usize>,
 }
 
 impl Lowering {
@@ -22,6 +28,9 @@ impl Lowering {
             errors: Vec::new(),
             aliases: HashMap::new(),
             consts: HashMap::new(),
+            hoisted_fns: Vec::new(),
+            next_closure_id: 0,
+            closure_bases: Vec::new(),
         }
     }
 
@@ -77,6 +86,12 @@ impl Lowering {
         }
 
         self.errors.append(&mut self.resolver.errors);
+
+        // 闭包已提升为顶层函数：注册签名并追加声明，供类型检查与 MIR 使用。
+        for f in std::mem::take(&mut self.hoisted_fns) {
+            self.resolver.register_fn(f.sig.clone());
+            decls.push(HirDecl::Fn(f));
+        }
 
         HirProgram {
             decls,
@@ -373,15 +388,71 @@ impl Lowering {
     fn lower_expr(&mut self, expr: &ast::Expr) -> Option<HirExpr> {
         match expr {
             ast::Expr::Lit(lit, span) => Some(HirExpr::Lit(lit.clone(), *span)),
-            // 闭包体不求值：类型检查会显式拒绝闭包（M6-5.3）。
-            ast::Expr::Closure { span, .. } => Some(HirExpr::Closure { span: *span }),
+            // 无捕获闭包提升为顶层函数，表达式位置用函数指针代替。
+            ast::Expr::Closure { params, body, span } => {
+                let name = format!("__closure_{}", self.next_closure_id);
+                self.next_closure_id += 1;
+                let base = self.resolver.scope_depth();
+                self.resolver.enter_scope();
+                self.closure_bases.push(base);
+                for param in params {
+                    let _ = self.resolver.declare_var(&param.name, false, param.span);
+                    self.resolver.mark_initialized(&param.name);
+                }
+                let lowered_body = self.lower_expr(body);
+                self.closure_bases.pop();
+                self.resolver.exit_scope();
+                let lowered_body = lowered_body?;
+                let sig_params: Vec<(String, HirType)> = params
+                    .iter()
+                    .map(|p| (p.name.clone(), HirType::from_ast_type(&p.ty)))
+                    .collect();
+                let sig = FnSignature {
+                    name: name.clone(),
+                    n: sig_params.len() as u32,
+                    m: 1,
+                    params: sig_params,
+                    return_types: vec![HirType::Unknown],
+                    span: *span,
+                };
+                self.hoisted_fns.push(HirFnDecl {
+                    name: name.clone(),
+                    generics: Vec::new(),
+                    sig,
+                    body: Some(HirBlock {
+                        stmts: Vec::new(),
+                        tail: Some(Box::new(lowered_body)),
+                        span: *span,
+                        scope_size: 0,
+                    }),
+                    attrs: Vec::new(),
+                    span: *span,
+                });
+                Some(HirExpr::Var(HirVarRef {
+                    name,
+                    scope_depth: usize::MAX,
+                    span: *span,
+                }))
+            }
             ast::Expr::Var(name, span) => {
                 match self.resolver.resolve_var(name, *span) {
-                    Ok(depth) => Some(HirExpr::Var(HirVarRef {
-                        name: name.clone(),
-                        scope_depth: depth,
-                        span: *span,
-                    })),
+                    Ok(depth) => {
+                        // 闭包只支持无捕获形式：跨出闭包参数作用域的变量即捕获。
+                        if let Some(base) = self.closure_bases.last().copied() {
+                            let absolute = self.resolver.scope_depth().saturating_sub(depth);
+                            if absolute <= base {
+                                self.errors.push(ResolveError::ClosureCaptureUnsupported {
+                                    name: name.clone(),
+                                    span: *span,
+                                });
+                            }
+                        }
+                        Some(HirExpr::Var(HirVarRef {
+                            name: name.clone(),
+                            scope_depth: depth,
+                            span: *span,
+                        }))
+                    }
                     Err(e) => {
                         // `const` 名在编译期替换为求值后的字面量。
                         if let Some(lit) = self.consts.get(name).cloned() {

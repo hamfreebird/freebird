@@ -6,7 +6,7 @@
 >
 > 本规范是 Freebird 语言实现的权威参考文档。
 >
-> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如用户自定义 trait、闭包、按实例函数单态化）。M6-5.1 已落地泛型内建 trait 约束（`<T: Ord + Display>`）与按实例布局（`Pair<i64>`/`Pair<String>` 独立注册，函数体仍按基名共用）；M6-5.3 的 `const` 编译期求值子集已落地（字面量、此前的 const、一元/二元运算；非法常量报 R008）。字符串格式化 API `format(template, args...)` 已在 M6-5.2 落地（VM/Stardust/LLVM 一致）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 已在 LLVM 目标上支持（M6-2.1，含 UTF-8 路径与内容）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。M4 工具链已落地：`freebird fmt`、`freebird lsp`、`freebird dap`、`freebird.toml` 路径依赖项目、诊断 `schema_version` 与稳定错误码；LSP 的 references/rename 基于 AST 绑定（其余能力为文本级），DAP 为单线程适配器，包管理仅路径依赖。M5 质量基线已落地：基准套件、MIR 优化开关、固定 seed 差分 fuzz、内存/UB 审计、fixture/诊断快照检查与发布流程。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
+> **实现状态**：本文描述的是目标规范，部分特性尚未实现（例如用户自定义 trait 的约束、闭包捕获、按实例函数单态化）。M6-5.1 已落地泛型内建 trait 约束（`<T: Ord + Display>`）与按实例布局（`Pair<i64>`/`Pair<String>` 独立注册，函数体仍按基名共用）；M6-5.3 的无捕获闭包（提升为函数指针）、`const` 编译期求值子集（字面量、此前的 const、一元/二元运算；非法常量报 R008）与 trait 静态分发已落地。字符串格式化 API `format(template, args...)` 已在 M6-5.2 落地（VM/Stardust/LLVM 一致）。LLVM 后端与 `extern "stardust"` FFI 已在 M3 落地：LLVM 目标复用 Stardust 自带的 LLVM 编译器，因此与 Stardust 后端共享值布局与堆块语义；文件 I/O 已在 LLVM 目标上支持（M6-2.1，含 UTF-8 路径与内容）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。Stardust 的“远程数据”已统一为全局堆块实现（§8.1，ADR 0001）。M4 工具链已落地：`freebird fmt`、`freebird lsp`、`freebird dap`、`freebird.toml` 路径依赖项目、诊断 `schema_version` 与稳定错误码；LSP 的 references/rename 基于 AST 绑定（其余能力为文本级），DAP 为单线程适配器，包管理仅路径依赖。M5 质量基线已落地：基准套件、MIR 优化开关、固定 seed 差分 fuzz、内存/UB 审计、fixture/诊断快照检查与发布流程。当前可用能力与已知限制以 `USAGE.md`、`STATUS.md` 和 `AGENTS.md` 为准；行为冲突时以 `src/` 与测试为最终依据。
 
 ---
 
@@ -348,7 +348,20 @@ impl Greet for Point { fn greet(&self) -> i64 { self.x } }
 - `trait` 声明方法签名（允许无函数体）；`impl Trait for Type` 的方法按 `Type::name` 扁平化，
   调用点 `x.greet()` 复用现有用户方法解析，属于静态分发。
 - 当前不检查 `Type` 是否真的实现了 trait，也不支持 `dyn Trait`、关联类型或把用户 trait
-  用作泛型约束；这些与闭包捕获语义一起留待后续轮次（`docs/adr/0006-language-evolution.md`）。
+  用作泛型约束；这些留待后续轮次（`docs/adr/0006-language-evolution.md`）。
+
+### 5.8 闭包（无捕获）
+
+```freebird
+let inc = |x: i64| x + 1;
+let seven = || 7;
+let f: fn(i64) -> i64 = |x: i64| x * 2;
+```
+
+- 闭包参数必须带类型标注；无捕获闭包在降级期提升为顶层函数，表达式位置得到该函数的
+  `fn(...) -> ...` 指针，可像普通函数值一样传参、返回与间接调用。
+- 捕获外部变量的闭包报 `R009`（环境捕获尚未实现）；闭包体为单个表达式（也可用块表达式）。
+- 由于提升发生在 HIR 降级期，VM 与 Stardust/LLVM 通过既有的函数指针/间接调用路径执行。
 
 ---
 
