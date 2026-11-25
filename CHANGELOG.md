@@ -62,6 +62,9 @@
 - **M6-5.3 trait 静态分发**：新增 `trait Name { fn ...; }` 声明与 `impl Trait for Type { ... }`。
   impl 方法沿用 `Type::name` 扁平化，调用点复用现有用户方法解析（静态分发）；暂不做
   trait 约束检查、`dyn Trait`/vtable 或关联类型。`m6_test` 覆盖双后端输出。
+- **LLVM 运行时限制明确拒绝**：Stardust 的 LLVM 编译路径只转发 `char_mode`，不会执行
+  `#[max_steps]` 等限制；Freebird 的 `--target llvm` 现在在编译期返回明确错误，避免
+  用户误以为限制生效。VM 与 `--target stardust` 仍正常执行这些属性。
 - **M6-5.3 无捕获闭包**：`|params| body` / `|| body` 现在会在 HIR 降级期提升为顶层函数，
   表达式位置得到函数指针，可传参、返回与间接调用（VM/Stardust/LLVM 一致）；捕获外部变量的
   闭包报 R009，环境捕获与 `fn(env, args)` 调用约定留待后续轮次。

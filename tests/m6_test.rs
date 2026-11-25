@@ -180,6 +180,21 @@ fn main() {
 }
 
 #[test]
+fn llvm_rejects_runtime_limit_attributes() {
+    let source = "#[max_steps=1000]\nfn main() { }";
+    let program = freebird::compile_program(source).expect("compile");
+    let error = freebird::codegen::llvm::compile_llvm_compiled(
+        &program,
+        &freebird::codegen::llvm::LlvmOptions::ir(),
+    )
+    .expect_err("llvm must reject runtime limits");
+    assert!(
+        error.contains("does not enforce runtime-limit"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn closures_without_capture_run_on_both_backends() {
     let source = r#"
 fn apply(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }

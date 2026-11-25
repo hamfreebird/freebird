@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-24。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **252 unit + 231 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 26，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **252 unit + 232 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 27，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
 > 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 已在 LLVM 目标上支持（M6-2.1）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。
 
 ## 1. 语言与运行时
@@ -74,7 +74,7 @@
 |---|---|---|---|---|
 | `#[key=value]`、`#[key(value)]` 属性解析 | ✅ | ✅ | — | 属性挂到函数/结构体/枚举声明 |
 | `#[stardust(id = N)]` | ✅ 解析/校验 | ✅ 生成 `Call(id, argc)` | ✅ 生成 `Call(id, argc)` | `m0_test` + `m3_test` |
-| `#[max_stack]` / `#[max_call_depth]` / `#[max_steps]` / `#[time_limit]` | ✅ 读取 `main` 属性并生效 | ✅ 生成同名注解并生效 | 🟡 编译链继承，运行时限制未验证 | `m0_test`（VM）+ `m6_test`（Stardust） |
+| `#[max_stack]` / `#[max_call_depth]` / `#[max_steps]` / `#[time_limit]` | ✅ 读取 `main` 属性并生效 | ✅ 生成同名注解并生效 | ❌ 编译期拒绝 | `m0_test`（VM）+ `m6_test`（Stardust/LLVM） |
 | 未知/非法属性诊断 | ✅ 编译期 | ✅ 编译期 | — | `m0_test` |
 | 无函数体的普通 `fn` | ❌ 编译期拒绝 | ❌ 编译期拒绝 | — | `m0_test` |
 | `extern "stardust"` 声明 | ✅ 解析 | ✅ 解析 | ✅ 解析 | `m0_test` |
@@ -128,7 +128,7 @@
 - **LLVM 限制**：文件 I/O（`file_read`/`file_write`）已在 M6-2.1 支持（运行时按 UTF-8 编解码，
   失败路径以非零状态退出）；Unicode `CharOut` 已支持（bundled Stardust 更新）；
   `read_line` 在 EOF 报 I/O 错误（与 VM 一致）；Freebird 的运行时限制属性会生成 Stardust 注解，
-  VM 与 Stardust 解释器均生效（`m6_test`），LLVM 路径未验证。
+  VM 与 Stardust 解释器均生效（`m6_test`）；LLVM 目标在编译期拒绝带这些属性的程序。
 - **Stardust FFI**：`extern "stardust"` + `#[stardust(id = N)]` 生成真实 `Call(id, argc)`；
   省略 `id` 时按函数名做 SipHash-2-4 并映射到 `1..=999`（ID 即 Stardust 前导空格数）。
   调用必须在 `unsafe` 块内；重复/过大 ID 编译期报错；内部函数名自动避开 extern ID。
@@ -159,5 +159,5 @@
 - **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri 已在 CI 的阻塞 `miri` job 运行（本地工具链目录只读，无法安装组件）；ASan/UBSan 已接入 CI 的 `asan`/`ubsan` 过渡期告警 job。
 - **测试基础设施**：`scripts/check-fixtures.py`、`tests/snapshot_test.rs` + `UPDATE_SNAPSHOTS`。
 - **发布**：`CHANGELOG.md`、`docs/release.md`、`scripts/check-docs.py`；release workflow 校验 tag/版本。
-- **测试基线**：252 unit + 231 integration。
+- **测试基线**：252 unit + 232 integration。
 - **已知限制**：Miri 已在 CI 阻塞运行（本地只读工具链无法安装组件）；ASan/UBSan 已接入 CI 但为过渡期告警；fuzz 主门禁为默认规模（定时 job 扩展）；bench 仅告警。

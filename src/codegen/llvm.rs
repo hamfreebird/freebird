@@ -90,6 +90,17 @@ pub fn compile_llvm_compiled(
     program: &CompiledProgram,
     options: &LlvmOptions,
 ) -> Result<LlvmArtifact, String> {
+    // LLVM 后端只传递 char_mode；运行时限制注解不会被 LLVM 程序执行。
+    // 明确拒绝，避免用户误以为限制生效。
+    if let Some(annotation) = program.stardust.lines().find(|line| {
+        let line = line.trim_start();
+        line.starts_with("#[max_") || line.starts_with("#[time_limit")
+    }) {
+        return Err(format!(
+            "`--target llvm` does not enforce runtime-limit attributes (found `{annotation}`); \
+             use the VM or `--target stardust`, or remove the attribute"
+        ));
+    }
     let stardust = locate_stardust(options.stardust_bin.as_deref())?;
     let temp = TempFiles::new()?;
     std::fs::write(&temp.stardust, &program.stardust)

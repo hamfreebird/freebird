@@ -133,7 +133,7 @@ LLVM 后端复用 Stardust 的 LLVM 编译器。Stardust 可执行文件按
 - Stardust 全局堆块使用 free list 复用；`VecPush` 原地追加、`VecPop` 原地缩减，扩容时释放旧块；`DropVar` 回收未被返回/别名的 Vec/Box 绑定。数组/结构体等 Copy 类型的 COW 旧块、嵌套容器内层块、从未 push/pop 的 Vec/String 保守不回收（安全泄漏）；完整引用计数方案见 `docs/adr/0002-heap-reclamation-deferred.md`。
 - `stardust!` 支持 `Push`/`Pop`/`Dup`/`Swap`/`Add`/`Sub`/`Mul`/`Div`/`Mod`/比较/逻辑/`Store`/`Load`/`ShiftL`/`ShiftR`/`Depth`/`Pick`/`DropN`/`Reverse`/`Rotate`/`Mark`/`Jump`/`UncondJump`/`Call`/`Ret`/`NumOut`/`NumIn`/`CharOut`/`CharIn`/`DumpStack`/`DumpState`/`Breakpoint`/`Nop`；未知指令在解析阶段报错。宏入口/出口会临时隐藏 Freebird 的隐藏调用元素（堆槽 13），因此 `ShiftL`/`Depth`/`Reverse` 等整栈指令只操作用户数据栈，VM 与 Stardust 语义一致。`Call(id, m[, r])` 的参数从栈顶取 `m` 个；`r` 可选（默认 0），只用于 Freebird 栈模型声明返回值个数，实际返回值仍由被调 Stardust 函数决定；VM 执行 `Call` 会报明确错误（详见 ADR 0005）。
 - `#[max_stack]`/`#[max_call_depth]`/`#[max_steps]`/`#[time_limit]` 会影响 VM；`build --target stardust` 会在生成源码顶部写入同名注解（如 `#[max_steps=1000]`），由 Stardust 解释器在词法分析前读取并执行。
-- LLVM 后端：`build --target llvm` 生成 LLVM IR 或可执行文件（复用 Stardust 的 LLVM 编译器）。标量/控制流/函数、结构体/数组/枚举/引用/`Vec`/`String`/`Box`、`Option`/`Result`、`impl`、`stardust!` 与 `read_*` 均已与 VM 输出对比通过。`file_read`/`file_write` 已支持（M6-2.1：路径与内容按 UTF-8 文本处理，读取失败/非法 UTF-8/栈空间不足都以非零状态退出）；Unicode `CharOut` 已支持；Freebird 的运行时限制属性会写入 Stardust 注解，LLVM 编译路径是否执行这些限制未验证。
+- LLVM 后端：`build --target llvm` 生成 LLVM IR 或可执行文件（复用 Stardust 的 LLVM 编译器）。标量/控制流/函数、结构体/数组/枚举/引用/`Vec`/`String`/`Box`、`Option`/`Result`、`impl`、`stardust!` 与 `read_*` 均已与 VM 输出对比通过。`file_read`/`file_write` 已支持（M6-2.1：路径与内容按 UTF-8 文本处理，读取失败/非法 UTF-8/栈空间不足都以非零状态退出）；Unicode `CharOut` 已支持；Freebird 的运行时限制属性会写入 Stardust 注解，LLVM 目标在编译期拒绝带这些属性的程序。
 - 完整的能力矩阵见 `STATUS.md`；VM/Stardust 差分测试见 `tests/differential_test.rs` 与 `tests/m1_test.rs`。
 
 ### 语言服务（LSP）
