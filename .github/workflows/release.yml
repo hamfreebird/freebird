@@ -1,5 +1,7 @@
 name: Release
 
+# tag 触发：vX.Y.Z 或 vX.Y.Z-rc.N。
+# 流程：版本/tag 校验 → 发布门禁（fmt/clippy/全量测试/文档）→ 打包 → GitHub Release。
 on:
   push:
     tags:
@@ -8,29 +10,85 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
 jobs:
-  release:
+  # 校验 tag、版本号系统与 CHANGELOG，并生成 Release 说明。
+  verify:
+    name: Verify tag and version
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag / Cargo.toml / CHANGELOG / spec version
+        run: python3 scripts/check-version.py --tag "${GITHUB_REF_NAME}"
+      - name: Extract release notes from CHANGELOG
+        run: python3 scripts/changelog-section.py "${GITHUB_REF_NAME#v}" > release-notes.md
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 1
+
+  # 发布门禁：与 CI 相同的全量测试与静态检查，tag 也必须通过。
+  test:
+    name: Release gate (fmt + clippy + full tests + docs)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Check tag matches Cargo.toml version
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --check
+      - name: Clippy (-D warnings)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Full test suite
+        run: cargo test
+      - name: Documentation and version checks
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          if [ "$TAG" != "$VERSION" ]; then
-            echo "tag $TAG does not match Cargo.toml version $VERSION"
-            exit 1
-          fi
-      - name: Build (release)
-        run: cargo build --release
-      - name: Package
-        run: |
-          cp target/release/freebird freebird-linux-x86_64
-          sha256sum freebird-linux-x86_64 > freebird-linux-x86_64.sha256
-      - name: Publish release
+          python3 scripts/check-doc-links.py
+          python3 scripts/check-fixtures.py
+          python3 scripts/check-docs.py
+          python3 scripts/check-version.py
+          python3 scripts/check-no-todo.py
+
+  # 构建、打包并创建 GitHub Release（预发布 tag 自动标记 prerelease）。
+  release:
+    name: Build and publish
+    needs: [verify, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+      - name: Build and package
+        run: ./scripts/package-release.sh
+      - name: Show checksums
+        run: cat dist/SHA256SUMS
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          name: Freebird ${{ github.ref_name }}
+          body_path: release-notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: false
           files: |
-            freebird-linux-x86_64
-            freebird-linux-x86_64.sha256
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/SHA256SUMS

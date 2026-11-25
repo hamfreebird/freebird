@@ -1,37 +1,52 @@
 name: CI
 
+# 完整门禁：格式/静态检查、全量测试、双后端差分、LLVM、Miri、消毒器、
+# 文档与版本一致性、基准告警、扩展 fuzz、跨平台编译探测，以及可发布的打包产物。
 on:
   push:
   pull_request:
-  # 定时运行扩展 fuzz（固定 corpus + 更大规模的随机用例）；也可手动触发。
+  # 每周一定时运行扩展 fuzz（固定 corpus + 更大规模随机用例）；也可手动触发。
   schedule:
     - cron: "0 3 * * 1"
   workflow_dispatch:
+    inputs:
+      fuzz_scale:
+        description: "FREEBIRD_FUZZ_SCALE for the extended fuzz job"
+        required: false
+        default: "10"
+
+permissions:
+  contents: read
+
+# 同一 ref 的新提交取消旧运行，节省 CI 资源；定时 fuzz 不取消。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  test:
+  # 阻塞门禁：编译器/VM 的正确性与基础质量。
+  quality:
+    name: quality (fmt + clippy + full tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Format check
         run: cargo fmt --check
-      - name: Clippy
+      - name: Clippy (-D warnings)
         run: cargo clippy --all-targets -- -D warnings
       - name: Build (release)
-        run: cargo build --release
-      - name: Test
+        run: cargo build --release --locked
+      - name: Full test suite
         run: cargo test
-      - name: Documentation links
-        run: python3 scripts/check-doc-links.py
-      - name: Fixture checks
-        run: python3 scripts/check-fixtures.py
-      - name: Documentation consistency
-        run: python3 scripts/check-docs.py
-      - name: MIR placeholder checks
-        run: python3 scripts/check-no-todo.py
       - name: Examples smoke test
         run: |
           for file in examples/*.fb; do
@@ -39,90 +54,132 @@ jobs:
             ./target/release/freebird build --target stardust "$file" > /dev/null
           done
 
-  differential:
+  # 阻塞门禁：文档、fixture、诊断快照与版本号系统的一致性。
+  docs:
+    name: docs + version consistency
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Documentation links
+        run: python3 scripts/check-doc-links.py
+      - name: Fixture naming/stdin pairs
+        run: python3 scripts/check-fixtures.py
+      - name: Documentation consistency
+        run: python3 scripts/check-docs.py
+      - name: Version consistency
+        run: python3 scripts/check-version.py
+      - name: MIR placeholder checks
+        run: python3 scripts/check-no-todo.py
+
+  # 阻塞门禁：VM 与 Stardust 输出逐字节一致。
+  differential:
+    name: VM / Stardust differential
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: VM/Stardust differential tests
+      - uses: Swatinem/rust-cache@v2
+      - name: Differential tests
         run: cargo test --test differential_test
 
+  # 阻塞门禁：LLVM 后端（复用 bundled Stardust 工具链 + clang）。
   llvm:
+    name: LLVM backend
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Install LLVM/clang
         run: sudo apt-get update && sudo apt-get install -y clang
       - name: LLVM backend tests (bundled Stardust toolchain)
         run: cargo test --test m3_test
 
-  bench:
-    runs-on: ubuntu-latest
-    # 基准受机器噪声影响：只作为告警，不阻塞合并。
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Benchmark check (warning only)
-        run: cargo run --release --bin freebird-bench -- --check --tolerance 2.5
-
+  # 阻塞门禁：核心模块的 Miri（未定义行为/未初始化读取）。
   miri:
+    name: Miri (core modules)
     runs-on: ubuntu-latest
-    # Miri 需要 nightly 组件；核心模块的 Miri 已稳定，作为阻塞门禁。
-    # 策略与本地复现方法见 docs/release.md「CI 门禁策略」。
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
+      - uses: Swatinem/rust-cache@v2
       - name: Miri setup
         run: cargo miri setup
-      - name: Miri（核心模块：vm / mir / borrowck）
+      - name: Miri（vm / mir / borrowck）
         run: |
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib vm::
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib mir::
           MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib borrowck::
 
+  # 过渡期告警：ASan（稳定后改为阻塞）。
   asan:
+    name: AddressSanitizer (advisory)
     runs-on: ubuntu-latest
-    # 消毒器需要 nightly + rust-src（-Zbuild-std）；首次接入保持告警，稳定后转阻塞。
     continue-on-error: true
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
-      - name: AddressSanitizer（核心模块）
+      - uses: Swatinem/rust-cache@v2
+      - name: ASan（vm / mir / borrowck）
         run: |
           RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib vm::
           RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib mir::
           RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib borrowck::
 
+  # 过渡期告警：UBSan（与 ASan 分开运行）。
   ubsan:
+    name: UndefinedBehaviorSanitizer (advisory)
     runs-on: ubuntu-latest
-    # UBSan 与 ASan 分开运行（Rust 一次只启用一个 sanitizer）；过渡期告警。
     continue-on-error: true
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rust-src
-      - name: UndefinedBehaviorSanitizer（核心模块）
+      - uses: Swatinem/rust-cache@v2
+      - name: UBSan（vm / mir / borrowck）
         run: |
           RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib vm::
           RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib mir::
           RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib borrowck::
 
-  fuzz:
-    # 定时/手动触发：固定 corpus + 更大规模的随机用例（FREEBIRD_FUZZ_SCALE）。
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+  # 告警：性能基准受机器噪声影响，只比较趋势。
+  bench:
+    name: Benchmarks (advisory)
     runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Extended differential fuzz（corpus + 随机用例）
-        run: FREEBIRD_FUZZ_SCALE=10 cargo test --test m5_test -- --nocapture
+      - uses: Swatinem/rust-cache@v2
+      - name: Benchmark check
+        run: cargo run --release --bin freebird-bench -- --check --tolerance 2.5
+
+  # 定时/手动：扩展 fuzz（固定 corpus + 随机用例），失败时归档最小化输入。
+  fuzz:
+    name: Extended fuzz
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Extended differential fuzz
+        env:
+          FREEBIRD_FUZZ_SCALE: ${{ github.event.inputs.fuzz_scale || '10' }}
+        run: cargo test --test m5_test -- --nocapture
       - name: Upload minimized failures
         if: failure()
         uses: actions/upload-artifact@v4
@@ -131,10 +188,9 @@ jobs:
           path: target/fuzz-failures
           if-no-files-found: ignore
 
+  # 跨平台编译探测：发布仍只覆盖 Linux x86_64（见 docs/release.md）。
   cross-platform:
-    # 跨平台可用性探测：VM 后端与工具链应在 macOS/Windows 上可编译。
-    # Stardust/LLVM 后端需要对应平台的 stardust 可执行文件，目前只发布 Linux 产物
-    # （见 docs/release.md「平台支持」），因此这里只做 check、且不阻塞。
+    name: Cross-platform check (advisory)
     if: github.event_name != 'schedule'
     continue-on-error: true
     strategy:
@@ -142,8 +198,33 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: cargo check（跨平台编译探测）
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo check --all-targets
         run: cargo check --all-targets
+
+  # 打包验证：构建发布产物并上传 artifact；发布 workflow 复用同一脚本。
+  package:
+    name: Package release artifact
+    needs: [quality, differential, llvm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Package (scripts/package-release.sh)
+        run: ./scripts/package-release.sh
+      - name: Show checksums
+        run: |
+          cat dist/SHA256SUMS
+          cat dist/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebird-linux-x86_64
+          path: dist/
+          retention-days: 7

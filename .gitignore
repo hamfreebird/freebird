@@ -1,4 +1,5 @@
 /target
+/dist
 .claude/worktrees/
 
 # Local sibling Stardust repository (separate project)

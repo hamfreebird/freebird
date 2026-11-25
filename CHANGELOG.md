@@ -10,6 +10,21 @@
 
 ### Added
 
+- **完整 CI 流水线**：阻塞门禁 `quality`（fmt/clippy/release build/全量测试/examples）、
+  `docs`（链接/fixture/文档/版本/占位符）、`differential`、`llvm`、`miri`、`package`
+  （发布 tarball + checksums）；`asan`/`ubsan`/`bench`/`cross-platform` 为告警，
+  `fuzz` 在定时/手动触发。加入 concurrency、依赖缓存、超时与 artifact。
+- **版本号系统**：新增 `docs/VERSIONING.md`（实现版本/规范版本双线、SemVer、预发布通道、
+  bump 规则、兼容性承诺）与 `scripts/check-version.py`；CLI 版本改用
+  `env!("CARGO_PKG_VERSION")`，与 `Cargo.toml` 单一来源一致；Release workflow 校验
+  tag/Cargo/CHANGELOG/规范版本并自动提取 Release 说明。
+- **完整语言文档**：新增 `docs/LANGUAGE.md`（22 章：语法、类型、匹配、泛型、trait、
+  闭包、const、模块、unsafe/FFI、限制、错误码、示例、文档同步规则）与 `docs/README.md`
+  索引；`docs/` 用户文档统一 `适用版本`/`最后更新` 头；`check-docs.py` 校验版本头、
+  LANGUAGE 必填章节与索引；新增 `.github/PULL_REQUEST_TEMPLATE.md` 文档同步清单。
+- **发布打包**：`scripts/package-release.sh` 统一生成 tar.gz、`.sha256` 与 `SHA256SUMS`
+  （含二进制、readme、USAGE、CHANGELOG、LICENSE、docs、RELEASE-MANIFEST）；
+  `scripts/changelog-section.py` 提取版本说明。
 - **M5 质量基线**：
   - `freebird-bench` 基准套件与 `bench/baseline.json`，支持 `--check`/`--update`/`--tolerance`；
     CI 以非阻塞 job 运行。
@@ -109,6 +124,9 @@
 
 ### Changed
 
+- CI `test` job 更名 `quality`，新增 `docs` 与 `package` job；`release.yml` 拆分为
+  verify/test/release 三阶段；发布产物由 `scripts/package-release.sh` 生成
+  （tar.gz + sha256 + SHA256SUMS，替代单个 `freebird-linux-x86_64`）。
 - 编译流水线新增 `CompileOptions` 与 `compile_*_with_options` 入口；
   `build` 的 Stardust/LLVM 生成默认开启优化。
 - `read_line` 在 EOF 时统一报 I/O 错误（此前 VM 返回空字符串），与 Stardust/LLVM 一致；

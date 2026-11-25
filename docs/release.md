@@ -1,13 +1,15 @@
 # 发布与兼容流程
 
-> 面向维护者。版本号指 Cargo 包版本（`Cargo.toml`），与语言规范版本（`readme.md` 顶部）独立。
+> 适用版本：实现 0.1.0 / 规范 v0.5.0
+> 最后更新：2026-11-25
+> 面向维护者。版本号体系（两条版本线、SemVer、tag 与预发布通道）见
+> [`VERSIONING.md`](VERSIONING.md)；本文只描述发布操作与 CI 门禁。
 
 ## 1. 版本策略
 
-- 遵循语义化版本 `MAJOR.MINOR.PATCH`。
-- **0.x 阶段**：`MINOR` 可包含破坏性变更；`PATCH` 只做兼容修复。
-- **1.0 之后**：破坏性变更只能进入 `MAJOR`。
-- 语言规范版本与实现版本分开记录；规范变化不强制立即同步实现版本。
+- 实现版本遵循 SemVer 2.0.0，唯一来源是 `Cargo.toml`；语言规范版本独立记录在
+  `readme.md` 顶部。两者的规则与 bump 决策见 [`VERSIONING.md`](VERSIONING.md)。
+- 发布 tag 必须与 `Cargo.toml` 版本一致；预发布使用 `vX.Y.Z-rc.N`。
 
 ## 2. 破坏性变更流程
 
@@ -30,6 +32,8 @@ cargo run --release --bin freebird-bench -- --check --tolerance 2.5
 python3 scripts/check-doc-links.py
 python3 scripts/check-fixtures.py
 python3 scripts/check-docs.py
+python3 scripts/check-version.py
+./scripts/package-release.sh
 ```
 
 同时确认：
@@ -42,13 +46,17 @@ python3 scripts/check-docs.py
 
 ## 4. 发布步骤
 
-1. 更新 `Cargo.toml` 的 `version` 与 `CHANGELOG.md`（把 `Unreleased` 内容移入新版本条目）。
-2. 运行第 3 节检查。
-3. 提交并打 tag：`git tag vX.Y.Z && git push origin main --tags`。
+1. 更新 `Cargo.toml` 的 `version` 与 `CHANGELOG.md`（把 `Unreleased` 内容移入新版本条目）；
+   同步 `docs/LANGUAGE.md`、`docs/VERSIONING.md` 的版本头与版本对照表。
+2. 运行第 3 节检查（包含 `check-version.py` 与 `package-release.sh`）。
+3. 提交并打 tag：`git tag vX.Y.Z && git push origin main --tags`
+   （预发布用 `vX.Y.Z-rc.N`）。
 4. GitHub Actions 的 `Release` workflow（`.github/workflows/release.yml`）会：
-   - 校验 tag 与 `Cargo.toml` 版本一致；
-   - `cargo build --release`；
-   - 发布 `freebird-linux-x86_64` 与 `.sha256`。
+   - **verify**：`scripts/check-version.py --tag <tag>` 校验 tag/Cargo/CHANGELOG/规范版本，
+     并从 `CHANGELOG.md` 提取对应版本段落为 Release 说明；
+   - **test**：与 CI 相同的 fmt/clippy/全量测试/文档与版本检查，失败则不发布；
+   - **release**：运行 `scripts/package-release.sh`，创建 GitHub Release 并上传产物；
+     含 `-` 的 tag 自动标记为 prerelease。
 5. 发布说明引用 `CHANGELOG.md` 的对应条目；破坏性变更附迁移步骤。
 
 ## 5. 兼容性边界
@@ -66,9 +74,12 @@ python3 scripts/check-docs.py
 
 - `AGENTS.md` 与 `STATUS.md` 顶部测试基线一致；
 - `ROADMAP.md` 最后一条“完成后基线”与它们一致；
-- `Cargo.toml` 版本在 `CHANGELOG.md` 中有对应 `## [x.y.z]` 条目，且存在 `## [Unreleased]`。
+- `Cargo.toml` 版本在 `CHANGELOG.md` 中有对应 `## [x.y.z]` 条目，且存在 `## [Unreleased]`；
+- `docs/` 下的用户文档带有 `适用版本` 与 `最后更新` 头，且 `docs/LANGUAGE.md`
+  保留完整章节；`docs/README.md` 索引覆盖所有用户文档。
 
-该脚本在 CI 的 `test` job 中运行；基线变化时同步更新三份文档。
+`scripts/check-version.py` 校验实现版本/规范版本/tag 与 CHANGELOG 的一致性。
+两者都在 CI 的 `docs` job 中运行；基线或版本变化时同步更新文档。
 
 ## 7. CI 门禁策略
 
@@ -76,14 +87,22 @@ python3 scripts/check-docs.py
 
 | job | 阻塞合并 | 说明 |
 |---|---|---|
-| `test` | 是 | `cargo fmt --check`、`clippy -D warnings`、`cargo test`、文档链接/一致性、fixture、MIR 占位符、examples 冒烟 |
+| `quality` | 是 | `cargo fmt --check`、`clippy -D warnings`、`cargo build --release --locked`、全量 `cargo test`、examples 冒烟 |
+| `docs` | 是 | 文档链接、fixture、文档一致性、版本一致性、MIR 占位符 |
 | `differential` | 是 | VM/Stardust 差分测试 |
 | `llvm` | 是 | 安装 clang 后跑 `m3_test`（bundled Stardust 工具链） |
-| `bench` | 否 | 基准受机器噪声影响，`--tolerance 2.5`，只告警；噪声基线与复现方法见 [`bench/README.md`](../bench/README.md) |
 | `miri` | 是 | nightly + `cargo miri setup`，核心模块 `vm::`/`mir::`/`borrowck::` |
-| `asan` | 否（过渡期） | nightly + `rust-src`，`-Zsanitizer=address` 跑核心模块；首次接入保持告警，稳定后转阻塞 |
+| `asan` | 否（过渡期） | nightly + `rust-src`，`-Zsanitizer=address` 跑核心模块 |
 | `ubsan` | 否（过渡期） | 同上，`-Zsanitizer=undefined`（与 ASan 分开运行） |
-| `fuzz` | 否（仅定时/手动） | 每周一 03:00 UTC + `workflow_dispatch`；`FREEBIRD_FUZZ_SCALE=10` 跑 `tests/m5_test.rs`（固定 corpus + 随机用例），失败上传 `target/fuzz-failures` |
+| `bench` | 否 | 基准受机器噪声影响，`--tolerance 2.5`，只告警 |
+| `fuzz` | 否（仅定时/手动） | 每周一 03:00 UTC + `workflow_dispatch`（可传 `fuzz_scale`）；失败上传 `target/fuzz-failures` |
+| `cross-platform` | 否 | macOS/Windows `cargo check --all-targets` 编译探测 |
+| `package` | 是（依赖 quality/differential/llvm） | 运行 `scripts/package-release.sh`，上传 `dist/` artifact（保留 7 天）并写入 checksum 摘要 |
+
+`quality`、`docs`、`differential`、`llvm`、`miri`、`package` 是合并前的阻塞门禁；
+`asan`/`ubsan` 首次接入保持告警，连续稳定后按同样方式改为阻塞；`bench` 与
+`cross-platform` 只提供趋势/编译探测。所有 job 都设置了 `timeout-minutes`，
+同一 ref 的新运行会取消旧运行（定时 fuzz 除外）。
 
 `miri` job 的约定（M6-4.1，M6 收尾转阻塞）：
 
@@ -98,10 +117,24 @@ ASan/UBSan 已接入 CI（`asan`/`ubsan` job），但**仍为过渡期告警**�
 以 `continue-on-error` 观察；连续稳定后按同样方式改为阻塞。本地工具链目录只读时无法安装
 `miri`/`rust-src`，此时只能依赖 CI 验证（M6 收尾的实测结论）。
 
-## 8. 平台支持
+## 8. 发布产物与打包
 
-- **发布产物**：`freebird-linux-x86_64`（+ `.sha256`）。`release.yml` 只在 `ubuntu-latest`
-  上构建，由 `v*` tag 触发；tag 必须与 `Cargo.toml` 版本一致。
+`scripts/package-release.sh` 是唯一的打包入口（本地与 CI/Release 共用）：
+
+- 构建 `cargo build --release --locked`；
+- 生成 `dist/freebird-<version>-x86_64-unknown-linux-gnu/`，包含：
+  `freebird` 二进制、`readme.md`、`USAGE.md`、`CHANGELOG.md`、`LICENSE`、
+  `docs/`（`LANGUAGE.md`、`VERSIONING.md`、`release.md`、ADR、审计）、`RELEASE-MANIFEST.txt`；
+- 生成 `.tar.gz`、对应 `.sha256` 与汇总 `dist/SHA256SUMS`。
+
+CI 的 `package` job 在每次合并前验证打包可用；`Release` workflow 在 tag 上复用同一脚本，
+并把 `.tar.gz`、`.sha256`、`SHA256SUMS` 上传到 GitHub Release。
+
+## 9. 平台支持
+
+- **发布产物**：`freebird-<version>-x86_64-unknown-linux-gnu.tar.gz`、对应
+  `.sha256` 与汇总 `SHA256SUMS`，由 `scripts/package-release.sh` 生成。`release.yml`
+  只在 `ubuntu-latest` 上构建，由 `v*` tag 触发；tag 必须与 `Cargo.toml` 版本一致。
 - **代码层面**：VM 后端、前端/类型/借用检查与 `fmt`/`lsp`/`dap`/`repl`/`check` 只依赖 `std`；
   `#[cfg(unix)]` 仅用于可执行位检查（`codegen/llvm.rs`）。CI 的 `cross-platform` job 在
   macOS/Windows 上运行 `cargo check --all-targets` 做编译探测（`continue-on-error`，不阻塞合并）。

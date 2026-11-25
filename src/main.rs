@@ -22,7 +22,7 @@ use freebird::{
 #[derive(Parser)]
 #[command(
     name = "freebird",
-    version = "0.1.0",
+    version = env!("CARGO_PKG_VERSION"),
     about = "Freebird language toolchain"
 )]
 struct Cli {
