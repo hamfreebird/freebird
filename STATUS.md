@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-24。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **252 unit + 235 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 30，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **254 unit + 235 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 30，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
 > 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 已在 LLVM 目标上支持（M6-2.1）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。
 
 ## 1. 语言与运行时
@@ -141,7 +141,7 @@
 
 ## 8. M4 工具链与开发者体验（已完成，2026-11-24）
 
-- **M4-1 LSP**：`freebird lsp`（stdio JSON-RPC）：诊断、hover、跳转定义、文档符号、补全；references/rename 基于 AST 的变量/函数绑定（注释与字符串不误报），解析失败时回退文本匹配；hover/definition/documentSymbol/completion 仍为文本级。VS Code 扩展通过 `vscode-languageclient` 接入，`freebird.serverPath` 可配置。
+- **M4-1 LSP**：`freebird lsp`（stdio JSON-RPC）：诊断、hover、跳转定义、文档符号、补全；references/rename/definition/documentSymbol 基于 AST 的绑定与声明（注释与字符串不误报），解析失败时回退文本匹配；hover/completion 仍为文本级。VS Code 扩展通过 `vscode-languageclient` 接入，`freebird.serverPath` 可配置。
 - **M4-2 DAP**：`freebird dap`（stdio DAP）：launch、setBreakpoints、configurationDone、stackTrace/scopes/variables、continue/next/stepIn/stepOut、pause；基于 `MirInst::Line` 行标记。M6-3.2 起 stdin 由独立线程读取、执行按分片推进，运行中可 `pause`；`variables` 可展开数组/结构体/枚举Payload/Vec/Box，`stackTrace` 每帧带自己的行号。
 - **M4-3 REPL**：多行输入（括号/字符串/块注释未闭合继续）、`:history`/`:run n`、`:load`、`:type`（复用 `typeck::infer_expression_type`）、类型/借用检查后的错误恢复。M6-3.4 起 `let` 绑定跨输入保留（整段会话重放）、历史持久化到状态目录（`FREEBIRD_REPL_HISTORY`/`XDG_STATE_HOME`），不内置行编辑。
 - **M4-4 fmt/lint**：`freebird fmt [--check|--write|--stdin]`；M6-3.5 起除缩进/空行外还做 token 级行内空白整理与 `}`/`else` 合并（保留注释与字符串、幂等、`examples/` 全量可解析）；全树 `cargo fmt` 清理；clippy 清零并纳入 CI（`-D warnings`）。
@@ -149,7 +149,7 @@
 - **M4-6 诊断**：JSON `schema_version: 1`、稳定错误码（P/R/T/B/W）、`related` 位置与修复建议。
 - **M4-7 CI/发布**：fmt/clippy、release 构建、全量测试、文档链接检查、examples 冒烟；`llvm` job；`v*` tag 发布 `freebird-linux-x86_64` + sha256。M6-4.5 起 CI 增加 macOS/Windows 的 `cargo check` 探测（非阻塞）；发布仍只覆盖 Linux x86_64（见 `docs/release.md` §8）。
 - **M4 完成时测试基线**：227 unit + 190 integration；`tests/m4_test.rs` 13 项。
-- **已知限制**：LSP 的 references/rename 已基于 AST 绑定（解析失败回退文本），hover/definition/documentSymbol/completion 仍为文本级（UTF-16 列近似）；包管理仅单层路径依赖、无锁定文件；格式化器只规范化空白/缩进。
+- **已知限制**：LSP 的 references/rename/definition/documentSymbol 已基于 AST（解析失败回退文本），hover/completion 仍为文本级（UTF-16 列近似）；包管理仅单层路径依赖、无锁定文件；格式化器只规范化空白/缩进。
 
 ## 9. M5 质量基线（基线已完成，2026-11-24）
 
@@ -159,5 +159,5 @@
 - **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri 已在 CI 的阻塞 `miri` job 运行（本地工具链目录只读，无法安装组件）；ASan/UBSan 已接入 CI 的 `asan`/`ubsan` 过渡期告警 job。
 - **测试基础设施**：`scripts/check-fixtures.py`、`tests/snapshot_test.rs` + `UPDATE_SNAPSHOTS`。
 - **发布**：`CHANGELOG.md`、`docs/release.md`、`scripts/check-docs.py`；release workflow 校验 tag/版本。
-- **测试基线**：252 unit + 235 integration。
+- **测试基线**：254 unit + 235 integration。
 - **已知限制**：Miri 已在 CI 阻塞运行（本地只读工具链无法安装组件）；ASan/UBSan 已接入 CI 但为过渡期告警；fuzz 主门禁为默认规模（定时 job 扩展）；bench 仅告警。

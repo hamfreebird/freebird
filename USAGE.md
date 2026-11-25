@@ -142,7 +142,7 @@ LLVM 后端复用 Stardust 的 LLVM 编译器。Stardust 可执行文件按
 freebird lsp
 ```
 
-通过 stdio JSON-RPC 提供诊断、hover、跳转定义、引用查找、重命名、文档符号与补全；位置按 LSP 的 UTF-16 列处理。references/rename 基于 AST 的变量/函数绑定（注释与字符串中的同名文本不会误报），解析失败时回退到文本匹配；其余能力仍为文本级。VS Code 扩展（`vscode/`）
+通过 stdio JSON-RPC 提供诊断、hover、跳转定义、引用查找、重命名、文档符号与补全；位置按 LSP 的 UTF-16 列处理。references/rename/definition/documentSymbol 基于 AST 的绑定与声明（注释与字符串中的同名文本不会误报），解析失败时回退到文本匹配；hover/completion 仍为文本级。VS Code 扩展（`vscode/`）
 通过 `freebird.serverPath` 指向该二进制；安装扩展后打开 `.fb` 文件会自动启动服务。
 
 ### 调试适配器（DAP）

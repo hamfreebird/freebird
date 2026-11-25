@@ -1,7 +1,7 @@
 # Freebird 任务清单
 
 > 基线：`main @ 19971a1`（2026-06-03），`cargo test` = 126 unit + 4 integration 全绿。
-> 当前：`cargo test` = 252 unit + 235 integration 全绿（2026-11-25；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 58 + `tests/m3_test.rs` 38 + `tests/m4_test.rs` 17 + `tests/m5_test.rs` 7 + `tests/m6_test.rs` 30 + `tests/snapshot_test.rs` 1 + `tests/differential_test.rs` 2）。
+> 当前：`cargo test` = 254 unit + 235 integration 全绿（2026-11-25；`tests/integration_test.rs` 33 + `tests/m0_test.rs` 28 + `tests/m1_test.rs` 21 + `tests/m2_test.rs` 58 + `tests/m3_test.rs` 38 + `tests/m4_test.rs` 17 + `tests/m5_test.rs` 7 + `tests/m6_test.rs` 30 + `tests/snapshot_test.rs` 1 + `tests/differential_test.rs` 2）。
 > 后续开发路线见 [`ROADMAP.md`](ROADMAP.md)，能力矩阵见 [`STATUS.md`](STATUS.md)；本表保留已完成项的历史记录。
 > 下一阶段（M6）按优先级拆分见 [`ROADMAP.md`](ROADMAP.md) 的 M6 章节。
 > 状态说明：`待办` / `进行中` / `已完成` / `暂缓`。完成一项后必须运行 `cargo test`，并尽量补价值断言。

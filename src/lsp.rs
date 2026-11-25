@@ -193,9 +193,13 @@ impl LspServer {
             .pointer("/params/textDocument/uri")
             .and_then(Value::as_str)
             .unwrap_or("");
-        match find_definition(&text, &word) {
-            Some(range) => json!({ "uri": uri, "range": range }),
-            None => Value::Null,
+        match semantic_definition(&text, &word) {
+            Some(Some(range)) => json!({ "uri": uri, "range": range }),
+            Some(None) => Value::Null,
+            None => match find_definition(&text, &word) {
+                Some(range) => json!({ "uri": uri, "range": range }),
+                None => Value::Null,
+            },
         }
     }
 
@@ -203,8 +207,9 @@ impl LspServer {
         let Some(text) = self.text_of(message) else {
             return Value::Null;
         };
+        let symbols = semantic_document_symbols(&text).unwrap_or_else(|| document_symbols(&text));
         Value::Array(
-            document_symbols(&text)
+            symbols
                 .into_iter()
                 .map(|(name, kind, line)| {
                     let range = line_range(line, 0);
@@ -234,7 +239,8 @@ impl LspServer {
                 "detail": builtin_signature(builtin)
             }));
         }
-        for (name, kind, _) in document_symbols(&text) {
+        let symbols = semantic_document_symbols(&text).unwrap_or_else(|| document_symbols(&text));
+        for (name, kind, _) in symbols {
             items.push(json!({
                 "label": name,
                 "kind": match kind { 12 => 3, 23 => 22, 10 => 13, 2 => 9, _ => 6 },
@@ -751,6 +757,224 @@ fn builtin_signature(builtin: &crate::io::BuiltinDef) -> String {
 }
 
 /// 查找声明位置，返回 LSP Range。
+/// 语义优先的定义位置：解析成功时只查找 AST 声明（注释/字符串不误报）。
+/// 返回外层 `None` 表示解析失败（调用方回退文本匹配）。
+fn semantic_definition(text: &str, word: &str) -> Option<Option<Value>> {
+    let (program, errors) = crate::frontend::parse(text);
+    if !errors.is_empty() {
+        return None;
+    }
+    let mut found = None;
+    'outer: for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => {
+                if f.name == word {
+                    found = Some(decl_range(text, f.span.line, &f.name));
+                    break;
+                }
+                for param in &f.params {
+                    if param.name == word {
+                        found = Some(span_range(param.span, &param.name));
+                        break 'outer;
+                    }
+                }
+                if let Some(body) = &f.body
+                    && let Some(range) = find_let_in_block(body, word)
+                {
+                    found = Some(range);
+                    break;
+                }
+            }
+            Decl::Struct(s) if s.name == word => {
+                found = Some(decl_range(text, s.span.line, &s.name));
+                break;
+            }
+            Decl::Enum(e) if e.name == word => {
+                found = Some(decl_range(text, e.span.line, &e.name));
+                break;
+            }
+            Decl::Trait(t) if t.name == word => {
+                found = Some(decl_range(text, t.span.line, &t.name));
+                break;
+            }
+            Decl::Const(c) if c.name == word => {
+                found = Some(decl_range(text, c.span.line, &c.name));
+                break;
+            }
+            _ => {}
+        }
+    }
+    Some(found)
+}
+
+fn decl_range(text: &str, line_1based: usize, name: &str) -> Value {
+    let line = line_1based.saturating_sub(1);
+    let line_text = text.lines().nth(line).unwrap_or("");
+    let start = line_text.find(name).unwrap_or(0);
+    let start_col = byte_to_utf16(line_text, start);
+    let width = name.chars().map(char::len_utf16).sum::<usize>();
+    json!({
+        "start": { "line": line, "character": start_col },
+        "end": { "line": line, "character": start_col + width }
+    })
+}
+
+fn span_range(span: Span, name: &str) -> Value {
+    let line = span.line.saturating_sub(1);
+    let start = span.column.saturating_sub(1);
+    let width = name.chars().map(char::len_utf16).sum::<usize>();
+    json!({
+        "start": { "line": line, "character": start },
+        "end": { "line": line, "character": start + width }
+    })
+}
+
+fn find_let_in_block(block: &Block, word: &str) -> Option<Value> {
+    for stmt in &block.stmts {
+        if let Stmt::Let { pattern, .. } = stmt
+            && let Some(span) = pattern_var_span(pattern, word)
+        {
+            return Some(span_range(span, word));
+        }
+    }
+    block
+        .tail
+        .as_deref()
+        .and_then(|tail| find_let_in_expr(tail, word))
+}
+
+fn find_let_in_expr(expr: &Expr, word: &str) -> Option<Value> {
+    match expr {
+        Expr::Block(block, _) | Expr::Loop(block, _) | Expr::Unsafe(block, _) => {
+            find_let_in_block(block, word)
+        }
+        Expr::If(_, then, else_, _) => find_let_in_block(then, word).or_else(|| {
+            else_
+                .as_ref()
+                .and_then(|block| find_let_in_block(block, word))
+        }),
+        Expr::While(_, body, _) => find_let_in_block(body, word),
+        Expr::For { body, .. } => find_let_in_block(body, word),
+        Expr::Match(scrutinee, arms, _) => find_let_in_expr(scrutinee, word).or_else(|| {
+            arms.iter()
+                .find_map(|arm| find_let_in_expr(&arm.body, word))
+        }),
+        Expr::Labelled(_, inner, _) => find_let_in_expr(inner, word),
+        _ => None,
+    }
+}
+
+fn pattern_var_span(pattern: &Pattern, word: &str) -> Option<Span> {
+    match pattern {
+        Pattern::Var(name, span) if name == word => Some(*span),
+        Pattern::Tuple(patterns, _, _) => patterns
+            .iter()
+            .find_map(|pattern| pattern_var_span(pattern, word)),
+        Pattern::Struct { fields, .. } => fields
+            .iter()
+            .filter_map(|(_, pattern)| pattern.as_ref())
+            .find_map(|pattern| pattern_var_span(pattern, word)),
+        Pattern::Enum {
+            inner: Some(inner), ..
+        } => pattern_var_span(inner, word),
+        Pattern::Ref(inner, _, _) => pattern_var_span(inner, word),
+        Pattern::Or(patterns, _) => patterns
+            .iter()
+            .find_map(|pattern| pattern_var_span(pattern, word)),
+        _ => None,
+    }
+}
+
+/// 语义优先的文档符号（名字、SymbolKind、0-based 行）。
+fn semantic_document_symbols(text: &str) -> Option<Vec<(String, u64, usize)>> {
+    let (program, errors) = crate::frontend::parse(text);
+    if !errors.is_empty() {
+        return None;
+    }
+    let mut symbols = Vec::new();
+    for decl in &program.decls {
+        match decl {
+            Decl::Fn(f) => {
+                symbols.push((f.name.clone(), 12, f.span.line.saturating_sub(1)));
+                if let Some(body) = &f.body {
+                    collect_let_symbols(body, &mut symbols);
+                }
+            }
+            Decl::Struct(s) => symbols.push((s.name.clone(), 23, s.span.line.saturating_sub(1))),
+            Decl::Enum(e) => symbols.push((e.name.clone(), 10, e.span.line.saturating_sub(1))),
+            Decl::Trait(t) => symbols.push((t.name.clone(), 11, t.span.line.saturating_sub(1))),
+            Decl::Const(c) => symbols.push((c.name.clone(), 14, c.span.line.saturating_sub(1))),
+            Decl::Impl(i) => {
+                for f in &i.fns {
+                    symbols.push((f.name.clone(), 12, f.span.line.saturating_sub(1)));
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(symbols)
+}
+
+fn collect_let_symbols(block: &Block, out: &mut Vec<(String, u64, usize)>) {
+    for stmt in &block.stmts {
+        if let Stmt::Let { pattern, .. } = stmt {
+            collect_pattern_symbols(pattern, out);
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_let_symbols_expr(tail, out);
+    }
+}
+
+fn collect_pattern_symbols(pattern: &Pattern, out: &mut Vec<(String, u64, usize)>) {
+    match pattern {
+        Pattern::Var(name, span) => out.push((name.clone(), 13, span.line.saturating_sub(1))),
+        Pattern::Tuple(patterns, _, _) => {
+            for pattern in patterns {
+                collect_pattern_symbols(pattern, out);
+            }
+        }
+        Pattern::Struct { fields, .. } => {
+            for pattern in fields.iter().filter_map(|(_, pattern)| pattern.as_ref()) {
+                collect_pattern_symbols(pattern, out);
+            }
+        }
+        Pattern::Enum {
+            inner: Some(inner), ..
+        } => collect_pattern_symbols(inner, out),
+        Pattern::Ref(inner, _, _) => collect_pattern_symbols(inner, out),
+        Pattern::Or(patterns, _) => {
+            for pattern in patterns {
+                collect_pattern_symbols(pattern, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_let_symbols_expr(expr: &Expr, out: &mut Vec<(String, u64, usize)>) {
+    match expr {
+        Expr::Block(block, _) | Expr::Loop(block, _) | Expr::Unsafe(block, _) => {
+            collect_let_symbols(block, out)
+        }
+        Expr::If(_, then, else_, _) => {
+            collect_let_symbols(then, out);
+            if let Some(else_) = else_ {
+                collect_let_symbols(else_, out);
+            }
+        }
+        Expr::While(_, body, _) | Expr::For { body, .. } => collect_let_symbols(body, out),
+        Expr::Match(scrutinee, arms, _) => {
+            collect_let_symbols_expr(scrutinee, out);
+            for arm in arms {
+                collect_let_symbols_expr(&arm.body, out);
+            }
+        }
+        Expr::Labelled(_, inner, _) => collect_let_symbols_expr(inner, out),
+        _ => {}
+    }
+}
+
 fn find_definition(text: &str, word: &str) -> Option<Value> {
     for (line_index, line) in text.lines().enumerate() {
         let trimmed = line.trim_start();
@@ -970,6 +1194,48 @@ mod tests {
         let mut reader = std::io::Cursor::new(buffer);
         let parsed = read_message(&mut reader).unwrap().unwrap();
         assert_eq!(parsed, message);
+    }
+
+    #[test]
+    fn definition_ignores_comment_declarations() {
+        let mut server = LspServer::new();
+        let text = "// fn fake() {}\nfn main() {}\n";
+        server.handle(&did_open(text));
+        let response = server.handle(&json!({
+            "jsonrpc": "2.0", "id": 20, "method": "textDocument/definition",
+            "params": {
+                "textDocument": { "uri": "file:///test.fb" },
+                "position": { "line": 0, "character": 6 }
+            }
+        }));
+        assert!(
+            response[0]["result"].is_null(),
+            "a declaration inside a comment must not resolve: {response:?}"
+        );
+    }
+
+    #[test]
+    fn document_symbols_ignore_comment_declarations() {
+        let mut server = LspServer::new();
+        let text = "// fn fake() {}\nfn real() {}\nstruct S { x: i64 }\n";
+        server.handle(&did_open(text));
+        let response = server.handle(&json!({
+            "jsonrpc": "2.0", "id": 21, "method": "textDocument/documentSymbol",
+            "params": { "textDocument": { "uri": "file:///test.fb" } }
+        }));
+        assert!(
+            response[0]["result"].is_array(),
+            "unexpected documentSymbol response: {response:?}"
+        );
+        let names: Vec<&str> = response[0]["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|symbol| symbol["name"].as_str())
+            .collect();
+        assert!(names.contains(&"real"), "names: {names:?}");
+        assert!(names.contains(&"S"), "names: {names:?}");
+        assert!(!names.contains(&"fake"), "names: {names:?}");
     }
 
     #[test]
