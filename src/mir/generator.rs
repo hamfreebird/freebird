@@ -242,6 +242,12 @@ pub struct MirGen {
     method_variant_tags: MethodTagMap,
     /// extern "stardust" 函数名 → Stardust ID（调用点生成 ExternCall）。
     extern_fns: HashMap<String, u64>,
+    /// 泛型实例集合（基名 → 类型实参组合），用于按实例复制函数体（M6-5.1）。
+    instances: crate::typeck::checker::InstanceSet,
+    /// FnId → (名字, 参数个数, 返回个数)，含按实例生成的函数。
+    fn_metadata: Vec<(FnId, String, u32, u32)>,
+    /// 实例 FnId → (基名 FnId, 参数个数, 返回个数)。
+    instance_sources: Vec<(FnId, FnId, u32, u32)>,
     /// MIR 生成期错误（例如已从规范移除的 `#id` 表达式）。
     errors: Vec<String>,
 }
@@ -262,6 +268,9 @@ impl MirGen {
             active_vars: Vec::new(),
             method_variant_tags: HashMap::new(),
             extern_fns: HashMap::new(),
+            instances: HashMap::new(),
+            fn_metadata: Vec::new(),
+            instance_sources: Vec::new(),
             errors: Vec::new(),
         }
     }
@@ -290,6 +299,17 @@ impl MirGen {
         self
     }
 
+    /// 设置泛型实例集合（按实例复制函数体）。
+    pub fn with_instances(mut self, instances: crate::typeck::checker::InstanceSet) -> Self {
+        self.instances = instances;
+        self
+    }
+
+    /// 已生成函数的元数据（含按实例生成的函数）。
+    pub fn fn_metadata(&self) -> &[(FnId, String, u32, u32)] {
+        &self.fn_metadata
+    }
+
     /// MIR 生成期错误（调用方必须检查并拒绝静默降级）。
     pub fn errors(&self) -> &[String] {
         &self.errors
@@ -305,6 +325,8 @@ impl MirGen {
     /// 生成整个程序的 MIR 指令
     pub fn gen_program(&mut self, program: &HirProgram) -> Vec<(FnId, Vec<MirInst>)> {
         self.errors.clear();
+        self.fn_metadata.clear();
+        self.instance_sources.clear();
         let mut functions: Vec<(FnId, Vec<MirInst>)> = Vec::new();
         let mut fn_id_counter: u64 = 1;
 
@@ -316,6 +338,44 @@ impl MirGen {
             self.name_to_id.insert(sig.name.clone(), id);
         }
 
+        // 为泛型函数的每个实例预分配 FnId：调用点在生成函数体时需要解析到实例。
+        let generated: std::collections::HashSet<String> = program
+            .decls
+            .iter()
+            .filter_map(|decl| match decl {
+                HirDecl::Fn(f) => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        let sigs: HashMap<String, FnSignature> = program
+            .fn_signatures
+            .iter()
+            .map(|sig| (sig.name.clone(), sig.clone()))
+            .collect();
+        let instances = self.instances.clone();
+        for (base, combinations) in &instances {
+            if !generated.contains(base) {
+                continue;
+            }
+            let Some(sig) = sigs.get(base) else {
+                continue;
+            };
+            let Some(base_id) = self.name_to_id.get(base).copied() else {
+                continue;
+            };
+            for args in combinations {
+                let instance = crate::typeck::type_table::instance_name(base, args);
+                if self.name_to_id.contains_key(&instance) {
+                    continue;
+                }
+                let id = FnId(fn_id_counter);
+                fn_id_counter += 1;
+                self.name_to_id.insert(instance.clone(), id);
+                self.fn_metadata.push((id, instance, sig.n, sig.m));
+                self.instance_sources.push((id, base_id, sig.n, sig.m));
+            }
+        }
+
         // 为每个函数生成 MIR
         for decl in &program.decls {
             match decl {
@@ -324,7 +384,8 @@ impl MirGen {
                     if fn_id.0 >= fn_id_counter {
                         fn_id_counter = fn_id.0 + 1;
                     }
-                    let (mir, _sig) = self.gen_fn(f);
+                    let (mir, sig) = self.gen_fn(f);
+                    self.fn_metadata.push((fn_id, f.name.clone(), sig.n, sig.m));
                     functions.push((fn_id, mir));
                 }
                 HirDecl::Extern(_) => {
@@ -333,6 +394,14 @@ impl MirGen {
                     // 这里不生成内部函数定义，避免与外部实现重名。
                 }
                 _ => {}
+            }
+        }
+
+        // 按实例复制函数体：泛型体是类型无关的，复制即可得到独立 FnId。
+        let base_mir: HashMap<FnId, Vec<MirInst>> = functions.iter().cloned().collect();
+        for (instance_id, base_id, _, _) in &self.instance_sources {
+            if let Some(mir) = base_mir.get(base_id) {
+                functions.push((*instance_id, mir.clone()));
             }
         }
 
@@ -1267,12 +1336,23 @@ impl MirGen {
                     }
                 }
 
-                let fn_id = self.name_to_id.get(&fn_name).copied().unwrap_or_else(|| {
-                    self.mir.push(MirInst::Comment(format!(
-                        "ERROR: unknown function '{fn_name}'"
-                    )));
-                    FnId(0)
-                });
+                // 按调用点注解解析到实例函数（`id<i64>`）；没有实例时回落基名。
+                let resolved_name = self
+                    .method_variant_tags
+                    .get(span)
+                    .and_then(|resolution| resolution.instance.clone())
+                    .filter(|name| self.name_to_id.contains_key(name))
+                    .unwrap_or_else(|| fn_name.clone());
+                let fn_id = self
+                    .name_to_id
+                    .get(&resolved_name)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        self.mir.push(MirInst::Comment(format!(
+                            "ERROR: unknown function '{resolved_name}'"
+                        )));
+                        FnId(0)
+                    });
                 let ret_count = call_sig.as_ref().map_or(0, |s| s.m);
                 self.mir.push(MirInst::Call {
                     fn_id,

@@ -1079,7 +1079,8 @@ pub fn compile_ast_with_options(
     let mut generator = MirGen::new()
         .with_type_table(type_table)
         .with_method_variant_tags(method_tags)
-        .with_extern_functions(extern_fns.clone());
+        .with_extern_functions(extern_fns.clone())
+        .with_instances(instances.clone());
     let functions = generator.gen_program(&hir);
     if !generator.errors().is_empty() {
         return Err(format!("MIR errors:\n{}", generator.errors().join("\n")));
@@ -1088,20 +1089,16 @@ pub fn compile_ast_with_options(
         return Err("No functions generated".to_string());
     }
 
-    // FnId 由 MIR 生成器按签名顺序分配，从 1 开始。
+    // FnId 与函数元数据由 MIR 生成器统一分配（含按实例生成的函数）。
     let mut fn_info = HashMap::new();
-    let mut entry = None;
-    for (i, sig) in hir.fn_signatures.iter().enumerate() {
-        let id = FnId((i + 1) as u64);
-        // extern 函数没有内部 MIR/定义；调用点走 ExternCall。
-        if !extern_fns.contains_key(&sig.name) {
-            fn_info.insert(id, FnInfo::new(sig.name.clone(), sig.n, sig.m));
-        }
-        if entry.is_none() && sig.name == "main" {
-            entry = Some(id);
-        }
+    for (id, name, n, m) in generator.fn_metadata() {
+        fn_info.insert(*id, FnInfo::new(name.clone(), *n, *m));
     }
-    let entry = entry.or_else(|| functions.first().map(|(id, _)| *id));
+    let entry = fn_info
+        .iter()
+        .find(|(_, info)| info.name == "main")
+        .map(|(id, _)| *id)
+        .or_else(|| functions.first().map(|(id, _)| *id));
 
     let mut optimized_functions = Vec::with_capacity(functions.len());
     if options.optimize {

@@ -1703,6 +1703,16 @@ impl<'a> TypeChecker<'a> {
                 format!("function `{}`", sig.name),
                 span,
             );
+            // 记录调用点实例名，供 MIR 生成按实例函数体解析（M6-5.1）。
+            if let Some(instance) = instance_name_for(&sig.name, &instance_args) {
+                self.method_variant_tags.insert(
+                    span,
+                    MethodResolution {
+                        instance: Some(instance),
+                        ..Default::default()
+                    },
+                );
+            }
         } else if let Some(explicit) = explicit_type_args {
             self.error(TypeCheckError::GenericArgMismatch {
                 function: sig.name.clone(),

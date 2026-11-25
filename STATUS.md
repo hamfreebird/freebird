@@ -2,7 +2,7 @@
 
 > 更新日期：2026-11-24。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
-> 测试基线：`cargo test` = **252 unit + 234 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 29，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
+> 测试基线：`cargo test` = **252 unit + 235 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 30，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
 > 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 已在 LLVM 目标上支持（M6-2.1）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。
 
 ## 1. 语言与运行时
@@ -20,7 +20,7 @@
 | 用户泛型 `struct/enum/fn<T>`（类型擦除 MVP） | §5 | ✅ 字段/实参推断 | ✅ 单份代码生成 | ✅ | `m2_test` |
 | 显式类型实参（turbofish） | §5 | ✅ | ✅ | ✅ | `m2_test` |
 | 泛型内建 trait 约束（`Ord`/`Eq`/`Display`） | §5.5 | ✅ 编译期 | ✅ 编译期 | ✅ 编译期 | `m6_test`（T026） |
-| 按实例布局（`Pair<i64>`/`Pair<String>`） | §5.5 | ✅ 独立注册 | ✅ 查表回落基名 | ✅ | 单元测试 + `m6_test`；函数体仍按基名共用 |
+| 按实例布局与函数体单态化（`Pair<i64>` / `id<i64>`） | §5.5 | ✅ 独立布局 + 独立 FnId | ✅ | ✅ | 单元测试 + `m6_test` |
 | 函数、递归、多值返回、`return` | §6 | ✅ | ✅ | ✅ | 集成 + `m3_test` |
 | `ret n`（整数立即数、元数匹配） | §6 | ✅ | ✅ | ✅ | 集成 + `m0_test` |
 | 数组、`Vec`、`String`、`Box` | §8、§9 | ✅ | ✅ | ✅ | 集成 + 差分 + `m3_test`（全局堆块，ADR 0001） |
@@ -159,5 +159,5 @@
 - **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri 已在 CI 的阻塞 `miri` job 运行（本地工具链目录只读，无法安装组件）；ASan/UBSan 已接入 CI 的 `asan`/`ubsan` 过渡期告警 job。
 - **测试基础设施**：`scripts/check-fixtures.py`、`tests/snapshot_test.rs` + `UPDATE_SNAPSHOTS`。
 - **发布**：`CHANGELOG.md`、`docs/release.md`、`scripts/check-docs.py`；release workflow 校验 tag/版本。
-- **测试基线**：252 unit + 234 integration。
+- **测试基线**：252 unit + 235 integration。
 - **已知限制**：Miri 已在 CI 阻塞运行（本地只读工具链无法安装组件）；ASan/UBSan 已接入 CI 但为过渡期告警；fuzz 主门禁为默认规模（定时 job 扩展）；bench 仅告警。

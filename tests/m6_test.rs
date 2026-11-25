@@ -180,6 +180,28 @@ fn main() {
 }
 
 #[test]
+fn generic_functions_are_monomorphized_per_instance() {
+    let source = r#"
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let n: i64 = 3;
+    print(id(n));
+    print_str(id("x"));
+    print_str("\n");
+}
+"#;
+    let compiled = freebird::compile_program(source).expect("compile");
+    let names: Vec<&str> = compiled
+        .fn_info
+        .values()
+        .map(|info| info.name.as_str())
+        .collect();
+    assert!(names.contains(&"id<i64>"), "names: {names:?}");
+    assert!(names.contains(&"id<String>"), "names: {names:?}");
+    assert_same_output(source, "monomorphized", b"");
+}
+
+#[test]
 fn user_trait_bounds_run_on_both_backends() {
     let source = r#"
 trait Greet { fn greet(&self) -> i64; }

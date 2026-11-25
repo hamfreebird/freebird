@@ -62,6 +62,9 @@
 - **M6-5.3 trait 静态分发**：新增 `trait Name { fn ...; }` 声明与 `impl Trait for Type { ... }`。
   impl 方法沿用 `Type::name` 扁平化，调用点复用现有用户方法解析（静态分发）；暂不做
   trait 约束检查、`dyn Trait`/vtable 或关联类型。`m6_test` 覆盖双后端输出。
+- **泛型函数按实例单态化**：MIR 为每个实例预分配 FnId 并复制泛型函数体
+  （`id<i64>`/`id<String>` 独立），调用点按类型检查注解解析到实例；`fn_info` 由 MIR
+  生成器统一提供。泛型体仍只允许类型无关操作。
 - **用户 trait 约束**：泛型参数可使用用户 trait 作为约束（`<T: Greet>`）；类型检查在
   结构体/枚举字面量与泛型函数调用点检查实参类型是否有对应 `impl Trait for Type`，缺失报
   T026。仍不支持 `dyn Trait`/vtable、关联类型与默认方法。
