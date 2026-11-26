@@ -113,9 +113,11 @@ jobs:
         run: cargo miri setup
       - name: Miri（vm / mir / borrowck）
         run: |
-          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib vm::
-          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib mir::
-          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib borrowck::
+          # `vm::` 也会匹配 `codegen::llvm::`（子串），而 LLVM 测试会调用外部
+          # `stardust` 进程（Miri 不支持），因此显式跳过名字含 `llvm` 的测试。
+          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib -- vm:: --skip llvm
+          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib -- mir:: --skip llvm
+          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test --lib -- borrowck:: --skip llvm
 
   # 过渡期告警：ASan（稳定后改为阻塞）。
   asan:
@@ -131,27 +133,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: ASan（vm / mir / borrowck）
         run: |
-          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib vm::
-          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib mir::
-          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib borrowck::
-
-  # 过渡期告警：UBSan（与 ASan 分开运行）。
-  ubsan:
-    name: UndefinedBehaviorSanitizer (advisory)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rust-src
-      - uses: Swatinem/rust-cache@v2
-      - name: UBSan（vm / mir / borrowck）
-        run: |
-          RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib vm::
-          RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib mir::
-          RUSTFLAGS="-Zsanitizer=undefined" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib borrowck::
+          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib -- vm:: --skip llvm
+          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib -- mir:: --skip llvm
+          RUSTFLAGS="-Zsanitizer=address" cargo test -Zbuild-std --target x86_64-unknown-linux-gnu --lib -- borrowck:: --skip llvm
 
   # 告警：性能基准受机器噪声影响，只比较趋势。
   bench:

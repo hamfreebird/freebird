@@ -1,7 +1,7 @@
 # Freebird 语言文档
 
 > 适用版本：实现 0.1.1 / 规范 v0.5.0
-> 最后更新：2026-11-25
+> 最后更新：2026-11-26
 
 本文面向 Freebird 使用者，覆盖已实现的语法、类型、运行时与工具链。目标规范以
 [`../readme.md`](../readme.md) 为准，能力矩阵与测试覆盖见 [`../STATUS.md`](../STATUS.md)；
@@ -607,8 +607,8 @@ let escaped: String = format("{{literal}} {}", "v");
    （解析失败时回退文本匹配）；hover 提供签名与变量类型，completion 提供签名/类型 detail。
 8. **LLVM**：不执行运行时限制属性（编译期拒绝）；继承 Stardust 的越界陷阱等行为。
 9. **平台**：只发布 Linux x86_64；macOS/Windows 仅做编译探测。
-10. **质量门禁**：ASan/UBSan 仍为过渡期告警；Miri 在 CI 阻塞运行，但本地工具链目录只读时
-    无法安装组件。
+10. **质量门禁**：ASan 仍为过渡期告警；UBSan 因 nightly 不再支持 `-Zsanitizer=undefined`
+    已移除，UB 检测由阻塞的 Miri 覆盖；本地工具链目录只读时无法安装 Miri 组件。
 
 ## 21. 示例程序
 

@@ -15,8 +15,8 @@
 | `cargo clippy --all-targets -- -D warnings` | 通过 |
 | Rust `unsafe` / `transmute` / `static mut` / `from_raw` / `as_ptr` | **无**（Freebird 语言中的 `unsafe` 关键字只是语法，VM 实现为安全的 Rust 指令） |
 | `RefCell` / `Cell` / 内部可变性 | **无** |
-| Miri | **CI 已接入**（M6-4.1）：nightly job 跑核心模块 `vm::`/`mir::`/`borrowck::`，过渡期非阻塞；本地 stable 无 `miri` 组件，未在本地运行 |
-| AddressSanitizer / UBSan | 未接入（需要 `-Zbuild-std` 与 rust-src；原因见 `docs/release.md` §7） |
+| Miri | **CI 已接入并阻塞**（M6-4.1）：nightly job 跑核心模块 `vm::`/`mir::`/`borrowck::`（`--skip llvm` 避免匹配 `codegen::llvm::`）；本地 stable 无 `miri` 组件，未在本地运行 |
+| AddressSanitizer | 已接入 CI `asan` 告警 job（需要 `-Zbuild-std` 与 rust-src）；UBSan 因 nightly 移除 `-Zsanitizer=undefined` 不再可用 |
 | 坏输入 fuzz | `tests/m5_test.rs` 固定 seed 生成 60 个随机 token 输入，`check_source` 经 `catch_unwind` 断言不 panic |
 
 Miri/sanitizer 的缺失是工具链环境限制，不是审计结论的替代；`unsafe` 为零意味着 Rust 层面没有直接 UB 入口。
@@ -76,7 +76,7 @@ Miri/sanitizer 的缺失是工具链环境限制，不是审计结论的替代�
 | 级别 | 发现 | 建议 |
 |---|---|---|
 | 信息 | Rust `unsafe` 为零 | 保持；新增代码继续避免 `unsafe` |
-| 中 | Miri/sanitizer 未接入 | M6-4.1 已接入 CI `miri` job（核心模块、非阻塞过渡期）；ASan/UBSan 待评估 |
+| 中 | Miri/sanitizer 未接入 | M6-4.1 已接入 CI `miri` job（核心模块，现为阻塞）；ASan 已接入告警 job；UBSan 受工具链限制撤销 |
 | 中 | 深层递归输入可能栈溢出（panic/abort，`catch_unwind` 捕获不到栈溢出） | 扩展 fuzz 的长度/嵌套维度；parser 增加显式递归深度限制与诊断 |
 | 低 | 内部 `unwrap` 依赖不变量 | 逐步替换为 `expect("invariant: ...")` 或在关键路径返回 `VmError`；启用 `clippy::unwrap_used` 分级 |
 | 低 | `src/mir/generator.rs` 对未知 `HirExpr` 只生成 `TODO` 注释 | 改为编译期错误（避免静默降级） |
@@ -88,4 +88,4 @@ Miri/sanitizer 的缺失是工具链环境限制，不是审计结论的替代�
 
 - 没有 Rust `unsafe`，因此不存在类型系统之外的内存 UB 入口。
 - 运行时错误路径以 `VmError`/诊断为主；M5-3 的坏输入 fuzz 未发现 panic。
-- 剩余工作是工具链层面的持续验证（Miri/sanitizer）与少数内部不变量/递归深度加固，已列入 M5 后续与 M6 候选。
+- 剩余工作是工具链层面的持续验证（Miri/ASan）与少数内部不变量/递归深度加固，已列入 M5 后续与 M6 候选。

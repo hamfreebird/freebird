@@ -8,6 +8,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI Miri 过滤**：`cargo miri test --lib vm::` 的过滤是子串匹配，也会命中
+  `codegen::llvm::`，而 LLVM 测试会调用外部 `stardust` 进程（Miri 不支持）；
+  改为 `--lib -- vm:: --skip llvm`（核心模块 31 个测试），`asan` job 同步跳过。
+- **CI UBSan job 移除**：当前 nightly 的 `-Zsanitizer` 不再接受 `undefined`，job 在编译
+  阶段直接失败；UB 检测由阻塞的 `miri` job 覆盖，`docs/release.md`、`STATUS.md`、
+  `AGENTS.md`、`docs/LANGUAGE.md` 与内存/UB 审计同步。
+
 ## [0.1.1] - 2026-11-25
 
 ### Added

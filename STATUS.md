@@ -1,6 +1,6 @@
 # Freebird 能力矩阵
 
-> 更新日期：2026-11-25。对照 `readme.md`（目标规范）与当前 `src/` 实现。
+> 更新日期：2026-11-26。对照 `readme.md`（目标规范）与当前 `src/` 实现。
 > 图例：✅ 已实现并有测试；🟡 部分实现（见备注）；❌ 未实现，使用处应在编译期报错。
 > 测试基线：`cargo test` = **258 unit + 241 integration**（`tests/integration_test.rs` 33，`tests/m0_test.rs` 28，`tests/m1_test.rs` 21，`tests/m2_test.rs` 58，`tests/m3_test.rs` 38，`tests/m4_test.rs` 17，`tests/m5_test.rs` 7，`tests/m6_test.rs` 36，`tests/snapshot_test.rs` 1，`tests/differential_test.rs` 2）。
 > 后端说明：LLVM 后端复用 Stardust 自带的 LLVM 编译器（M3），因此其语言语义与 Stardust 后端一致；文件 I/O 已在 LLVM 目标上支持（M6-2.1）；Unicode `CharOut` 已支持（bundled Stardust 的 LLVM 后端读取 `#[char_mode=unicode]`）。
@@ -156,8 +156,8 @@
 - **基准**：`freebird-bench`（VM fib/循环/Vec、Stardust 体积与耗时、LLVM 可选）+ `bench/baseline.json`；计时项三次取中位数；`--check` 阈值比较，CI 非阻塞 job；噪声基线、阈值策略与复现步骤见 `bench/README.md`。
 - **MIR 优化**：`CompileOptions`/`--no-opt`；常量折叠（算术/Div/Mod/比较/逻辑）、常量条件跳转、无用跳转、死代码消除、冗余 roll；M6-4.3 起对「零参数、返回单个常量」的叶子函数做调用点内联；`Line` 保留；`tests/m5_test.rs` 验证优化/非优化输出一致。
 - **fuzz**：`tests/fuzz/corpus/` 固定语料（深层递归/长循环/嵌套容器/枚举 match/深表达式）在 VM/Stardust 两端差分；随机程序与坏输入规模由 `FREEBIRD_FUZZ_SCALE` 控制（默认 30 + 60，主门禁保持快速）；失败最小化并归档到 `target/fuzz-failures`。CI 每周定时 job 用 `FREEBIRD_FUZZ_SCALE=10` 扩展运行，失败上传归档产物。
-- **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri 已在 CI 的阻塞 `miri` job 运行（本地工具链目录只读，无法安装组件）；ASan/UBSan 已接入 CI 的 `asan`/`ubsan` 过渡期告警 job。
+- **审计**：`docs/audits/0001-memory-ub-audit.md`；Rust unsafe 为零；Miri 已在 CI 的阻塞 `miri` job 运行（本地工具链目录只读，无法安装组件）；ASan 已接入 CI 的 `asan` 过渡期告警 job；UBSan 因 nightly 移除 `-Zsanitizer=undefined` 而撤销，UB 检测由阻塞的 `miri` job 覆盖。
 - **测试基础设施**：`scripts/check-fixtures.py`、`tests/snapshot_test.rs` + `UPDATE_SNAPSHOTS`。
 - **发布**：`CHANGELOG.md`、`docs/release.md`、`scripts/check-docs.py`；release workflow 校验 tag/版本。
 - **测试基线**：258 unit + 241 integration（2026-11-25）。
-- **已知限制**：Miri 已在 CI 阻塞运行（本地只读工具链无法安装组件）；ASan/UBSan 已接入 CI 但为过渡期告警；fuzz 主门禁为默认规模（定时 job 扩展）；bench 仅告警。
+- **已知限制**：Miri 已在 CI 阻塞运行（本地只读工具链无法安装组件）；ASan 已接入 CI 但为过渡期告警（UBSan 受 nightly 工具链限制已移除）；fuzz 主门禁为默认规模（定时 job 扩展）；bench 仅告警。
